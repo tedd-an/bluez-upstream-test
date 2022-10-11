@@ -91,6 +91,7 @@ struct bap_transport {
 	uint8_t			rtn;
 	uint16_t		latency;
 	uint32_t		delay;
+	int8_t			volume;
 };
 
 struct media_transport {
@@ -116,6 +117,9 @@ struct media_transport {
 								guint id);
 	void			(*set_state) (struct media_transport *transport,
 						transport_state_t state);
+	void			(*set_volume) (struct media_transport *transp,
+						int8_t volume);
+	int8_t			(*get_volume) (struct media_transport *transp);
 	GDestroyNotify		destroy;
 	void			*data;
 };
@@ -769,6 +773,58 @@ error:
 					"Invalid arguments in method call");
 }
 
+static gboolean volume_bap_exists(const GDBusPropertyTable *property,
+					void *data)
+{
+	struct media_transport *transport = data;
+	struct bap_transport *bap = transport->data;
+
+	return bap->volume >= 0;
+}
+
+static gboolean get_bap_volume(const GDBusPropertyTable *property,
+					DBusMessageIter *iter, void *data)
+{
+	struct media_transport *transport = data;
+	struct bap_transport *bap = transport->data;
+	uint16_t volume = (uint16_t)bap->volume;
+
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_UINT16, &volume);
+
+	return TRUE;
+}
+
+static void set_bap_volume(const GDBusPropertyTable *property,
+			   DBusMessageIter *iter, GDBusPendingPropertySet id,
+			   void *data)
+{
+	struct media_transport *transport = data;
+	struct bap_transport *bap = transport->data;
+	uint16_t arg;
+	int8_t volume;
+
+	if (dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_UINT16)
+		goto error;
+
+	dbus_message_iter_get_basic(iter, &arg);
+	if (arg > INT8_MAX)
+		goto error;
+
+	g_dbus_pending_property_success(id);
+
+	volume = (int8_t)arg;
+	if (bap->volume == volume)
+		return;
+
+	/*TODO vcp_send_volume */
+	return;
+
+error:
+	g_dbus_pending_property_error(id, ERROR_INTERFACE ".InvalidArguments",
+					"Invalid arguments in method call");
+}
+
+
 static gboolean endpoint_exists(const GDBusPropertyTable *property, void *data)
 {
 	struct media_transport *transport = data;
@@ -970,6 +1026,7 @@ static const GDBusPropertyTable bap_properties[] = {
 	{ "Retransmissions", "y", get_retransmissions },
 	{ "Latency", "q", get_latency },
 	{ "Delay", "u", get_delay },
+	{ "Volume", "q", get_bap_volume, set_bap_volume, volume_bap_exists },
 	{ "Endpoint", "o", get_endpoint, NULL, endpoint_exists },
 	{ "Location", "u", get_location },
 	{ "Metadata", "ay", get_metadata },
@@ -1048,6 +1105,31 @@ static void source_state_changed(struct btd_service *service,
 		transport_update_playing(transport, FALSE);
 }
 
+static int8_t get_volume_a2dp(struct media_transport *transport)
+{
+	struct a2dp_transport *a2dp = transport->data;
+
+	return a2dp->volume;
+}
+
+static void set_volume_a2dp(struct media_transport *transport, int8_t volume)
+{
+	struct a2dp_transport *a2dp = transport->data;
+
+	if (volume < 0)
+		return;
+
+	/* Check if volume really changed */
+	if (a2dp->volume == volume)
+		return;
+
+	a2dp->volume = volume;
+
+	g_dbus_emit_property_changed(btd_get_dbus_connection(),
+					transport->path,
+					MEDIA_TRANSPORT_INTERFACE, "Volume");
+}
+
 static int media_transport_init_source(struct media_transport *transport)
 {
 	struct btd_service *service;
@@ -1061,6 +1143,8 @@ static int media_transport_init_source(struct media_transport *transport)
 
 	transport->resume = resume_a2dp;
 	transport->suspend = suspend_a2dp;
+	transport->set_volume = set_volume_a2dp;
+	transport->get_volume = get_volume_a2dp;
 	transport->cancel = cancel_a2dp;
 	transport->data = a2dp;
 	transport->destroy = destroy_a2dp;
@@ -1387,6 +1471,31 @@ static void free_bap(void *data)
 	free(bap);
 }
 
+static void set_volume_bap(struct media_transport *transport, int8_t volume)
+{
+	struct bap_transport *bap = transport->data;
+
+	if (volume < 0)
+		return;
+
+	/* Check if volume really changed */
+	if (bap->volume == volume)
+		return;
+
+	bap->volume = volume;
+
+	g_dbus_emit_property_changed(btd_get_dbus_connection(),
+					transport->path,
+					MEDIA_TRANSPORT_INTERFACE, "Volume");
+}
+
+static int8_t get_volume_bap(struct media_transport *transport)
+{
+	struct bap_transport *bap = transport->data;
+
+	return bap->volume;
+}
+
 static int media_transport_init_bap(struct media_transport *transport,
 							void *stream)
 {
@@ -1403,6 +1512,7 @@ static int media_transport_init_bap(struct media_transport *transport,
 	bap->rtn = qos->rtn;
 	bap->latency = qos->latency;
 	bap->delay = qos->delay;
+	bap->volume = 127;
 	bap->state_id = bt_bap_state_register(bt_bap_stream_get_session(stream),
 						bap_state_changed,
 						bap_connecting,
@@ -1413,6 +1523,8 @@ static int media_transport_init_bap(struct media_transport *transport,
 	transport->suspend = suspend_bap;
 	transport->cancel = cancel_bap;
 	transport->set_state = set_state_bap;
+	transport->set_volume = set_volume_bap;
+	transport->get_volume = get_volume_bap;
 	transport->destroy = free_bap;
 
 	return 0;
@@ -1537,12 +1649,13 @@ int8_t media_transport_get_device_volume(struct btd_device *dev)
 	/* Attempt to locate the transport to get its volume */
 	for (l = transports; l; l = l->next) {
 		struct media_transport *transport = l->data;
+
 		if (transport->device != dev)
 			continue;
 
-		/* Volume is A2DP only */
-		if (media_endpoint_get_sep(transport->endpoint))
-			return media_transport_get_volume(transport);
+		/* Get transport volume */
+		if (transport->get_volume)
+			return transport->get_volume(transport);
 	}
 
 	/* If transport volume doesn't exists use device_volume */
@@ -1560,12 +1673,13 @@ void media_transport_update_device_volume(struct btd_device *dev,
 	/* Attempt to locate the transport to set its volume */
 	for (l = transports; l; l = l->next) {
 		struct media_transport *transport = l->data;
+
 		if (transport->device != dev)
 			continue;
 
-		/* Volume is A2DP only */
-		if (media_endpoint_get_sep(transport->endpoint)) {
-			media_transport_update_volume(transport, volume);
+		/* Set transport volume */
+		if (transport->set_volume) {
+			transport->set_volume(transport, volume);
 			return;
 		}
 	}
