@@ -33,6 +33,13 @@
 
 struct bt_vcp;
 
+struct bt_vcp_vr_ops {
+	void (*set_volume)(struct bt_vcp *vcp, int8_t volume, void *data);
+};
+
+bool bt_vcp_vr_set_ops(struct bt_vcp *vcp, struct bt_vcp_vr_ops *ops,
+			void *data);
+
 typedef void (*bt_vcp_destroy_func_t)(void *user_data);
 typedef void (*bt_vcp_debug_func_t)(const char *str, void *user_data);
 typedef void (*bt_vcp_func_t)(struct bt_vcp *vcp, void *user_data);
