@@ -50,6 +50,7 @@
 #include "src/service.h"
 #include "src/log.h"
 #include "src/error.h"
+#include "transport.h"
 
 #define VCS_UUID_STR "00001844-0000-1000-8000-00805f9b34fb"
 #define MEDIA_ENDPOINT_INTERFACE "org.bluez.MediaEndpoint1"
@@ -83,6 +84,20 @@ static struct vcp_data *vcp_data_new(struct btd_device *device)
 	return data;
 }
 
+static void vr_set_volume(struct bt_vcp *vcp, int8_t volume, void *data)
+{
+	struct vcp_data *user_data = data;
+	struct btd_device *device = user_data->device;
+
+	DBG("set volume");
+
+	media_transport_update_device_volume(device, volume);
+}
+
+static struct bt_vcp_vr_ops vcp_vr_ops = {
+	.set_volume	= vr_set_volume,
+};
+
 static void vcp_data_add(struct vcp_data *data)
 {
 	DBG("data %p", data);
@@ -94,6 +109,7 @@ static void vcp_data_add(struct vcp_data *data)
 
 	bt_vcp_set_debug(data->vcp, vcp_debug, NULL, NULL);
 
+	bt_vcp_vr_set_ops(data->vcp, &vcp_vr_ops, data);
 	if (!sessions)
 		sessions = queue_new();
 
@@ -178,6 +194,7 @@ static void vcp_attached(struct bt_vcp *vcp, void *user_data)
 	data->vcp = vcp;
 
 	vcp_data_add(data);
+
 }
 
 static int vcp_probe(struct btd_service *service)
