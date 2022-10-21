@@ -284,6 +284,12 @@ static void *iov_add_mem(struct iovec *iov, size_t len, const void *d)
 	return data;
 }
 
+static void *iov_append(struct iovec *iov, size_t len, const void *d)
+{
+	iov->iov_base = realloc(iov->iov_base, iov->iov_len + len);
+	return iov_add_mem(iov, len, d);
+}
+
 static void iov_free(void *data)
 {
 	struct iovec *iov = data;
@@ -2319,6 +2325,52 @@ static struct bt_ascs *bap_get_ascs(struct bt_bap *bap)
 	return bap->rdb->ascs;
 }
 
+static bool match_codec(const void *data, const void *user_data)
+{
+	const struct bt_bap_pac *pac = data;
+	const struct bt_bap_codec *codec = user_data;
+
+	return bap_codec_equal(&pac->codec, codec);
+}
+
+static struct bt_bap_pac *bap_pac_find(struct bt_bap_db *bdb, uint8_t type,
+					struct bt_bap_codec *codec)
+{
+	switch (type) {
+	case BT_BAP_SOURCE:
+		return queue_find(bdb->sources, match_codec, codec);
+	case BT_BAP_SINK:
+		return queue_find(bdb->sinks, match_codec, codec);
+	}
+
+	return NULL;
+}
+
+static void *ltv_merge(struct iovec *data, struct iovec *cont)
+{
+	uint8_t delimiter = 0;
+
+	iov_append(data, sizeof(delimiter), &delimiter);
+
+	return iov_append(data, cont->iov_len, cont->iov_base);
+}
+
+static void bap_pac_merge(struct bt_bap_pac *pac, struct iovec *data,
+					struct iovec *metadata)
+{
+	/* Merge data into existing record */
+	if (pac->data)
+		ltv_merge(pac->data, data);
+	else
+		pac->data = iov_dup(data, 1);
+
+	/* Merge metadata into existing record */
+	if (pac->metadata)
+		ltv_merge(pac->metadata, metadata);
+	else
+		pac->metadata = iov_dup(metadata, 1);
+}
+
 static struct bt_bap_pac *bap_pac_new(struct bt_bap_db *bdb, const char *name,
 					uint8_t type,
 					struct bt_bap_codec *codec,
@@ -2327,6 +2379,15 @@ static struct bt_bap_pac *bap_pac_new(struct bt_bap_db *bdb, const char *name,
 					struct iovec *metadata)
 {
 	struct bt_bap_pac *pac;
+
+	if (!qos) {
+		/* Check if there is already a PAC record for the codec */
+		pac = bap_pac_find(bdb, type, codec);
+		if (pac) {
+			bap_pac_merge(pac, data, metadata);
+			return pac;
+		}
+	}
 
 	pac = new0(struct bt_bap_pac, 1);
 	pac->bdb = bdb;
