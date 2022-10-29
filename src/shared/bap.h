@@ -249,6 +249,8 @@ uint8_t bt_bap_stream_get_dir(struct bt_bap_stream *stream);
 uint32_t bt_bap_stream_get_location(struct bt_bap_stream *stream);
 struct iovec *bt_bap_stream_get_config(struct bt_bap_stream *stream);
 struct bt_bap_qos *bt_bap_stream_get_qos(struct bt_bap_stream *stream);
+void bt_bap_stream_set_metadata(struct bt_bap_stream *stream,
+					struct iovec *meta);
 struct iovec *bt_bap_stream_get_metadata(struct bt_bap_stream *stream);
 
 struct io *bt_bap_stream_get_io(struct bt_bap_stream *stream);

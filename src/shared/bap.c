@@ -2787,7 +2787,7 @@ static void bap_parse_pacs(struct bt_bap *bap, uint8_t type,
 		struct bt_pac *p;
 		struct bt_ltv *cc;
 		struct bt_pac_metadata *meta;
-		struct iovec data, metadata;
+		struct iovec data, *metadata = NULL;
 
 		p = iov_pull_mem(&iov, sizeof(*p));
 		if (!p) {
@@ -2816,13 +2816,16 @@ static void bap_parse_pacs(struct bt_bap *bap, uint8_t type,
 		data.iov_len = p->cc_len;
 		data.iov_base = cc;
 
-		metadata.iov_len = meta->len;
-		metadata.iov_base = meta->data;
+		if (meta->len) {
+			metadata = new0(struct iovec, 1);
+			metadata->iov_len = meta->len;
+			metadata->iov_base = meta->data;
+		}
 
 		iov_pull_mem(&iov, meta->len);
 
 		pac = bap_pac_new(bap->rdb, NULL, type, &p->codec, NULL, &data,
-								&metadata);
+								metadata);
 		if (!pac)
 			continue;
 
@@ -4565,6 +4568,15 @@ struct bt_bap_qos *bt_bap_stream_get_qos(struct bt_bap_stream *stream)
 		return NULL;
 
 	return &stream->qos;
+}
+
+void bt_bap_stream_set_metadata(struct bt_bap_stream *stream,
+				struct iovec *meta)
+{
+	if (!stream)
+		return;
+
+	stream->meta = meta;
 }
 
 struct iovec *bt_bap_stream_get_metadata(struct bt_bap_stream *stream)
