@@ -481,6 +481,16 @@ static DBusMessage *set_configuration(DBusConnection *conn, DBusMessage *msg,
 	bt_bap_stream_set_user_data(ep->stream, ep->path);
 	ep->msg = dbus_message_ref(msg);
 
+	if (ep->metadata && ep->metadata->iov_len) {
+		struct iovec *meta;
+
+		meta = new0(struct iovec, 1);
+		meta->iov_base = new0(uint8_t, ep->metadata->iov_len);
+		meta->iov_len = ep->metadata->iov_len;
+		memcpy(meta->iov_base, ep->metadata->iov_base, meta->iov_len);
+		bt_bap_stream_set_metadata(ep->stream, meta);
+	}
+
 	return NULL;
 }
 
@@ -597,6 +607,16 @@ static void select_cb(struct bt_bap_pac *pac, int err, struct iovec *caps,
 	}
 
 	bt_bap_stream_set_user_data(ep->stream, ep->path);
+
+	if (metadata && metadata->iov_len) {
+		struct iovec *meta;
+
+		meta = new0(struct iovec, 1);
+		meta->iov_base = new0(uint8_t, metadata->iov_len);
+		meta->iov_len = metadata->iov_len;
+		memcpy(meta->iov_base, metadata->iov_base, meta->iov_len);
+		bt_bap_stream_set_metadata(ep->stream, meta);
+	}
 }
 
 static bool pac_found(struct bt_bap_pac *lpac, struct bt_bap_pac *rpac,
