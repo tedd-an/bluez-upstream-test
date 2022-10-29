@@ -34,9 +34,27 @@ Methods		void RegisterEndpoint(object endpoint, dict properties)
 					match the profile specification which
 					is indicated by the UUID.
 
+				uint16_t CompanyID:
+
+					Assigned number of Company ID that the
+					endpoint implements. It should be set to
+					appropriate value when Vendor Specific
+					Codec is used.
+
+				uint16_t VendorCodecID:
+
+					Vendor-specific codec ID that the endpoint
+					implements. It should be set to appropriate
+					value when Vendor Specific Codec is used.
+
 				array{byte} Capabilities:
 
 					Capabilities blob, it is used as it is
+					so the size and byte order must match.
+
+				array{byte} Metadata:
+
+					Metadata blob, it is used as it is
 					so the size and byte order must match.
 
 			Possible Errors: org.bluez.Error.InvalidArguments
