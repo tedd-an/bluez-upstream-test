@@ -63,7 +63,10 @@ struct endpoint {
 	char *path;
 	char *uuid;
 	uint8_t codec;
+	uint16_t cid;
+	uint16_t vid;
 	struct iovec *caps;
+	struct iovec *meta;
 	bool auto_accept;
 	bool acquiring;
 	uint8_t cig;
@@ -1643,6 +1646,7 @@ struct endpoint_config {
 	GDBusProxy *proxy;
 	struct endpoint *ep;
 	struct iovec *caps;
+	struct iovec *meta;
 	uint8_t target_latency;
 	const struct codec_qos *qos;
 };
@@ -1653,6 +1657,7 @@ static void append_properties(DBusMessageIter *iter,
 	DBusMessageIter dict;
 	struct codec_qos *qos = (void *)cfg->qos;
 	const char *key = "Capabilities";
+	const char *meta = "Metadata";
 
 	dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY, "{sv}", &dict);
 
@@ -1662,6 +1667,15 @@ static void append_properties(DBusMessageIter *iter,
 	g_dbus_dict_append_basic_array(&dict, DBUS_TYPE_STRING, &key,
 					DBUS_TYPE_BYTE, &cfg->caps->iov_base,
 					cfg->caps->iov_len);
+
+	if (cfg->meta->iov_len) {
+		g_dbus_dict_append_basic_array(&dict, DBUS_TYPE_STRING, &meta,
+					DBUS_TYPE_BYTE, &cfg->meta->iov_base,
+					cfg->meta->iov_len);
+
+		bt_shell_printf("Metadata:\n");
+		bt_shell_hexdump(cfg->meta->iov_base, cfg->meta->iov_len);
+	}
 
 	if (!qos)
 		goto done;
@@ -1755,6 +1769,9 @@ static DBusMessage *endpoint_select_properties_reply(struct endpoint *ep,
 	/* Copy capabilities */
 	iov_append(&cfg->caps, preset->data.iov_base, preset->data.iov_len);
 	cfg->target_latency = preset->latency;
+
+	/* Copy metadata */
+	iov_append(&cfg->meta, cfg->ep->meta->iov_base, cfg->ep->meta->iov_len);
 
 	if (preset->qos.phy)
 		/* Set QoS parameters */
@@ -1899,8 +1916,15 @@ static void endpoint_free(void *data)
 	struct endpoint *ep = data;
 
 	if (ep->caps) {
-		g_free(ep->caps->iov_base);
+		if (ep->caps->iov_base)
+			g_free(ep->caps->iov_base);
 		g_free(ep->caps);
+	}
+
+	if (ep->meta) {
+		if (ep->meta->iov_base)
+			g_free(ep->meta->iov_base);
+		g_free(ep->meta);
 	}
 
 	if (ep->msg)
@@ -1949,10 +1973,52 @@ static gboolean endpoint_get_capabilities(const GDBusPropertyTable *property,
 	return TRUE;
 }
 
+static gboolean endpoint_get_metadata(const GDBusPropertyTable *property,
+					DBusMessageIter *iter, void *data)
+{
+	struct endpoint *ep = data;
+	DBusMessageIter array;
+
+	dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY,
+				DBUS_TYPE_BYTE_AS_STRING, &array);
+
+	dbus_message_iter_append_fixed_array(&array, DBUS_TYPE_BYTE,
+				&ep->meta->iov_base,
+				ep->meta->iov_len);
+
+	dbus_message_iter_close_container(iter, &array);
+
+	return TRUE;
+}
+
+static gboolean endpoint_get_cid(const GDBusPropertyTable *property,
+					DBusMessageIter *iter, void *data)
+{
+	struct endpoint *ep = data;
+
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_UINT16, &ep->cid);
+
+	return TRUE;
+}
+
+static gboolean endpoint_get_vid(const GDBusPropertyTable *property,
+					DBusMessageIter *iter, void *data)
+{
+	struct endpoint *ep = data;
+
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_UINT16, &ep->vid);
+
+	return TRUE;
+}
+
+
 static const GDBusPropertyTable endpoint_properties[] = {
 	{ "UUID", "s", endpoint_get_uuid, NULL, NULL },
 	{ "Codec", "y", endpoint_get_codec, NULL, NULL },
 	{ "Capabilities", "ay", endpoint_get_capabilities, NULL, NULL },
+	{ "Metadata", "ay", endpoint_get_metadata, NULL, NULL },
+	{ "CompanyID", "q", endpoint_get_cid, NULL, NULL },
+	{ "VendorCodecID", "q", endpoint_get_vid, NULL, NULL },
 	{ }
 };
 
@@ -1961,6 +2027,7 @@ static void register_endpoint_setup(DBusMessageIter *iter, void *user_data)
 	struct endpoint *ep = user_data;
 	DBusMessageIter dict;
 	const char *key = "Capabilities";
+	const char *meta = "Metadata";
 
 	dbus_message_iter_append_basic(iter, DBUS_TYPE_OBJECT_PATH, &ep->path);
 
@@ -1970,12 +2037,29 @@ static void register_endpoint_setup(DBusMessageIter *iter, void *user_data)
 
 	g_dbus_dict_append_entry(&dict, "Codec", DBUS_TYPE_BYTE, &ep->codec);
 
-	g_dbus_dict_append_basic_array(&dict, DBUS_TYPE_STRING, &key,
+	g_dbus_dict_append_entry(&dict, "CompanyID", DBUS_TYPE_UINT16,
+							&ep->cid);
+
+	g_dbus_dict_append_entry(&dict, "VendorCodecID", DBUS_TYPE_UINT16,
+							&ep->vid);
+
+	if (ep->caps->iov_len) {
+		g_dbus_dict_append_basic_array(&dict, DBUS_TYPE_STRING, &key,
 					DBUS_TYPE_BYTE, &ep->caps->iov_base,
 					ep->caps->iov_len);
 
-	bt_shell_printf("Capabilities:\n");
-	bt_shell_hexdump(ep->caps->iov_base, ep->caps->iov_len);
+		bt_shell_printf("Capabilities:\n");
+		bt_shell_hexdump(ep->caps->iov_base, ep->caps->iov_len);
+	}
+
+	if (ep->meta->iov_len) {
+		bt_shell_printf("Metadata:\n");
+		bt_shell_hexdump(ep->meta->iov_base, ep->meta->iov_len);
+
+		g_dbus_dict_append_basic_array(&dict, DBUS_TYPE_STRING, &meta,
+					DBUS_TYPE_BYTE, &ep->meta->iov_base,
+					ep->meta->iov_len);
+	}
 
 	dbus_message_iter_close_container(iter, &dict);
 }
@@ -2094,19 +2178,93 @@ static void endpoint_auto_accept(const char *input, void *user_data)
 	bt_shell_prompt_input(ep->path, "CIG (auto/value):", endpoint_cig, ep);
 }
 
+static void endpoint_set_metadata(const char *input, void *user_data)
+{
+	struct endpoint *ep = user_data;
+
+	if (ep->meta && ep->meta->iov_base) {
+		g_free(ep->meta->iov_base);
+		ep->meta->iov_base = NULL;
+	} else
+		ep->meta = g_new0(struct iovec, 1);
+
+	ep->meta->iov_base = str2bytearray((char *) input, &ep->meta->iov_len);
+
+	if (ep->meta->iov_len == 0x01 && (*(uint8_t *)(ep->meta->iov_base)) ==
+			0x00) {
+		g_free(ep->meta->iov_base);
+		ep->meta->iov_base = NULL;
+		ep->meta->iov_len = 0x00;
+	}
+
+	bt_shell_prompt_input(ep->path, "Auto Accept (yes/no):",
+					endpoint_auto_accept, ep);
+}
+
+static void endpoint_set_vid(const char *input, void *user_data)
+{
+	struct endpoint *ep = user_data;
+	char *endptr = NULL;
+	int value;
+
+	value = strtol(input, &endptr, 0);
+
+	if (!endptr || *endptr != '\0' || value > UINT16_MAX) {
+		bt_shell_printf("Invalid argument: %s\n", input);
+		return bt_shell_noninteractive_quit(EXIT_FAILURE);
+	}
+
+	ep->vid = value;
+
+	bt_shell_prompt_input(ep->path, "Enter Metadata:",
+					endpoint_set_metadata, ep);
+}
+
+static void endpoint_set_cid(const char *input, void *user_data)
+{
+	struct endpoint *ep = user_data;
+	char *endptr = NULL;
+	int value;
+
+	value = strtol(input, &endptr, 0);
+
+	if (!endptr || *endptr != '\0' || value > UINT16_MAX) {
+		bt_shell_printf("Invalid argument: %s\n", input);
+		return bt_shell_noninteractive_quit(EXIT_FAILURE);
+	}
+
+	ep->cid = value;
+
+	bt_shell_prompt_input(ep->path, "Vendor Codec ID:",
+					endpoint_set_vid, ep);
+}
+
 static void endpoint_set_capabilities(const char *input, void *user_data)
 {
 	struct endpoint *ep = user_data;
 
-	if (ep->caps)
+	if (ep->caps && ep->caps->iov_base) {
 		g_free(ep->caps->iov_base);
-	else
+		ep->caps->iov_base = NULL;
+	} else
 		ep->caps = g_new0(struct iovec, 1);
 
 	ep->caps->iov_base = str2bytearray((char *) input, &ep->caps->iov_len);
 
-	bt_shell_prompt_input(ep->path, "Auto Accept (yes/no):",
-						endpoint_auto_accept, ep);
+	if (ep->caps->iov_len == 0x01 &&
+			(*(uint8_t *)(ep->caps->iov_base)) == 0x00) {
+		g_free(ep->caps->iov_base);
+		ep->caps->iov_base = NULL;
+		ep->caps->iov_len = 0x00;
+	}
+
+	if (ep->codec == 0xff) {
+		bt_shell_prompt_input(ep->path, "Enter Company ID:",
+						endpoint_set_cid, ep);
+	} else {
+		bt_shell_prompt_input(ep->path, "Enter Metadata:",
+						endpoint_set_metadata, ep);
+	}
 }
 
 static char *uuid_generator(const char *text, int state)
@@ -2175,8 +2333,15 @@ static void cmd_register_endpoint(int argc, char *argv[])
 			iov_append(&ep->caps, cap->data.iov_base,
 							cap->data.iov_len);
 
-			bt_shell_prompt_input(ep->path, "Auto Accept (yes/no):",
-						endpoint_auto_accept, ep);
+			if (ep->codec == 0xff) {
+				bt_shell_prompt_input(ep->path,
+						"Enter Company ID:",
+						endpoint_set_cid, ep);
+			} else {
+				bt_shell_prompt_input(ep->path,
+						"Enter Metadata:",
+						endpoint_set_metadata, ep);
+			}
 		} else
 			bt_shell_prompt_input(ep->path, "Enter capabilities:",
 						endpoint_set_capabilities, ep);
