@@ -2721,6 +2721,14 @@ struct bt_bap *bt_bap_ref(struct bt_bap *bap)
 	return bap;
 }
 
+static struct bt_bap *bt_bap_ref_safe(struct bt_bap *bap)
+{
+	if (!bap || !bap->ref_count)
+		return NULL;
+
+	return bt_bap_ref(bap);
+}
+
 void bt_bap_unref(struct bt_bap *bap)
 {
 	if (!bap)
@@ -2739,7 +2747,8 @@ static void bap_notify_ready(struct bt_bap *bap)
 	if (!queue_isempty(bap->pending))
 		return;
 
-	bt_bap_ref(bap);
+	if (!bt_bap_ref_safe(bap))
+		return;
 
 	for (entry = queue_get_entries(bap->ready_cbs); entry;
 							entry = entry->next) {
