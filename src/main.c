@@ -60,6 +60,9 @@
 #define DEFAULT_TEMPORARY_TIMEOUT         30 /* 30 seconds */
 #define DEFAULT_NAME_REQUEST_RETRY_DELAY 300 /* 5 minutes */
 
+/*CSIP Profile - Server */
+#define DEFAULT_SIRK "761FAE703ED681F0C50B34155B6434FB"
+
 #define SHUTDOWN_GRACE_SECONDS 10
 
 struct btd_opts btd_opts;
@@ -145,6 +148,14 @@ static const char *gatt_options[] = {
 	NULL
 };
 
+static const char *csip_options[] = {
+	"CsisSirkType",
+	"CsisSirkValue",
+	"CsisSize",
+	"CsisRank",
+	NULL
+};
+
 static const char *avdtp_options[] = {
 	"SessionMode",
 	"StreamMode",
@@ -165,11 +176,55 @@ static const struct group_table {
 	{ "LE",		le_options },
 	{ "Policy",	policy_options },
 	{ "GATT",	gatt_options },
+	{ "CSIP",	csip_options },
 	{ "AVDTP",	avdtp_options },
 	{ "AdvMon",	advmon_options },
 	{ }
 };
 
+#ifndef MIN
+#define MIN(x, y) ((x) < (y) ? (x) : (y))
+#endif
+
+static int8_t check_sirk_alpha_numeric(char *str)
+{
+	int8_t val;
+	char *s = str;
+
+	if (strlen(s) != 32) /* 32 Bytes of Alpha numeric string */
+		return 0;
+
+	for ( ; *s; s++) {
+		if (((*s >= '0') & (*s <= '9'))
+			|| ((*s >= 'a') && (*s <= 'z'))
+			|| ((*s >= 'A') && (*s <= 'Z'))) {
+			val = 1;
+		} else {
+			val = 0;
+			break;
+		}
+	}
+
+	return val;
+}
+
+static size_t hex2bin(const char *hexstr, uint8_t *buf, size_t buflen)
+{
+	size_t i, len;
+
+	if (!hexstr)
+		return 0;
+
+	len = MIN((strlen(hexstr) / 2), buflen);
+	memset(buf, 0, len);
+
+	for (i = 0; i < len; i++) {
+		if (sscanf(hexstr + (i * 2), "%02hhX", &buf[i]) != 1)
+			continue;
+	}
+
+	return len;
+}
 
 GKeyFile *btd_get_main_conf(void)
 {
@@ -925,6 +980,58 @@ static void parse_config(GKeyFile *config)
 		btd_opts.gatt_channels = val;
 	}
 
+	val = g_key_file_get_integer(config, "CSIP", "CsisSirkType", &err);
+	if (err) {
+		DBG("%s", err->message);
+		g_clear_error(&err);
+	} else {
+		val = MIN(val, 2);
+		val = MAX(val, 1);
+		DBG("Csis Type: %u", val);
+		btd_opts.csis_defaults.cs_size = val;
+	}
+
+	str = g_key_file_get_string(config, "CSIP", "CsisSirkValue", &err);
+	if (err) {
+		DBG("%s", err->message);
+		g_clear_error(&err);
+	} else {
+		DBG("Csis Sirk: %s", str);
+
+		if (!check_sirk_alpha_numeric(str)) {
+			DBG("SIRK is not apha numeric Value");
+			return;
+		}
+
+		btd_opts.csis_defaults.sirk_type = 1; /* Plain Text - Type*/
+		hex2bin(str, btd_opts.csis_defaults.sirk_val,
+			sizeof(btd_opts.csis_defaults.sirk_val));
+
+		g_free(str);
+	}
+
+	val = g_key_file_get_integer(config, "CSIP", "CsisSize", &err);
+	if (err) {
+		DBG("%s", err->message);
+		g_clear_error(&err);
+	} else {
+		val = MIN(val, 0xFF);
+		val = MAX(val, 0);
+		DBG("Csis Size: %u", val);
+		btd_opts.csis_defaults.cs_size = val;
+	}
+
+	val = g_key_file_get_integer(config, "CSIP", "CsisRank", &err);
+	if (err) {
+		DBG("%s", err->message);
+		g_clear_error(&err);
+	} else {
+		val = MIN(val, 0xFF);
+		val = MAX(val, 0);
+		DBG("Csis Rank: %u", val);
+		btd_opts.csis_defaults.cs_rank = val;
+	}
+
 	str = g_key_file_get_string(config, "AVDTP", "SessionMode", &err);
 	if (err) {
 		DBG("%s", err->message);
@@ -998,6 +1105,12 @@ static void init_defaults(void)
 	btd_opts.defaults.br.page_scan_type = 0xFFFF;
 	btd_opts.defaults.br.scan_type = 0xFFFF;
 	btd_opts.defaults.le.enable_advmon_interleave_scan = 0xFF;
+
+	btd_opts.csis_defaults.sirk_type = 1;
+	hex2bin(DEFAULT_SIRK, btd_opts.csis_defaults.sirk_val,
+			sizeof(btd_opts.csis_defaults.sirk_val));
+	btd_opts.csis_defaults.cs_size = 1;
+	btd_opts.csis_defaults.cs_rank = 1;
 
 	if (sscanf(VERSION, "%hhu.%hhu", &major, &minor) != 2)
 		return;
