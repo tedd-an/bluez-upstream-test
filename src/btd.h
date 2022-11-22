@@ -86,6 +86,13 @@ struct btd_defaults {
 	struct btd_le_defaults le;
 };
 
+struct btd_csis {
+	uint8_t sirk_type;
+	uint8_t sirk_val[16];
+	uint8_t cs_size;
+	uint8_t cs_rank;
+};
+
 struct btd_avdtp_opts {
 	uint8_t  session_mode;
 	uint8_t  stream_mode;
@@ -135,6 +142,8 @@ struct btd_opts {
 	enum jw_repairing_t jw_repairing;
 
 	struct btd_advmon_opts	advmon;
+
+	struct btd_csis csis_defaults;
 };
 
 extern struct btd_opts btd_opts;
