@@ -183,6 +183,7 @@ struct btd_device {
 	bool		le;
 	bool		pending_paired;		/* "Paired" waiting for SDP */
 	bool		svc_refreshed;
+	uint8_t		disconnect_reason;
 	bool		refresh_discovery;
 
 	/* Manage whether this device can wake the system from suspend.
@@ -1130,6 +1131,18 @@ dev_property_get_svc_resolved(const GDBusPropertyTable *property,
 	gboolean val = device->svc_refreshed;
 
 	dbus_message_iter_append_basic(iter, DBUS_TYPE_BOOLEAN, &val);
+
+	return TRUE;
+}
+
+static gboolean
+dev_property_get_disconnect_reason(const GDBusPropertyTable *property,
+					DBusMessageIter *iter, void *data)
+{
+	struct btd_device *device = data;
+	guint8 val = device->disconnect_reason;
+
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_BYTE, &val);
 
 	return TRUE;
 }
@@ -2624,6 +2637,14 @@ static void device_set_svc_refreshed(struct btd_device *device, bool value)
 					DEVICE_INTERFACE, "ServicesResolved");
 }
 
+static void btd_device_disconnected_cb(struct btd_device *device, uint8_t reason)
+{
+	device->disconnect_reason = reason;
+
+	g_dbus_emit_property_changed(dbus_conn, device->path,
+					DEVICE_INTERFACE, "DisconnectReason");
+}
+
 static void device_svc_resolved(struct btd_device *dev, uint8_t browse_type,
 						uint8_t bdaddr_type, int err)
 {
@@ -2987,6 +3008,7 @@ static const GDBusPropertyTable device_properties[] = {
 	{ "TxPower", "n", dev_property_get_tx_power, NULL,
 					dev_property_exists_tx_power },
 	{ "ServicesResolved", "b", dev_property_get_svc_resolved, NULL, NULL },
+	{ "DisconnectReason", "y", dev_property_get_disconnect_reason, NULL, NULL },
 	{ "AdvertisingFlags", "ay", dev_property_get_flags, NULL,
 					dev_property_flags_exist,
 					G_DBUS_PROPERTY_FLAG_EXPERIMENTAL},
@@ -3909,6 +3931,8 @@ static struct btd_device *device_new(struct btd_adapter *adapter,
 		g_free(device);
 		return NULL;
 	}
+
+	device->disconnect_reason = MGMT_DEV_DISCONN_UNKNOWN;
 
 	memset(device->ad_flags, INVALID_FLAGS, sizeof(device->ad_flags));
 
@@ -6910,11 +6934,13 @@ void btd_device_init(void)
 	dbus_conn = btd_get_dbus_connection();
 	service_state_cb_id = btd_service_add_state_cb(
 						service_state_changed, NULL);
+	btd_add_disconnect_cb(btd_device_disconnected_cb);
 }
 
 void btd_device_cleanup(void)
 {
 	btd_service_remove_state_cb(service_state_cb_id);
+	btd_remove_disconnect_cb(btd_device_disconnected_cb);
 }
 
 void btd_device_set_volume(struct btd_device *device, int8_t volume)
