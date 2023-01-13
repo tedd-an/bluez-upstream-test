@@ -344,8 +344,10 @@ static void pac_foreach(void *data, void *user_data)
 
 	p = util_iov_push(iov, sizeof(*p));
 	p->codec.id = pac->codec.id;
-	p->codec.cid = pac->codec.cid;
-	p->codec.vid = pac->codec.vid;
+	if (p->codec.id == 0xff) {
+		p->codec.cid = cpu_to_le16(pac->codec.cid);
+		p->codec.vid = cpu_to_le16(pac->codec.vid);
+	}
 
 	if (pac->data) {
 		p->cc_len = pac->data->iov_len;
@@ -2773,7 +2775,7 @@ static void bap_parse_pacs(struct bt_bap *bap, uint8_t type,
 		struct bt_pac *p;
 		struct bt_ltv *cc;
 		struct bt_pac_metadata *meta;
-		struct iovec data, metadata;
+		struct iovec data, *metadata = NULL;
 
 		p = util_iov_pull_mem(&iov, sizeof(*p));
 		if (!p) {
@@ -2802,8 +2804,11 @@ static void bap_parse_pacs(struct bt_bap *bap, uint8_t type,
 		data.iov_len = p->cc_len;
 		data.iov_base = cc;
 
-		metadata.iov_len = meta->len;
-		metadata.iov_base = meta->data;
+		if (meta->len) {
+			metadata = new0(struct iovec, 1);
+			metadata->iov_len = meta->len;
+			metadata->iov_base = meta->data;
+		}
 
 		util_iov_pull_mem(&iov, meta->len);
 
@@ -2813,12 +2818,14 @@ static void bap_parse_pacs(struct bt_bap *bap, uint8_t type,
 		/* Check if there is already a PAC record for the codec */
 		pac = bap_pac_find(bap->rdb, type, &p->codec);
 		if (pac) {
-			bap_pac_merge(pac, &data, &metadata);
+			bap_pac_merge(pac, &data, metadata);
+			free(metadata);
 			continue;
 		}
 
 		pac = bap_pac_new(bap->rdb, NULL, type, &p->codec, NULL, &data,
-								&metadata);
+								metadata);
+		free(metadata);
 		if (!pac)
 			continue;
 
