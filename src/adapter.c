@@ -9033,6 +9033,22 @@ bool btd_adapter_ssp_enabled(struct btd_adapter *adapter)
 	return false;
 }
 
+bool btd_adapter_cis_central_capable(struct btd_adapter *adapter)
+{
+	if (adapter->current_settings & MGMT_SETTING_CIS_CENTRAL)
+		return true;
+
+	return false;
+}
+
+bool btd_adapter_cis_peripheral_capable(struct btd_adapter *adapter)
+{
+	if (adapter->current_settings & MGMT_SETTING_CIS_PERIPHERAL)
+		return true;
+
+	return false;
+}
+
 void btd_adapter_set_oob_handler(struct btd_adapter *adapter,
 						struct oob_handler *handler)
 {
