@@ -712,6 +712,33 @@ static void read_supported_features_rsp(uint16_t index, const void *data,
 	packet_hexdump(data + 3, size - 3);
 }
 
+static void configure_ppag(uint16_t index, const void *data, uint8_t size)
+{
+	uint32_t mcc = get_le32(data);
+	uint32_t selector = get_le32(data + 4);
+	uint32_t delta = get_le32(data + 8);
+	char *ppag_selector;
+
+	switch (selector) {
+	case 0x00:
+		ppag_selector = "Enable";
+		break;
+	case 0x01:
+		ppag_selector = "Disable";
+		break;
+	case 0x02:
+		ppag_selector = "Test Mode";
+		break;
+	default:
+		ppag_selector = "Unknown";
+		break;
+	}
+
+	print_field("Mcc: 0x%8.8x", mcc);
+	print_field("Selector: %s", ppag_selector);
+	print_field("Delta: 0x%8.8x", delta);
+}
+
 static const struct vendor_ocf vendor_ocf_table[] = {
 	{ 0x001, "Reset",
 			reset_cmd, 8, true,
@@ -777,7 +804,9 @@ static const struct vendor_ocf vendor_ocf_table[] = {
 	{ 0x0a6, "Read Supported Features",
 			read_supported_features_cmd, 1, true,
 			read_supported_features_rsp, 19, true },
-
+	{ 0x0219, "Configure Per Platform Antenna Gain",
+			configure_ppag, 12, true,
+			status_rsp, 1, true},
 	{ }
 };
 
