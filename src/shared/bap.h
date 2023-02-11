@@ -111,6 +111,8 @@ struct bt_bap_pac *bt_bap_add_pac(struct gatt_db *db, const char *name,
 					struct iovec *data,
 					struct iovec *metadata);
 
+int bt_bap_set_client_only(struct gatt_db *db);
+
 struct bt_bap_pac_ops {
 	int (*select)(struct bt_bap_pac *lpac, struct bt_bap_pac *rpac,
 			struct bt_bap_pac_qos *qos,

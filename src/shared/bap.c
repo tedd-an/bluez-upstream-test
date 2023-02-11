@@ -109,6 +109,7 @@ struct bt_ascs {
 };
 
 struct bt_bap_db {
+	bool client_only;
 	struct gatt_db *db;
 	struct bt_pacs *pacs;
 	struct bt_ascs *ascs;
@@ -620,7 +621,7 @@ static struct bt_bap_endpoint *bap_get_endpoint(struct bt_bap_db *db,
 {
 	struct bt_bap_endpoint *ep;
 
-	if (!db || !attr)
+	if (!db || !attr || db->client_only)
 		return NULL;
 
 	ep = queue_find(db->endpoints, bap_endpoint_match, attr);
@@ -652,7 +653,7 @@ static struct bt_bap_endpoint *bap_get_endpoint_id(struct bt_bap *bap,
 	struct gatt_db_attribute *attr = NULL;
 	size_t i;
 
-	if (!bap || !db)
+	if (!bap || !db || db->client_only)
 		return NULL;
 
 	ep = queue_find(db->endpoints, bap_endpoint_match_id, UINT_TO_PTR(id));
@@ -2170,7 +2171,7 @@ static struct bt_ascs *ascs_new(struct gatt_db *db)
 	return ascs;
 }
 
-static struct bt_bap_db *bap_db_new(struct gatt_db *db)
+static struct bt_bap_db *bap_db_new(struct gatt_db *db, bool client_only)
 {
 	struct bt_bap_db *bdb;
 
@@ -2178,19 +2179,23 @@ static struct bt_bap_db *bap_db_new(struct gatt_db *db)
 		return NULL;
 
 	bdb = new0(struct bt_bap_db, 1);
+	bdb->client_only = client_only;
 	bdb->db = gatt_db_ref(db);
 	bdb->sinks = queue_new();
 	bdb->sources = queue_new();
-	bdb->endpoints = queue_new();
 
 	if (!bap_db)
 		bap_db = queue_new();
 
-	bdb->pacs = pacs_new(db);
-	bdb->pacs->bdb = bdb;
+	if (!client_only) {
+		bdb->endpoints = queue_new();
 
-	bdb->ascs = ascs_new(db);
-	bdb->ascs->bdb = bdb;
+		bdb->pacs = pacs_new(db);
+		bdb->pacs->bdb = bdb;
+
+		bdb->ascs = ascs_new(db);
+		bdb->ascs->bdb = bdb;
+	}
 
 	queue_push_tail(bap_db, bdb);
 
@@ -2205,7 +2210,20 @@ static struct bt_bap_db *bap_get_db(struct gatt_db *db)
 	if (bdb)
 		return bdb;
 
-	return bap_db_new(db);
+	return bap_db_new(db, false);
+}
+
+int bt_bap_set_client_only(struct gatt_db *db)
+{
+	struct bt_bap_db *bdb;
+
+	bdb = queue_find(bap_db, bap_db_match, db);
+	if (bdb)
+		return bdb->client_only ? 0 : -EINVAL;
+
+	bap_db_new(db, true);
+
+	return 0;
 }
 
 static struct bt_pacs *bap_get_pacs(struct bt_bap *bap)
@@ -2328,6 +2346,9 @@ static void bap_add_sink(struct bt_bap_pac *pac)
 
 	queue_push_tail(pac->bdb->sinks, pac);
 
+	if (pac->bdb->client_only)
+		return;
+
 	memset(value, 0, sizeof(value));
 
 	iov.iov_base = value;
@@ -2345,6 +2366,9 @@ static void bap_add_source(struct bt_bap_pac *pac)
 	uint8_t value[512];
 
 	queue_push_tail(pac->bdb->sources, pac);
+
+	if (pac->bdb->client_only)
+		return;
 
 	memset(value, 0, sizeof(value));
 
