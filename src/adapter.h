@@ -256,6 +256,13 @@ void btd_adapter_for_each_device(struct btd_adapter *adapter,
 
 bool btd_le_connect_before_pairing(void);
 
+enum adapter_features {
+	ADAPTER_CIS_CENTRAL		= 1 << 0,
+	ADAPTER_CIS_PERIPHERAL		= 1 << 1,
+};
+
+bool btd_adapter_has_features(struct btd_adapter *adapter, uint32_t features);
+
 enum experimental_features {
 	EXP_FEAT_DEBUG			= 1 << 0,
 	EXP_FEAT_LE_SIMULT_ROLES	= 1 << 1,

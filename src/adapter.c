@@ -10712,6 +10712,19 @@ bool btd_le_connect_before_pairing(void)
 	return false;
 }
 
+bool btd_adapter_has_features(struct btd_adapter *adapter, uint32_t features)
+{
+	uint32_t flags = 0;
+
+	if (adapter->current_settings & MGMT_SETTING_CIS_CENTRAL)
+		flags |= ADAPTER_CIS_CENTRAL;
+
+	if (adapter->current_settings & MGMT_SETTING_CIS_PERIPHERAL)
+		flags |= ADAPTER_CIS_PERIPHERAL;
+
+	return (flags & features) ? true : false;
+}
+
 bool btd_has_kernel_features(uint32_t features)
 {
 	return (kernel_features & features) ? true : false;
