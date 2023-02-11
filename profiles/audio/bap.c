@@ -1259,6 +1259,7 @@ static int bap_probe(struct btd_service *service)
 	struct btd_adapter *adapter = device_get_adapter(device);
 	struct btd_gatt_database *database = btd_adapter_get_database(adapter);
 	struct bap_data *data = btd_service_get_user_data(service);
+	struct gatt_db *adapter_db, *device_db;
 	char addr[18];
 
 	ba2str(device_get_address(device), addr);
@@ -1269,17 +1270,32 @@ static int bap_probe(struct btd_service *service)
 		return -ENOTSUP;
 	}
 
+	if (!btd_adapter_has_features(adapter, ADAPTER_CIS_CENTRAL) &&
+	    !btd_adapter_has_features(adapter, ADAPTER_CIS_PERIPHERAL)) {
+		DBG("BAP requires CIS features, unsupported by adapter");
+		return -ENOTSUP;
+	}
+
 	/* Ignore, if we were probed for this device already */
 	if (data) {
 		error("Profile probed twice for the same device!");
 		return -EINVAL;
 	}
 
+	adapter_db = btd_gatt_database_get_db(database);
+
+	if (!btd_adapter_has_features(adapter, ADAPTER_CIS_PERIPHERAL))
+		bt_bap_set_client_only(adapter_db);
+
+	if (btd_adapter_has_features(adapter, ADAPTER_CIS_CENTRAL))
+		device_db = btd_device_get_gatt_db(device);
+	else
+		device_db = NULL;
+
 	data = bap_data_new(device);
 	data->service = service;
 
-	data->bap = bt_bap_new(btd_gatt_database_get_db(database),
-					btd_device_get_gatt_db(device));
+	data->bap = bt_bap_new(adapter_db, device_db);
 	if (!data->bap) {
 		error("Unable to create BAP instance");
 		free(data);
@@ -1303,6 +1319,7 @@ static int bap_probe(struct btd_service *service)
 static int bap_accept(struct btd_service *service)
 {
 	struct btd_device *device = btd_service_get_device(service);
+	struct btd_adapter *adapter = device_get_adapter(device);
 	struct bt_gatt_client *client = btd_device_get_gatt_client(device);
 	struct bap_data *data = btd_service_get_user_data(service);
 	char addr[18];
@@ -1313,6 +1330,11 @@ static int bap_accept(struct btd_service *service)
 	if (!data) {
 		error("BAP service not handled by profile");
 		return -EINVAL;
+	}
+
+	if (!btd_adapter_has_features(adapter, ADAPTER_CIS_CENTRAL)) {
+		btd_service_connecting_complete(service, 0);
+		return 0;
 	}
 
 	if (!bt_bap_attach(data->bap, client)) {

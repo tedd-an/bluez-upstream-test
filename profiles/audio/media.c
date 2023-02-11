@@ -1110,6 +1110,7 @@ static void bap_debug(const char *str, void *user_data)
 static bool endpoint_init_pac(struct media_endpoint *endpoint, uint8_t type,
 								int *err)
 {
+	struct btd_adapter *adapter = endpoint->adapter->btd_adapter;
 	struct btd_gatt_database *database;
 	struct gatt_db *db;
 	struct iovec data;
@@ -1122,7 +1123,7 @@ static bool endpoint_init_pac(struct media_endpoint *endpoint, uint8_t type,
 		return false;
 	}
 
-	database = btd_adapter_get_database(endpoint->adapter->btd_adapter);
+	database = btd_adapter_get_database(adapter);
 	if (!database) {
 		error("Adapter database not found");
 		return false;
@@ -1157,6 +1158,9 @@ static bool endpoint_init_pac(struct media_endpoint *endpoint, uint8_t type,
 		metadata->iov_base = endpoint->metadata;
 		metadata->iov_len = endpoint->metadata_size;
 	}
+
+	if (!btd_adapter_has_features(adapter, ADAPTER_CIS_PERIPHERAL))
+		bt_bap_set_client_only(db);
 
 	endpoint->pac = bt_bap_add_vendor_pac(db, name, type, endpoint->codec,
 				endpoint->cid, endpoint->vid, &endpoint->qos,
