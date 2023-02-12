@@ -1483,6 +1483,19 @@ const char *media_transport_get_path(struct media_transport *transport)
 	return transport->path;
 }
 
+void *media_transport_get_stream(struct media_transport *transport)
+{
+	struct bap_transport *bap;
+	const char *uuid;
+
+	uuid = media_endpoint_get_uuid(transport->endpoint);
+	if (strcasecmp(uuid, PAC_SINK_UUID) && strcasecmp(uuid, PAC_SOURCE_UUID))
+		return NULL;
+
+	bap = transport->data;
+	return bap->stream;
+}
+
 void media_transport_update_delay(struct media_transport *transport,
 							uint16_t delay)
 {
