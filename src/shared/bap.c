@@ -158,6 +158,7 @@ struct bt_bap {
 	struct bt_att *att;
 	struct bt_bap_req *req;
 	unsigned int cp_id;
+	unsigned int client_ready_id;
 
 	unsigned int process_id;
 	unsigned int disconn_id;
@@ -3733,40 +3734,9 @@ static void bap_attach_att(struct bt_bap *bap, struct bt_att *att)
 							bap, NULL);
 }
 
-bool bt_bap_attach(struct bt_bap *bap, struct bt_gatt_client *client)
+static void bap_attach_finish(struct bt_bap *bap)
 {
 	bt_uuid_t uuid;
-
-	if (queue_find(sessions, NULL, bap)) {
-		/* If instance already been set but there is no client proceed
-		 * to clone it otherwise considered it already attached.
-		 */
-		if (client && !bap->client)
-			goto clone;
-		return true;
-	}
-
-	if (!sessions)
-		sessions = queue_new();
-
-	queue_push_tail(sessions, bap);
-
-	queue_foreach(bap_cbs, bap_attached, bap);
-
-	if (!client) {
-		bap_attach_att(bap, bap->att);
-		return true;
-	}
-
-	if (bap->client)
-		return false;
-
-clone:
-	bap->client = bt_gatt_client_clone(client);
-	if (!bap->client)
-		return false;
-
-	bap_attach_att(bap, bt_gatt_client_get_att(client));
 
 	if (bap->rdb->pacs) {
 		uint16_t value_handle;
@@ -3798,7 +3768,7 @@ clone:
 
 		bap_notify_ready(bap);
 
-		return true;
+		return;
 	}
 
 	bt_uuid16_create(&uuid, PACS_UUID);
@@ -3806,6 +3776,57 @@ clone:
 
 	bt_uuid16_create(&uuid, ASCS_UUID);
 	gatt_db_foreach_service(bap->rdb->db, &uuid, foreach_ascs_service, bap);
+}
+
+static void bap_attach_ready_cb(bool success, uint8_t att_ecode,
+								void *user_data)
+{
+	struct bt_bap *bap = user_data;
+
+	bap->client_ready_id = 0;
+
+	bap_attach_finish(bap);
+}
+
+bool bt_bap_attach(struct bt_bap *bap, struct bt_gatt_client *client)
+{
+	if (queue_find(sessions, NULL, bap)) {
+		/* If instance already been set but there is no client proceed
+		 * to clone it otherwise considered it already attached.
+		 */
+		if (client && !bap->client)
+			goto clone;
+		return true;
+	}
+
+	if (!sessions)
+		sessions = queue_new();
+
+	queue_push_tail(sessions, bap);
+
+	queue_foreach(bap_cbs, bap_attached, bap);
+
+	if (!client) {
+		bap_attach_att(bap, bap->att);
+		return true;
+	}
+
+	if (bap->client)
+		return false;
+
+clone:
+	bap->client = bt_gatt_client_clone(client);
+	if (!bap->client)
+		return false;
+
+	bap_attach_att(bap, bt_gatt_client_get_att(bap->client));
+
+	if (bt_gatt_client_is_ready(bap->client)) {
+		bap_attach_finish(bap);
+	} else {
+		bap->client_ready_id = bt_gatt_client_ready_register(
+				bap->client, bap_attach_ready_cb, bap, NULL);
+	}
 
 	return true;
 }
@@ -3823,6 +3844,12 @@ void bt_bap_detach(struct bt_bap *bap)
 
 	if (!queue_remove(sessions, bap))
 		return;
+
+	if (bap->client_ready_id) {
+		bt_gatt_client_ready_unregister(bap->client,
+						bap->client_ready_id);
+		bap->client_ready_id = 0;
+	}
 
 	bt_gatt_client_unref(bap->client);
 	bap->client = NULL;
