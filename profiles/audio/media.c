@@ -1085,19 +1085,20 @@ static int pac_config(struct bt_bap_stream *stream, struct iovec *cfg,
 static void pac_clear(struct bt_bap_stream *stream, void *user_data)
 {
 	struct media_endpoint *endpoint = user_data;
-	struct media_transport *transport;
-	const char *path;
+	GSList *item;
 
-	path = bt_bap_stream_get_user_data(stream);
-	if (!path)
-		return;
+	DBG("endpoint %p stream %p", endpoint, stream);
 
-	DBG("endpoint %p path %s", endpoint, path);
+	item = endpoint->transports;
+	while (item) {
+		struct media_transport *transport = item->data;
 
-	transport = find_transport(endpoint, path);
-	if (transport) {
-		clear_configuration(endpoint, transport);
-		bt_bap_stream_set_user_data(stream, NULL);
+		if (media_transport_get_stream(transport) == stream) {
+			clear_configuration(endpoint, transport);
+			item = endpoint->transports;
+		} else {
+			item = item->next;
+		}
 	}
 }
 
