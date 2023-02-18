@@ -289,6 +289,10 @@ if (test "${enable_external_ell}" = "yes"); then
 	AC_SUBST(ELL_CFLAGS)
 	AC_SUBST(ELL_LIBS)
 fi
+if (test "${enable_external_ell}" != "yes"); then
+	AC_CHECK_FILE(../ell, dummy=yes,
+		AC_MSG_ERROR(ELL source is required at ../ell))
+fi
 AM_CONDITIONAL(EXTERNAL_ELL, test "${enable_external_ell}" = "yes" ||
 				(test "${enable_btpclient}" != "yes" &&
 						test "${enable_mesh}" != "yes"))
