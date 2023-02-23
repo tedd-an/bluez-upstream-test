@@ -2480,8 +2480,11 @@ static void remove_streams(void *data, void *user_data)
 
 	stream = queue_remove_if(bap->streams, match_stream_lpac, pac);
 	if (stream) {
+		bool client = stream->client;
+
 		bt_bap_stream_release(stream, NULL, NULL);
-		stream_set_state(stream, BT_BAP_STREAM_STATE_IDLE);
+		if (client)
+			stream_set_state(stream, BT_BAP_STREAM_STATE_IDLE);
 	}
 }
 
