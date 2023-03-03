@@ -64,6 +64,7 @@
 #include "storage.h"
 #include "eir.h"
 #include "settings.h"
+#include "set.h"
 
 #define DISCONNECT_TIMER	2
 #define DISCOVERY_TIMER		1
@@ -159,9 +160,22 @@ struct bearer_state {
 	time_t last_seen;
 };
 
+struct ltk_info {
+	uint8_t key[16];
+	bool central;
+	uint8_t enc_size;
+};
+
 struct csrk_info {
 	uint8_t key[16];
 	uint32_t counter;
+};
+
+struct sirk_info {
+	uint8_t encrypted;
+	uint8_t key[16];
+	uint8_t size;
+	uint8_t rank;
 };
 
 enum {
@@ -253,7 +267,8 @@ struct btd_device {
 
 	struct csrk_info *local_csrk;
 	struct csrk_info *remote_csrk;
-	uint8_t ltk_enc_size;
+	struct ltk_info *ltk;
+	struct sirk_info *sirk;
 
 	sdp_list_t	*tmp_records;
 
@@ -386,6 +401,21 @@ static void store_csrk(struct csrk_info *csrk, GKeyFile *key_file,
 	g_key_file_set_integer(key_file, group, "Counter", csrk->counter);
 }
 
+static void store_sirk(struct sirk_info *sirk, GKeyFile *key_file)
+{
+	const char *group = "SetIdentityResolvingKey";
+	char key[33];
+	int i;
+
+	for (i = 0; i < 16; i++)
+		sprintf(key + (i * 2), "%2.2X", sirk->key[i]);
+
+	g_key_file_set_boolean(key_file, group, "Encrypted", sirk->encrypted);
+	g_key_file_set_string(key_file, group, "Key", key);
+	g_key_file_set_integer(key_file, group, "Size", sirk->size);
+	g_key_file_set_integer(key_file, group, "Size", sirk->rank);
+}
+
 static gboolean store_device_info_cb(gpointer user_data)
 {
 	struct btd_device *device = user_data;
@@ -482,6 +512,9 @@ static gboolean store_device_info_cb(gpointer user_data)
 
 	if (device->remote_csrk)
 		store_csrk(device->remote_csrk, key_file, "RemoteSignatureKey");
+
+	if (device->sirk)
+		store_sirk(device->sirk, key_file);
 
 	str = g_key_file_to_data(key_file, &length, NULL);
 	if (!g_file_set_contents(filename, str, length, &gerr)) {
@@ -806,6 +839,7 @@ static void device_free(gpointer user_data)
 
 	g_free(device->local_csrk);
 	g_free(device->remote_csrk);
+	free(device->ltk);
 	g_free(device->path);
 	g_free(device->alias);
 	free(device->modalias);
@@ -1792,10 +1826,43 @@ bool device_is_disconnecting(struct btd_device *device)
 	return device->disconn_timer > 0;
 }
 
-void device_set_ltk_enc_size(struct btd_device *device, uint8_t enc_size)
+void device_set_ltk(struct btd_device *device, const uint8_t val[16],
+				bool central, uint8_t enc_size)
 {
-	device->ltk_enc_size = enc_size;
-	bt_att_set_enc_key_size(device->att, device->ltk_enc_size);
+	if (!device->ltk)
+		device->ltk = new0(struct ltk_info, 1);
+
+	memcpy(device->ltk->key, val, sizeof(device->ltk->key));
+	device->ltk->central = central;
+	device->ltk->enc_size = enc_size;
+	bt_att_set_enc_key_size(device->att, enc_size);
+
+	if (device->sirk && device->sirk->encrypted)
+		btd_set_add_device(device, device->ltk->key, device->sirk->key,
+						device->sirk->size,
+						device->sirk->rank);
+}
+
+bool btd_device_add_set(struct btd_device *device, bool encrypted,
+				uint8_t sirk[16], uint8_t size, uint8_t rank)
+{
+	if (encrypted && !device->ltk)
+		return false;
+
+	if (!device->sirk)
+		device->sirk = new0(struct sirk_info, 1);
+
+	device->sirk->encrypted = encrypted;
+	memcpy(device->sirk->key, sirk, sizeof(device->sirk->key));
+	device->sirk->size = size;
+	device->sirk->rank = rank;
+
+	btd_set_add_device(device, encrypted ? device->ltk->key : NULL, sirk,
+							size, rank);
+
+	store_device_info(device);
+
+	return true;
 }
 
 static void device_set_auto_connect(struct btd_device *device, gboolean enable)
@@ -3290,6 +3357,39 @@ fail:
 	return NULL;
 }
 
+static struct sirk_info *load_sirk(GKeyFile *key_file)
+{
+	const char *group = "SetIdentityResolvingKey";
+	struct sirk_info *sirk;
+	char *str;
+	int i;
+
+	str = g_key_file_get_string(key_file, group, "Key", NULL);
+	if (!str)
+		return NULL;
+
+	sirk = g_new0(struct sirk_info, 1);
+
+	for (i = 0; i < 16; i++) {
+		if (sscanf(str + (i * 2), "%2hhx", &sirk->key[i]) != 1)
+			goto fail;
+	}
+
+
+	sirk->encrypted = g_key_file_get_boolean(key_file, group, "Encrypted",
+									NULL);
+	sirk->size = g_key_file_get_integer(key_file, group, "Size", NULL);
+	sirk->rank = g_key_file_get_integer(key_file, group, "Rank", NULL);
+	g_free(str);
+
+	return sirk;
+
+fail:
+	g_free(str);
+	g_free(sirk);
+	return NULL;
+}
+
 static void load_services(struct btd_device *device, char **uuids)
 {
 	char **uuid;
@@ -3430,6 +3530,12 @@ static void load_info(struct btd_device *device, const char *local,
 
 		device->local_csrk = load_csrk(key_file, "LocalSignatureKey");
 		device->remote_csrk = load_csrk(key_file, "RemoteSignatureKey");
+
+		device->sirk = load_sirk(key_file);
+		if (device->sirk && !device->sirk->encrypted)
+			btd_set_add_device(device, NULL, device->sirk->key,
+						device->sirk->size,
+						device->sirk->rank);
 	}
 
 	g_strfreev(techno);
@@ -5207,7 +5313,9 @@ static void gatt_server_init(struct btd_device *device,
 		return;
 	}
 
-	bt_att_set_enc_key_size(device->att, device->ltk_enc_size);
+	if (device->ltk)
+		bt_att_set_enc_key_size(device->att, device->ltk->enc_size);
+
 	bt_gatt_server_set_debug(device->server, gatt_debug, NULL, NULL);
 
 	btd_gatt_database_server_connected(database, device->server);
@@ -6927,4 +7035,10 @@ void btd_device_set_volume(struct btd_device *device, int8_t volume)
 int8_t btd_device_get_volume(struct btd_device *device)
 {
 	return device->volume;
+}
+
+void btd_device_foreach_ad(struct btd_device *dev, bt_ad_func_t func,
+							void *data)
+{
+	bt_ad_foreach_data(dev->ad, func, data);
 }
