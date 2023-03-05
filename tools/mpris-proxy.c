@@ -1401,6 +1401,18 @@ static gboolean get_tracklist(const GDBusPropertyTable *property,
 	return TRUE;
 }
 
+static gboolean get_emptylist(const GDBusPropertyTable *property,
+					DBusMessageIter *iter, void *data)
+{
+	DBusMessageIter array_iter;
+
+	dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY,
+			DBUS_TYPE_STRING_AS_STRING, &array_iter);
+	dbus_message_iter_close_container(iter, &array_iter);
+
+	return TRUE;
+}
+
 static const GDBusPropertyTable mpris_properties[] = {
 	{ "CanQuit", "b", get_disable, NULL, NULL },
 	{ "Fullscreen", "b", get_disable, NULL, NULL },
@@ -1408,6 +1420,8 @@ static const GDBusPropertyTable mpris_properties[] = {
 	{ "CanRaise", "b", get_disable, NULL, NULL },
 	{ "HasTrackList", "b", get_tracklist, NULL, NULL },
 	{ "Identity", "s", get_name, NULL, NULL },
+	{ "SupportedUriSchemes", "as", get_emptylist, NULL, NULL },
+	{ "SupportedMimeTypes", "as", get_emptylist, NULL, NULL },
 	{ }
 };
 
