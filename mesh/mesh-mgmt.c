@@ -82,6 +82,8 @@ static void set_exp_mesh_cb(uint8_t status, uint16_t length,
 {
 	int index = L_PTR_TO_UINT(user_data);
 
+	l_debug("Status: %d, Length: %d", status, length);
+
 	mesh_mgmt_send(MGMT_OP_MESH_READ_FEATURES, index, 0, NULL,
 				features_cb, L_UINT_TO_PTR(index), NULL);
 }
