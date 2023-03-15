@@ -773,11 +773,16 @@ Properties	object Device [readonly]
 				"pending": streaming but not acquired
 				"active": streaming and acquired
 
-		uint16 Delay [readwrite]
+		uint16 Delay [A2DP only, readwrite, optional]
 
-			Optional. Transport delay in 1/10 of millisecond, this
+			For A2DP: transport delay in 1/10 of millisecond. This
 			property is only writeable when the transport was
 			acquired by the sender.
+
+		uint32 Delay [ISO only, optional]
+
+			For ISO, presentation delay in microseconds.
+			Note the value type is different for ISO and A2DP.
 
 		uint16 Volume [readwrite]
 
@@ -804,3 +809,38 @@ Properties	object Device [readonly]
 
 			Linked transport objects which the transport is
 			associated with.
+
+		byte CIG [ISO only, optional, experimental]
+
+			Indicates configured QoS CIG.
+			Only present when QoS is configured.
+
+		byte CIS [ISO only, optional, experimental]
+
+			Indicates configured QoS CIS.
+			Only present when QoS is configured.
+
+		byte Interval [ISO only, optional, experimental]
+
+			Indicates configured QoS interval.
+			Only present when QoS is configured.
+
+		byte Framing [ISO only, optional, experimental]
+
+			Indicates configured QoS framing.
+			Only present when QoS is configured.
+
+		byte PHY [ISO only, optional, experimental]
+
+			Indicates configured QoS PHY.
+			Only present when QoS is configured.
+
+		uint32 Retransmissions [ISO only, optional, experimental]
+
+			Indicates configured QoS retransmissions.
+			Only present when QoS is configured.
+
+		uint32 Latency [ISO only, optional, experimental]
+
+			Indicates configured QoS latency.
+			Only present when QoS is configured.
