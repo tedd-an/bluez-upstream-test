@@ -54,6 +54,14 @@ struct rejected_addr {
 static struct l_queue *nodes;
 static struct l_queue *reject_list;
 
+static bool match_mod_id(const void *a, const void *b)
+{
+	uint32_t id1 = L_PTR_TO_UINT(a);
+	uint32_t id2 = L_PTR_TO_UINT(b);
+
+	return id1 == id2;
+}
+
 static int compare_mod_id(const void *a, const void *b, void *user_data)
 {
 	uint32_t id1 = L_PTR_TO_UINT(a);
@@ -226,6 +234,10 @@ bool remote_set_model(uint16_t unicast, uint8_t ele_idx, uint32_t mod_id,
 
 	if (!vendor)
 		mod_id = VENDOR_ID_MASK | mod_id;
+
+	if (l_queue_find(rmt->els[ele_idx], match_mod_id,
+							L_UINT_TO_PTR(mod_id)))
+		return true;
 
 	l_queue_insert(rmt->els[ele_idx], L_UINT_TO_PTR(mod_id),
 							compare_mod_id, NULL);
