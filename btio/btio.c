@@ -5,6 +5,7 @@
  *
  *  Copyright (C) 2009-2010  Marcel Holtmann <marcel@holtmann.org>
  *  Copyright (C) 2009-2010  Nokia Corporation
+ *  Copyright 2023 NXP
  *
  *
  */
@@ -68,7 +69,7 @@ struct set_opts {
 	int flushable;
 	uint32_t priority;
 	uint16_t voice;
-	struct bt_iso_qos qos;
+	struct bt_iso_unicast_qos qos;
 };
 
 struct connect {
@@ -857,11 +858,11 @@ voice:
 	return TRUE;
 }
 
-static gboolean iso_set(int sock, struct bt_iso_qos *qos, GError **err)
+static gboolean iso_set(int sock, struct bt_iso_unicast_qos *qos, GError **err)
 {
-	if (setsockopt(sock, SOL_BLUETOOTH, BT_ISO_QOS, qos,
+	if (setsockopt(sock, SOL_BLUETOOTH, BT_ISO_UNICAST_QOS, qos,
 				sizeof(*qos)) < 0) {
-		ERROR_FAILED(err, "setsockopt(BT_ISO_QOS)", errno);
+		ERROR_FAILED(err, "setsockopt(BT_ISO_UNICAST_QOS)", errno);
 		return FALSE;
 	}
 
@@ -963,7 +964,7 @@ static gboolean parse_set_opts(struct set_opts *opts, GError **err,
 			opts->voice = va_arg(args, int);
 			break;
 		case BT_IO_OPT_QOS:
-			opts->qos = *va_arg(args, struct bt_iso_qos *);
+			opts->qos = *va_arg(args, struct bt_iso_unicast_qos *);
 			break;
 		case BT_IO_OPT_INVALID:
 		case BT_IO_OPT_KEY_SIZE:
@@ -1570,14 +1571,15 @@ static gboolean iso_get(int sock, GError **err, BtIOOption opt1, va_list args)
 {
 	BtIOOption opt = opt1;
 	struct sockaddr_iso src, dst;
-	struct bt_iso_qos qos;
+	struct bt_iso_unicast_qos qos;
 	socklen_t len;
 	uint32_t phy;
 
 	len = sizeof(qos);
 	memset(&qos, 0, len);
-	if (getsockopt(sock, SOL_BLUETOOTH, BT_ISO_QOS, &qos, &len) < 0) {
-		ERROR_FAILED(err, "getsockopt(BT_ISO_QOS)", errno);
+	if (getsockopt(sock, SOL_BLUETOOTH, BT_ISO_UNICAST_QOS, &qos,
+							&len) < 0) {
+		ERROR_FAILED(err, "getsockopt(BT_ISO_UNICAST_QOS)", errno);
 		return FALSE;
 	}
 
@@ -1624,7 +1626,7 @@ static gboolean iso_get(int sock, GError **err, BtIOOption opt1, va_list args)
 			*(va_arg(args, uint32_t *)) = phy;
 			break;
 		case BT_IO_OPT_QOS:
-			*(va_arg(args, struct bt_iso_qos *)) = qos;
+			*(va_arg(args, struct bt_iso_unicast_qos *)) = qos;
 			break;
 		case BT_IO_OPT_HANDLE:
 		case BT_IO_OPT_CLASS:
