@@ -4,6 +4,7 @@
  *  BlueZ - Bluetooth protocol stack for Linux
  *
  *  Copyright (C) 2020  Intel Corporation. All rights reserved.
+ *  Copyright 2023 NXP
  *
  *
  */
@@ -3506,7 +3507,7 @@ static int transport_send_seq(struct transport *transport, int fd, uint32_t num)
 static bool transport_timer_read(struct io *io, void *user_data)
 {
 	struct transport *transport = user_data;
-	struct bt_iso_qos qos;
+	struct bt_iso_unicast_qos qos;
 	socklen_t len;
 	int ret, fd;
 	uint32_t num;
@@ -3526,9 +3527,10 @@ static bool transport_timer_read(struct io *io, void *user_data)
 	/* Read QoS if available */
 	memset(&qos, 0, sizeof(qos));
 	len = sizeof(qos);
-	if (getsockopt(transport->sk, SOL_BLUETOOTH, BT_ISO_QOS, &qos,
+	if (getsockopt(transport->sk, SOL_BLUETOOTH, BT_ISO_UNICAST_QOS, &qos,
 							&len) < 0) {
-		bt_shell_printf("Failed to getsockopt(BT_ISO_QOS): %s (%d)\n",
+		bt_shell_printf("Failed to getsockopt(BT_ISO_UNICAST_QOS):"
+					"%s (%d)\n",
 					strerror(errno), -errno);
 		return false;
 	}
@@ -3552,7 +3554,7 @@ static bool transport_timer_read(struct io *io, void *user_data)
 }
 
 static int transport_send(struct transport *transport, int fd,
-					struct bt_iso_qos *qos)
+					struct bt_iso_unicast_qos *qos)
 {
 	struct itimerspec ts;
 	int timer_fd;
@@ -3591,7 +3593,7 @@ static void cmd_send_transport(int argc, char *argv[])
 	GDBusProxy *proxy;
 	struct transport *transport;
 	int fd = -1, err;
-	struct bt_iso_qos qos;
+	struct bt_iso_unicast_qos qos;
 	socklen_t len;
 	int i;
 
@@ -3626,8 +3628,8 @@ static void cmd_send_transport(int argc, char *argv[])
 		/* Read QoS if available */
 		memset(&qos, 0, sizeof(qos));
 		len = sizeof(qos);
-		if (getsockopt(transport->sk, SOL_BLUETOOTH, BT_ISO_QOS, &qos,
-							&len) < 0)
+		if (getsockopt(transport->sk, SOL_BLUETOOTH,
+				BT_ISO_UNICAST_QOS, &qos, &len) < 0)
 			err = transport_send(transport, fd, NULL);
 		else
 			err = transport_send(transport, fd, &qos);
