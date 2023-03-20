@@ -58,6 +58,12 @@
 #define DEFAULT_CFG_FILE	"config_db.json"
 #define DEFAULT_EXPORT_FILE	"export_db.json"
 
+/*
+ *The default unicast address assigned to a node generated with
+ * Create() method
+ */
+#define OWN_PRIMARY_ADDR	0x0001
+
 struct meshcfg_el {
 	const char *path;
 	uint8_t index;
@@ -777,7 +783,7 @@ static void attach_node_reply(struct l_dbus_proxy *proxy,
 	}
 
 	/* Read own node composition */
-	if (!cfgcli_get_comp(0x0001, 128))
+	if (!cfgcli_get_comp(OWN_PRIMARY_ADDR, 128))
 		l_error("Failed to read own composition");
 
 	return;
@@ -868,7 +874,7 @@ static void scan_start(void *user_data, uint16_t dst, uint32_t model)
 {
 	struct scan_data *data;
 
-	if (model != (0xffff0000 | RPR_SVR_MODEL))
+	if (model != (0xffff0000 | RPR_SVR_MODEL) || dst != OWN_PRIMARY_ADDR)
 		return;
 
 	data = l_malloc(sizeof(struct scan_data));
@@ -2364,8 +2370,8 @@ static struct l_dbus_message *join_complete(struct l_dbus *dbus,
 	keys_add_net_key(PRIMARY_NET_IDX);
 	mesh_db_add_net_key(PRIMARY_NET_IDX);
 
-	remote_add_node(app.uuid, 0x0001, 1, PRIMARY_NET_IDX);
-	mesh_db_add_node(app.uuid, 0x0001, 1, PRIMARY_NET_IDX);
+	remote_add_node(app.uuid, OWN_PRIMARY_ADDR, 1, PRIMARY_NET_IDX);
+	mesh_db_add_node(app.uuid, OWN_PRIMARY_ADDR, 1, PRIMARY_NET_IDX);
 
 	mesh_db_add_provisioner("BlueZ mesh-cfgclient", app.uuid,
 					low_addr, high_addr,
