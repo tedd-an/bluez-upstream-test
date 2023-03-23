@@ -490,11 +490,6 @@ static void cmd_read_multiple(struct client *cli, char *cmd_str)
 	int i;
 	char *endptr = NULL;
 
-	if (!bt_gatt_client_is_ready(cli->gatt)) {
-		printf("GATT client not initialized\n");
-		return;
-	}
-
 	if (!parse_args(cmd_str, sizeof(argv), argv, &argc) || argc < 2) {
 		read_multiple_usage();
 		return;
@@ -560,11 +555,6 @@ static void cmd_read_value(struct client *cli, char *cmd_str)
 	uint16_t handle;
 	char *endptr = NULL;
 
-	if (!bt_gatt_client_is_ready(cli->gatt)) {
-		printf("GATT client not initialized\n");
-		return;
-	}
-
 	if (!parse_args(cmd_str, 1, argv, &argc) || argc != 1) {
 		read_value_usage();
 		return;
@@ -593,11 +583,6 @@ static void cmd_read_long_value(struct client *cli, char *cmd_str)
 	uint16_t handle;
 	uint16_t offset;
 	char *endptr = NULL;
-
-	if (!bt_gatt_client_is_ready(cli->gatt)) {
-		printf("GATT client not initialized\n");
-		return;
-	}
 
 	if (!parse_args(cmd_str, 2, argv, &argc) || argc != 2) {
 		read_long_value_usage();
@@ -660,11 +645,6 @@ static void cmd_write_value(struct client *cli, char *cmd_str)
 	uint8_t *value = NULL;
 	bool without_response = false;
 	bool signed_write = false;
-
-	if (!bt_gatt_client_is_ready(cli->gatt)) {
-		printf("GATT client not initialized\n");
-		return;
-	}
 
 	if (!parse_args(cmd_str, 514, argv + 1, &argc)) {
 		printf("Too many arguments\n");
@@ -791,11 +771,6 @@ static void cmd_write_long_value(struct client *cli, char *cmd_str)
 	uint8_t *value = NULL;
 	bool reliable_writes = false;
 
-	if (!bt_gatt_client_is_ready(cli->gatt)) {
-		printf("GATT client not initialized\n");
-		return;
-	}
-
 	if (!parse_args(cmd_str, 514, argv + 1, &argc)) {
 		printf("Too many arguments\n");
 		write_value_usage();
@@ -900,11 +875,6 @@ static void cmd_write_prepare(struct client *cli, char *cmd_str)
 	char *endptr = NULL;
 	unsigned int length;
 	uint8_t *value = NULL;
-
-	if (!bt_gatt_client_is_ready(cli->gatt)) {
-		printf("GATT client not initialized\n");
-		return;
-	}
 
 	if (!parse_args(cmd_str, 514, argv + 1, &argc)) {
 		printf("Too many arguments\n");
@@ -1025,11 +995,6 @@ static void cmd_write_execute(struct client *cli, char *cmd_str)
 	char *endptr = NULL;
 	unsigned int session_id;
 	bool execute;
-
-	if (!bt_gatt_client_is_ready(cli->gatt)) {
-		printf("GATT client not initialized\n");
-		return;
-	}
 
 	if (!parse_args(cmd_str, 514, argv, &argc)) {
 		printf("Too many arguments\n");
@@ -1193,11 +1158,6 @@ static void cmd_set_security(struct client *cli, char *cmd_str)
 	char *endptr = NULL;
 	int level;
 
-	if (!bt_gatt_client_is_ready(cli->gatt)) {
-		printf("GATT client not initialized\n");
-		return;
-	}
-
 	if (!parse_args(cmd_str, 1, argv, &argc)) {
 		printf("Too many arguments\n");
 		set_security_usage();
@@ -1224,11 +1184,6 @@ static void cmd_set_security(struct client *cli, char *cmd_str)
 static void cmd_get_security(struct client *cli, char *cmd_str)
 {
 	int level;
-
-	if (!bt_gatt_client_is_ready(cli->gatt)) {
-		printf("GATT client not initialized\n");
-		return;
-	}
 
 	level = bt_gatt_client_get_security(cli->gatt);
 	if (level < 0)
