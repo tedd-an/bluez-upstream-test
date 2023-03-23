@@ -34,6 +34,7 @@
 #include "src/shared/queue.h"
 #include "src/shared/gatt-db.h"
 #include "src/shared/gatt-client.h"
+#include "src/shared/gatt-helpers.h"
 
 #define ATT_CID 4
 #define ATT_PSM 31
@@ -508,6 +509,75 @@ static void cmd_read_multiple(int argc, char **argv)
 		error("Failed to initiate read multiple procedure");
 
 	free(value);
+}
+
+void read_by_type_cb(bool success, uint8_t att_ecode,
+						struct bt_gatt_result *result,
+						void *user_data)
+{
+	const uint8_t *value;
+	uint16_t length, handle;
+	struct bt_gatt_iter iter;
+	char line[MAX_LEN_LINE];
+	int i;
+
+	if (!success) {
+		error("Read by type request failed: %s (0x%02x)",
+				ecode_to_string(att_ecode), att_ecode);
+		return;
+	}
+
+	bt_gatt_iter_init(&iter, result);
+	while (bt_gatt_iter_next_read_by_type(&iter, &handle, &length, &value)) {
+		line[0] = '\0';
+		append(line, "\tValue handle 0x%04x", handle);
+
+		if (length == 0) {
+			print("%s: 0 bytes", line);
+			return;
+		}
+
+		append(line, " (%u bytes): ", length);
+
+		for (i = 0; i < length; i++)
+			append(line, "%02x ", value[i]);
+
+		print("%s", line);
+	}
+}
+
+static void cmd_read_by_type(int argc, char **argv)
+{
+	bt_uuid_t uuid;
+	uint16_t start_handle = 0x0001, end_handle = 0xFFFF;
+	char *endptr = NULL;
+
+	if (bt_string_to_uuid(&uuid, argv[1]) < 0) {
+		error("Invalid UUID: %s", optarg);
+		return;
+	}
+	if (argc > 2) {
+		start_handle = strtol(argv[2], &endptr, 0);
+		if (!endptr || *endptr != '\0' || !start_handle) {
+			error("Invalid start_handle : %s", argv[1]);
+			return;
+		}
+	}
+	if (argc > 3) {
+		end_handle = strtol(argv[3], &endptr, 0);
+		if (!endptr || *endptr != '\0' || !end_handle) {
+			error("Invalid end_handle : %s", argv[1]);
+			return;
+		}
+	}
+	if (start_handle > end_handle) {
+		error("start_handle cannot by larger than end_handle");
+		return;
+	}
+
+	if (!bt_gatt_read_by_type(cli->att, start_handle, end_handle,
+				&uuid, read_by_type_cb, NULL, NULL))
+		error("Failed to initiate read value procedure");
 }
 
 static void read_cb(bool success, uint8_t att_ecode, const uint8_t *value,
@@ -1163,6 +1233,8 @@ static const struct bt_shell_menu main_menu = {
 		cmd_read_long_value, "Read a long characteristic or desctriptor value" },
 	{ "read-multiple", "<handles...>",
 		cmd_read_multiple, "Read Multiple" },
+	{ "read-by-type", "<uuid> [start_handle] [end_handle]",
+		cmd_read_by_type, "Read a value by UUID" },
 	{ "write-value", " [-w|-s] <value_handle> <value...>",
 		cmd_write_value, "Write a characteristic or descriptor value\n"
 		"Options:\n"
