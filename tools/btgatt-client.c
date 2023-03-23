@@ -377,8 +377,13 @@ static void print_services_by_uuid(const bt_uuid_t *uuid)
 
 static void print_services_by_handle(uint16_t handle)
 {
-	/* TODO: Filter by handle */
-	gatt_db_foreach_service(cli->db, NULL, print_service, cli);
+	uint16_t start = 0x0001, end = 0xFFFF;
+	if (handle) {
+		start = handle;
+		end = handle;
+	}
+	gatt_db_foreach_service_in_range(cli->db, NULL, print_service, NULL,
+			start, end);
 }
 
 static void ready_cb(bool success, uint8_t att_ecode, void *user_data)
