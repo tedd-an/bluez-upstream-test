@@ -669,6 +669,23 @@ static uint8_t *read_bytes(char **argv, int *length)
 	int i, byte;
 	uint8_t *value;
 	char *endptr = NULL;
+	bool use_bytes = false;
+
+	if (*length == 3 && !strcmp(argv[i], "bytes")) {
+		byte = strtol(argv[i+1], &endptr, 0);
+		if (endptr == argv[i+1] || *endptr != '\0'
+			|| errno == ERANGE || byte < 0 || byte > 255) {
+			error("Invalid bytes value: %s", argv[i+1]);
+			return NULL;
+		}
+		*length = strtol(argv[i+2], &endptr, 0);
+		if (endptr == argv[i+2] || *endptr != '\0'
+			|| errno == ERANGE) {
+			error("Invalid bytes count: %s", argv[i+2]);
+			return NULL;
+		}
+		use_bytes = true;
+	}
 
 	if (*length <= 0) {
 		error("Nothing to write");
@@ -683,6 +700,11 @@ static uint8_t *read_bytes(char **argv, int *length)
 	if (!value) {
 		error("Failed to construct write value");
 		return NULL;
+	}
+
+	if (use_bytes) {
+		memset(value, byte, *length);
+		return value;
 	}
 
 	for (i = 0; i < *length; i++) {
@@ -1194,22 +1216,28 @@ static const struct bt_shell_menu main_menu = {
 		"Options:\n"
 			"\t-w, --without-response\tWrite without response\n"
 			"\t-s, --signed-write\tSigned write command\n"
+			"\tbytes <value> <count>\tWrite specified number of bytes with value\n"
 		"e.g.:\n"
 			"\twrite-value 0x0001 00 01 00"
+			"\twrite-value 0x0001 bytes 0 100"
 	},
 	{ "write-long-value", "[-r] <value_handle> <offset>",
 		cmd_write_long_value, "Write long characteristic or descriptor value\n"
 		"Options:\n"
 			"\t-r, --reliable-write\tReliable write\n"
+			"\tbytes <value> <count>\tWrite specified number of bytes with value\n"
 		"e.g.:\n"
 			"\twrite-long-value 0x0001 0 00 01 00"
+			"\twrite-long-value 0x0001 0 bytes 0 100"
 	},
 	{ "write-prepare", " [options...] <value_handle> <value>",
 		cmd_write_prepare, "Write prepare characteristic or descriptor value\n"
 		"Options:\n"
 			"\t-s, --session-id\tSession id\n"
+			"\tbytes <value> <count>\tWrite specified number of bytes with value\n"
 		"e.g.:\n"
 			"\twrite-prepare -s 1 0x0001 00 01 00"
+			"\twrite-prepare -s 1 0x0001 bytes 0 100"
 	},
 	{ "write-execute", " <session_id> <execute>",
 		cmd_write_execute, "Execute already prepared write" },
