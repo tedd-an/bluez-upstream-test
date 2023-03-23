@@ -297,6 +297,7 @@ static void handle_notify(void *data, void *user_data)
 struct hash_data {
 	struct iovec *iov;
 	uint16_t i;
+	size_t size;
 };
 
 static void gen_hash_m(struct gatt_db_attribute *attr, void *user_data)
@@ -327,12 +328,19 @@ static void gen_hash_m(struct gatt_db_attribute *attr, void *user_data)
 	case GATT_CHARAC_AGREG_FMT_UUID:
 		/* Allocate space for handle + type  */
 		len = 2 + 2;
-		data = malloc(2 + 2 + attr->value_len);
+		data = malloc(2 + 2);
 		put_le16(attr->handle, data);
 		bt_uuid_to_le(&attr->uuid, data + 2);
 		break;
 	default:
 		return;
+	}
+
+	if (hash->i >= hash->size) {
+		/* double the size of iov if we've run out of space */
+		hash->iov = realloc(hash->iov, 2 * hash->size * sizeof(struct iovec));
+		memset(hash->iov + hash->size, 0, hash->size * sizeof(struct iovec));
+		hash->size *= 2;
 	}
 
 	hash->iov[hash->i].iov_base = data;
@@ -361,9 +369,10 @@ static bool db_hash_update(void *user_data)
 
 	hash.iov = new0(struct iovec, db->next_handle);
 	hash.i = 0;
+	hash.size = db->next_handle;
 
 	gatt_db_foreach_service(db, NULL, service_gen_hash_m, &hash);
-	bt_crypto_gatt_hash(db->crypto, hash.iov, db->next_handle, db->hash);
+	bt_crypto_gatt_hash(db->crypto, hash.iov, hash.i, db->hash);
 
 	for (i = 0; i < hash.i; i++)
 		free(hash.iov[i].iov_base);
