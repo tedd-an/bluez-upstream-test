@@ -35,6 +35,7 @@
 #include "src/shared/gatt-client.h"
 
 #define ATT_CID 4
+#define ATT_PSM 31
 
 #define PRLOG(...) \
 	printf(__VA_ARGS__); print_prompt();
@@ -1406,7 +1407,7 @@ static void signal_cb(int signum, void *user_data)
 	}
 }
 
-static int l2cap_le_att_connect(bdaddr_t *src, bdaddr_t *dst, uint8_t dst_type,
+static int l2cap_att_connect(bdaddr_t *src, bdaddr_t *dst, uint8_t dst_type,
 									int sec)
 {
 	int sock;
@@ -1419,8 +1420,9 @@ static int l2cap_le_att_connect(bdaddr_t *src, bdaddr_t *dst, uint8_t dst_type,
 		ba2str(src, srcaddr_str);
 		ba2str(dst, dstaddr_str);
 
-		printf("btgatt-client: Opening L2CAP LE connection on ATT "
+		printf("btgatt-client: Opening L2CAP %s connection on ATT "
 					"channel:\n\t src: %s\n\tdest: %s\n",
+					(dst_type == BDADDR_BREDR ? "BR/EDR" : "LE"),
 					srcaddr_str, dstaddr_str);
 	}
 
@@ -1433,7 +1435,10 @@ static int l2cap_le_att_connect(bdaddr_t *src, bdaddr_t *dst, uint8_t dst_type,
 	/* Set up source address */
 	memset(&srcaddr, 0, sizeof(srcaddr));
 	srcaddr.l2_family = AF_BLUETOOTH;
-	srcaddr.l2_cid = htobs(ATT_CID);
+	if (dst_type == BDADDR_BREDR)
+		srcaddr.l2_psm = htobs(ATT_PSM);
+	else
+		srcaddr.l2_cid = htobs(ATT_CID);
 	srcaddr.l2_bdaddr_type = 0;
 	bacpy(&srcaddr.l2_bdaddr, src);
 
@@ -1456,7 +1461,10 @@ static int l2cap_le_att_connect(bdaddr_t *src, bdaddr_t *dst, uint8_t dst_type,
 	/* Set up destination address */
 	memset(&dstaddr, 0, sizeof(dstaddr));
 	dstaddr.l2_family = AF_BLUETOOTH;
-	dstaddr.l2_cid = htobs(ATT_CID);
+	if (dst_type == BDADDR_BREDR)
+		dstaddr.l2_psm = htobs(ATT_PSM);
+	else
+		dstaddr.l2_cid = htobs(ATT_CID);
 	dstaddr.l2_bdaddr_type = dst_type;
 	bacpy(&dstaddr.l2_bdaddr, dst);
 
@@ -1482,7 +1490,7 @@ static void usage(void)
 	printf("Options:\n"
 		"\t-i, --index <id>\t\tSpecify adapter index, e.g. hci0\n"
 		"\t-d, --dest <addr>\t\tSpecify the destination address\n"
-		"\t-t, --type [random|public] \tSpecify the LE address type\n"
+		"\t-t, --type [random|public|bredr] \tSpecify the address type\n"
 		"\t-m, --mtu <mtu> \t\tThe ATT MTU to use\n"
 		"\t-s, --security-level <sec> \tSet security level (low|medium|"
 								"high|fips)\n"
@@ -1558,9 +1566,11 @@ int main(int argc, char *argv[])
 				dst_type = BDADDR_LE_RANDOM;
 			else if (strcmp(optarg, "public") == 0)
 				dst_type = BDADDR_LE_PUBLIC;
+			else if (strcmp(optarg, "bredr") == 0)
+				dst_type = BDADDR_BREDR;
 			else {
 				fprintf(stderr,
-					"Allowed types: random, public\n");
+					"Allowed types: random, public, bredr\n");
 				return EXIT_FAILURE;
 			}
 			break;
@@ -1616,7 +1626,7 @@ int main(int argc, char *argv[])
 
 	mainloop_init();
 
-	fd = l2cap_le_att_connect(&src_addr, &dst_addr, dst_type, sec);
+	fd = l2cap_att_connect(&src_addr, &dst_addr, dst_type, sec);
 	if (fd < 0)
 		return EXIT_FAILURE;
 
