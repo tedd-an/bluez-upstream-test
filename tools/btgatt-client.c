@@ -40,9 +40,13 @@
 
 #define MAX_LEN_LINE 512
 
-struct client *cli;
+struct client *cli = NULL;
 static bool verbose = false;
 static bool shell_running = false;
+static uint8_t dst_type = BDADDR_LE_PUBLIC;
+static bdaddr_t src_addr, dst_addr;
+static int security_level = BT_SECURITY_LOW;
+static uint16_t mtu = 0;
 
 #define print(fmt, arg...) do { \
 	if (shell_running) \
@@ -71,10 +75,22 @@ struct client {
 	unsigned int reliable_session_id;
 };
 
+static int l2cap_att_connect(bdaddr_t *src, bdaddr_t *dst, uint8_t dst_type,
+									int sec);
+
 static void update_prompt(void)
 {
-	char str[32];
-	sprintf(str, COLOR_BLUE "[GATT client]" COLOR_OFF "# ");
+	char str[64], addr[18], type[3];
+	if (!bacmp(&dst_addr, BDADDR_ANY))
+		sprintf(str, "[GATT client]# ");
+	else {
+		ba2str(&dst_addr, addr);
+		sprintf(type, dst_type == BDADDR_BREDR ? "BR" : "LE");
+		if (cli)
+			sprintf(str, COLOR_BLUE "[%s][%s]" COLOR_OFF "# ", addr, type);
+		else
+			sprintf(str, "[%s][%s]# ", addr, type);
+	}
 	bt_shell_set_prompt(str);
 }
 
@@ -126,11 +142,22 @@ static const char *ecode_to_string(uint8_t ecode)
 	}
 }
 
+static void client_destroy()
+{
+	if (cli) {
+		bt_gatt_client_unref(cli->gatt);
+		bt_att_unref(cli->att);
+		free(cli);
+		cli = NULL;
+	}
+}
+
 static void att_disconnect_cb(int err, void *user_data)
 {
 	print("Device disconnected: %s", strerror(err));
 
-	mainloop_quit();
+	client_destroy();
+	update_prompt();
 }
 
 static void att_debug_cb(const char *str, void *user_data)
@@ -245,13 +272,6 @@ static struct client *client_create(int fd, uint16_t mtu)
 	gatt_db_unref(cli->db);
 
 	return cli;
-}
-
-static void client_destroy(struct client *cli)
-{
-	bt_gatt_client_unref(cli->gatt);
-	bt_att_unref(cli->att);
-	free(cli);
 }
 
 static void append_uuid(char *str, const bt_uuid_t *uuid)
@@ -1066,6 +1086,66 @@ static void cmd_set_sign_key(int argc, char **argv)
 	}
 }
 
+static void connect_device()
+{
+	int fd;
+	fd = l2cap_att_connect(&src_addr, &dst_addr, dst_type, security_level);
+	if (fd < 0) {
+		return bt_shell_noninteractive_quit(EXIT_FAILURE);
+	}
+	cli = client_create(fd, mtu);
+	if (!cli) {
+		close(fd);
+		return bt_shell_noninteractive_quit(EXIT_FAILURE);
+	}
+}
+
+static void cmd_connect(int argc, char **argv)
+{
+	char addr[18];
+
+	if (cli) {
+		error("Already connected");
+		return bt_shell_noninteractive_quit(EXIT_FAILURE);
+	}
+	if (argc > 1) {
+		if (str2ba(argv[1], &addr) < 0) {
+			error("Invalid remote address: %s", argv[1]);
+			return bt_shell_noninteractive_quit(EXIT_FAILURE);
+		}
+		bacpy(&dst_addr, &addr);
+	}
+	if (argc > 2) {
+		if (strcmp(argv[2], "random") == 0)
+			dst_type = BDADDR_LE_RANDOM;
+		else if (strcmp(argv[2], "public") == 0)
+			dst_type = BDADDR_LE_PUBLIC;
+		else if (strcmp(argv[2], "bredr") == 0)
+			dst_type = BDADDR_BREDR;
+		else {
+			error("Allowed types: random, public, bredr");
+			return bt_shell_noninteractive_quit(EXIT_FAILURE);
+		}
+	}
+	if (!bacmp(&dst_addr, BDADDR_ANY)) {
+		error("Destination address required!");
+		return bt_shell_noninteractive_quit(EXIT_FAILURE);
+	}
+	connect_device();
+	update_prompt();
+}
+
+static void cmd_disconnect(int argc, char **argv)
+{
+	if (!cli) {
+		error("Already disconnected");
+		return bt_shell_noninteractive_quit(EXIT_FAILURE);
+	}
+	close(cli->fd);
+	client_destroy();
+	update_prompt();
+}
+
 static const struct bt_shell_menu main_menu = {
 	.name = "main",
 	.entries = {
@@ -1117,6 +1197,10 @@ static const struct bt_shell_menu main_menu = {
 		cmd_get_security, "Get security level on connection"},
 	{ "set-sign-key", "<csrk>",
 		cmd_set_sign_key, "Set signing key for signed write command"},
+	{ "connect", "[address] [public|random|bredr]",
+		cmd_connect, "Connect to device" },
+	{ "disconnect", NULL,
+		cmd_disconnect, "Disconnect from connected device" },
 	{} },
 };
 
@@ -1240,12 +1324,7 @@ static const struct bt_shell_opt opt = {
 
 int main(int argc, char *argv[])
 {
-	int sec = BT_SECURITY_LOW;
-	uint16_t mtu = 0;
-	uint8_t dst_type = BDADDR_LE_PUBLIC;
-	bdaddr_t src_addr, dst_addr;
 	int dev_id = -1;
-	int fd;
 	int status;
 
 	bt_shell_init(argc, argv, &opt);
@@ -1255,13 +1334,13 @@ int main(int argc, char *argv[])
 		verbose = true;
 	if (security_level_option) {
 		if (strcmp(security_level_option, "low") == 0)
-			sec = BT_SECURITY_LOW;
+			security_level = BT_SECURITY_LOW;
 		else if (strcmp(security_level_option, "medium") == 0)
-			sec = BT_SECURITY_MEDIUM;
+			security_level = BT_SECURITY_MEDIUM;
 		else if (strcmp(security_level_option, "high") == 0)
-			sec = BT_SECURITY_HIGH;
+			security_level = BT_SECURITY_HIGH;
 		else if (strcmp(security_level_option, "fips") == 0)
-			sec = BT_SECURITY_FIPS;
+			security_level = BT_SECURITY_FIPS;
 		else {
 			error("Invalid security level");
 			return EXIT_FAILURE;
@@ -1301,8 +1380,7 @@ int main(int argc, char *argv[])
 			return EXIT_FAILURE;
 		}
 	} else {
-		error("Destination address required!");
-		return EXIT_FAILURE;
+		bacpy(&dst_addr, BDADDR_ANY);
 	}
 	if (index_option) {
 		dev_id = hci_devid(index_option);
@@ -1319,15 +1397,8 @@ int main(int argc, char *argv[])
 		return EXIT_FAILURE;
 	}
 
-	fd = l2cap_att_connect(&src_addr, &dst_addr, dst_type, sec);
-	if (fd < 0)
-		return EXIT_FAILURE;
-
-	cli = client_create(fd, mtu);
-	if (!cli) {
-		close(fd);
-		return EXIT_FAILURE;
-	}
+	if (bacmp(&dst_addr, BDADDR_ANY))
+		connect_device();
 
 	bt_shell_attach(fileno(stdin));
 	update_prompt();
@@ -1335,9 +1406,7 @@ int main(int argc, char *argv[])
 	status = bt_shell_run();
 	shell_running = false;
 
-	print("Shutting down...");
-
-	client_destroy(cli);
+	client_destroy();
 
 	return status;
 }
