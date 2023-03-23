@@ -664,6 +664,40 @@ static void write_cb(bool success, uint8_t att_ecode, void *user_data)
 	}
 }
 
+static uint8_t *read_bytes(char **argv, int *length)
+{
+	int i, byte;
+	uint8_t *value;
+	char *endptr = NULL;
+
+	if (*length <= 0) {
+		error("Nothing to write");
+		return NULL;
+	}
+	if (*length > BT_ATT_MAX_VALUE_LEN) {
+		error("Write value too long");
+		return NULL;
+	}
+
+	value = malloc(*length);
+	if (!value) {
+		error("Failed to construct write value");
+		return NULL;
+	}
+
+	for (i = 0; i < *length; i++) {
+		byte = strtol(argv[i], &endptr, 0);
+		if (endptr == argv[i] || *endptr != '\0'
+			|| errno == ERANGE || byte < 0 || byte > 255) {
+			error("Invalid value byte: %s", argv[i]);
+			free(value);
+			return NULL;
+		}
+		value[i] = byte;
+	}
+	return value;
+}
+
 static void cmd_write_value(int argc, char **argv)
 {
 	int opt, i, val;
@@ -705,30 +739,9 @@ static void cmd_write_value(int argc, char **argv)
 	}
 
 	length = argc - 1;
-
-	if (length > 0) {
-		if (length > UINT16_MAX) {
-			error("Write value too long");
-			return;
-		}
-
-		value = malloc(length);
-		if (!value) {
-			error("Failed to construct write value");
-			return;
-		}
-
-		for (i = 1; i < argc; i++) {
-			val = strtol(argv[i], &endptr, 0);
-			if (endptr == argv[i] || *endptr != '\0'
-				|| errno == ERANGE || val < 0 || val > 255) {
-				error("Invalid value byte: %s",
-								argv[i]);
-				goto done;
-			}
-			value[i-1] = val;
-		}
-	}
+	value = read_bytes(argv + 1, &length);
+	if (!value)
+		return;
 
 	if (without_response) {
 		if (!bt_gatt_client_write_without_response(cli->gatt, handle,
@@ -801,13 +814,6 @@ static void cmd_write_long_value(int argc, char **argv)
 	argv += optind;
 	optind = 0;
 
-	if (argc > 514) {
-		error("Too many arguments");
-		bt_shell_usage();
-		optind = 0;
-		return;
-	}
-
 	handle = strtol(argv[0], &endptr, 0);
 	if (!endptr || *endptr != '\0' || !handle) {
 		error("Invalid handle: %s", argv[1]);
@@ -822,31 +828,9 @@ static void cmd_write_long_value(int argc, char **argv)
 	}
 
 	length = argc - 2;
-
-	if (length > 0) {
-		if (length > UINT16_MAX) {
-			error("Write value too long");
-			return;
-		}
-
-		value = malloc(length);
-		if (!value) {
-			error("Failed to construct write value");
-			return;
-		}
-
-		for (i = 2; i < argc; i++) {
-			val = strtol(argv[i], &endptr, 0);
-			if (endptr == argv[i] || *endptr != '\0'
-				|| errno == ERANGE || val < 0 || val > 255) {
-				error("Invalid value byte: %s",
-								argv[i]);
-				free(value);
-				return;
-			}
-			value[i-2] = val;
-		}
-	}
+	value = read_bytes(argv + 2, &length);
+	if (!value)
+		return;
 
 	if (!bt_gatt_client_write_long_value(cli->gatt, reliable_writes, handle,
 							offset, value, length,
@@ -894,13 +878,6 @@ static void cmd_write_prepare(int argc, char **argv)
 	argv += optind;
 	optind = 0;
 
-	if (argc > 514) {
-		error("Too many arguments");
-		bt_shell_usage();
-		optind = 0;
-		return;
-	}
-
 	if (cli->reliable_session_id != id) {
 		error("Session id != Ongoing session id (%u!=%u)", id,
 						cli->reliable_session_id);
@@ -925,33 +902,10 @@ static void cmd_write_prepare(int argc, char **argv)
 	 * length
 	 */
 	length = argc - 2;
-
-	if (length == 0)
-		goto done;
-
-	if (length > UINT16_MAX) {
-		error("Write value too long");
+	value = read_bytes(argv + 2, &length);
+	if (!value)
 		return;
-	}
 
-	value = malloc(length);
-	if (!value) {
-		error("Failed to allocate memory for value");
-		return;
-	}
-
-	for (i = 2; i < argc; i++) {
-		val = strtol(argv[i], &endptr, 0);
-		if (endptr == argv[i] || *endptr != '\0' || errno == ERANGE
-						|| val < 0 || val > 255) {
-			error("Invalid value byte: %s", argv[i]);
-			free(value);
-			return;
-		}
-		value[i-2] = val;
-	}
-
-done:
 	cli->reliable_session_id =
 			bt_gatt_client_prepare_write(cli->gatt, id,
 							handle, offset,
