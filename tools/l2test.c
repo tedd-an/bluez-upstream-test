@@ -1416,7 +1416,10 @@ int main(int argc, char *argv[])
 			break;
 
 		case 'P':
-			psm = atoi(optarg);
+			if (!strncasecmp(optarg, "0x", 2))
+				psm = strtoul(&optarg[2], NULL, 16);
+			else
+				psm = atoi(optarg);
 			break;
 
 		case 'I':
