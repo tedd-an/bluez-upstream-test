@@ -12511,6 +12511,77 @@ static void test_suspend_resume_success_10(const void *test_data)
 	tester_wait(2, trigger_force_resume, NULL);
 }
 
+#define MAX_COREDUMP_BUF_LEN	512
+#define MAX_COREDUMP_LINE_LEN	40
+
+static void test_hci_devcd(const void *test_data)
+{
+	struct test_data *data = tester_get_data();
+	struct vhci *vhci = hciemu_get_vhci(data->hciemu);
+	char buf[MAX_COREDUMP_BUF_LEN] = {0};
+	char delim[] = "\n";
+	char *line;
+	char *saveptr;
+	int i = 0;
+
+	char dump_data[] = "test data";
+	char expected[][MAX_COREDUMP_LINE_LEN] = {
+		"Bluetooth devcoredump",
+		"State: 2",
+		"Controller Name: vhci_ctrl",
+		"Firmware Version: vhci_fw",
+		"Driver: vhci_drv",
+		"Vendor: vhci",
+		"--- Start dump ---",
+	};
+
+	/* Triggers the devcoredump */
+	if (vhci_force_devcd(vhci, dump_data, sizeof(dump_data))) {
+		tester_warn("Unable to set force_devcoredump");
+		tester_test_failed();
+		return;
+	}
+
+	/* Read the generated devcoredump file */
+	if (vhci_read_devcd(vhci, buf, sizeof(buf)) <= 0) {
+		tester_warn("Unable to read devcoredump");
+		tester_test_failed();
+		return;
+	}
+
+	/* Verify if all devcoredump header fields are present */
+	line = strtok_r(buf, delim, &saveptr);
+	while (i < ARRAY_SIZE(expected)) {
+		if (!line || strcmp(line, expected[i])) {
+			tester_warn("Incorrect coredump data: %s (expected %s)",
+				    line, expected[i]);
+			tester_test_failed();
+			return;
+		}
+
+		if (!strcmp(line, "State: 2")) {
+			/* After updating the devcoredump state, the HCI
+			 * devcoredump API adds a `\0` at the end. Skip it
+			 * before reading the next line.
+			 */
+			saveptr++;
+		}
+
+		line = strtok_r(NULL, delim, &saveptr);
+		i++;
+	}
+
+	/* Verify the devcoredump data */
+	if (!line || strcmp(line, dump_data)) {
+		tester_warn("Incorrect coredump data: %s (expected %s)", line,
+			    dump_data);
+		tester_test_failed();
+		return;
+	}
+
+	tester_test_passed();
+}
+
 int main(int argc, char *argv[])
 {
 	tester_init(&argc, &argv);
@@ -14650,6 +14721,13 @@ int main(int argc, char *argv[])
 				&ll_privacy_set_device_flag_1,
 				setup_ll_privacy_add_device,
 				test_command_generic);
+
+	/* HCI devcoredump
+	 * Setup : Power on
+	 * Run: Trigger devcoredump via force_devcoredump
+	 * Expect: Devcoredump is generated with correct data
+	 */
+	test_bredrle("HCI devcoredump", NULL, NULL, test_hci_devcd);
 
 	return tester_run();
 }
