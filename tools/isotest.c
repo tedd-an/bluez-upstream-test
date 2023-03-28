@@ -4,6 +4,7 @@
  *  BlueZ - Bluetooth protocol stack for Linux
  *
  *  Copyright (C) 2022  Intel Corporation.
+ *  Copyright 2023 NXP
  *
  */
 
@@ -239,7 +240,7 @@ fail:
 	return err < 0 ? err : 0;
 }
 
-static void print_qos(int sk, struct sockaddr_iso *addr)
+static void print_ucast_qos(int sk)
 {
 	struct bt_iso_qos qos;
 	socklen_t len;
@@ -254,21 +255,83 @@ static void print_qos(int sk, struct sockaddr_iso *addr)
 		return;
 	}
 
-	if (!bacmp(&addr->iso_bdaddr, BDADDR_ANY)) {
-		syslog(LOG_INFO, "QoS BIG 0x%02x BIS 0x%02x Packing 0x%02x "
-			"Framing 0x%02x]", qos.big, qos.bis, qos.packing,
-			qos.framing);
-	} else {
-		syslog(LOG_INFO, "QoS CIG 0x%02x CIS 0x%02x Packing 0x%02x "
-			"Framing 0x%02x]", qos.cig, qos.cis, qos.packing,
-			qos.framing);
-		syslog(LOG_INFO, "Input QoS [Interval %u us Latency %u "
-			"ms SDU %u PHY 0x%02x RTN %u]", qos.in.interval,
-			qos.in.latency, qos.in.sdu, qos.in.phy, qos.in.rtn);
-	}
+	syslog(LOG_INFO, "QoS CIG 0x%02x CIS 0x%02x Packing 0x%02x "
+		"Framing 0x%02x]", qos.ucast.cig, qos.ucast.cis,
+		qos.ucast.packing, qos.ucast.framing);
+
+	syslog(LOG_INFO, "Input QoS [Interval %u us Latency %u "
+		"ms SDU %u PHY 0x%02x RTN %u]", qos.ucast.in.interval,
+		qos.ucast.in.latency, qos.ucast.in.sdu, qos.ucast.in.phy,
+		qos.ucast.in.rtn);
+
 	syslog(LOG_INFO, "Output QoS [Interval %u us Latency %u "
-		"ms SDU %u PHY 0x%02x RTN %u]", qos.out.interval,
-		qos.out.latency, qos.out.sdu, qos.out.phy, qos.out.rtn);
+		"ms SDU %u PHY 0x%02x RTN %u]", qos.ucast.out.interval,
+		qos.ucast.out.latency, qos.ucast.out.sdu, qos.ucast.out.phy,
+		qos.ucast.out.rtn);
+}
+
+static void print_bcast_src_qos(int sk)
+{
+	struct bt_iso_qos qos;
+	socklen_t len;
+
+	/* Read Out QOS */
+	memset(&qos, 0, sizeof(qos));
+	len = sizeof(qos);
+
+	if (getsockopt(sk, SOL_BLUETOOTH, BT_ISO_QOS, &qos, &len) < 0) {
+		syslog(LOG_ERR, "Can't get QoS socket option: %s (%d)",
+				strerror(errno), errno);
+		return;
+	}
+
+	syslog(LOG_INFO, "QoS BIG 0x%02x BIS 0x%02x Packing 0x%02x "
+		"Framing 0x%02x]", qos.bcast.bsrc.big, qos.bcast.bsrc.bis,
+		qos.bcast.bsrc.packing, qos.bcast.bsrc.framing);
+
+	syslog(LOG_INFO, "Output QoS [Interval %u us Latency %u "
+		"ms SDU %u PHY 0x%02x RTN %u]", qos.bcast.bsrc.out.interval,
+		qos.bcast.bsrc.out.latency, qos.bcast.bsrc.out.sdu,
+		qos.bcast.bsrc.out.phy, qos.bcast.bsrc.out.rtn);
+}
+
+static void print_bcast_snk_qos(int sk)
+{
+	struct bt_iso_qos qos;
+	socklen_t len;
+
+	/* Read Out QOS */
+	memset(&qos, 0, sizeof(qos));
+	len = sizeof(qos);
+
+	if (getsockopt(sk, SOL_BLUETOOTH, BT_ISO_QOS, &qos, &len) < 0) {
+		syslog(LOG_ERR, "Can't get QoS socket option: %s (%d)",
+				strerror(errno), errno);
+		return;
+	}
+
+	syslog(LOG_INFO, "QoS BIG 0x%02x", qos.bcast.bsnk.big);
+
+	syslog(LOG_INFO, "Input QoS [Interval %u us Latency %u "
+		"ms SDU %u PHY 0x%02x RTN %u]", qos.bcast.bsnk.in.interval,
+		qos.bcast.bsnk.in.latency, qos.bcast.bsnk.in.sdu,
+		qos.bcast.bsnk.in.phy, qos.bcast.bsnk.in.rtn);
+}
+
+static void ucast_qos_to_bcast_src(struct bt_iso_qos *qos)
+{
+	struct bt_iso_qos src_qos;
+
+	memset(&src_qos, 0, sizeof(src_qos));
+
+	src_qos.bcast.bsrc.sync_interval = qos->ucast.sca;
+	src_qos.bcast.bsrc.big = qos->ucast.cig;
+	src_qos.bcast.bsrc.bis = qos->ucast.cis;
+	src_qos.bcast.bsrc.packing = qos->ucast.packing;
+	src_qos.bcast.bsrc.framing = qos->ucast.framing;
+	src_qos.bcast.bsrc.out = qos->ucast.out;
+
+	*qos = src_qos;
 }
 
 static int do_connect(char *peer)
@@ -301,9 +364,13 @@ static int do_connect(char *peer)
 
 	/* Set QoS if available */
 	if (iso_qos) {
-		if (!inout || !strcmp(peer, "00:00:00:00:00:00")) {
-			iso_qos->in.phy = 0x00;
-			iso_qos->in.sdu = 0;
+		if (!strcmp(peer, "00:00:00:00:00:00")) {
+			ucast_qos_to_bcast_src(iso_qos);
+		} else {
+			if (!inout) {
+				iso_qos->ucast.in.phy = 0x00;
+				iso_qos->ucast.in.sdu = 0;
+			}
 		}
 
 		if (setsockopt(sk, SOL_BLUETOOTH, BT_ISO_QOS, iso_qos,
@@ -338,7 +405,10 @@ static int do_connect(char *peer)
 
 	syslog(LOG_INFO, "Connected [%s]", peer);
 
-	print_qos(sk, &addr);
+	if (!strcmp(peer, "00:00:00:00:00:00"))
+		print_bcast_src_qos(sk);
+	else
+		print_ucast_qos(sk);
 
 	return sk;
 
@@ -441,7 +511,10 @@ static void do_listen(char *filename, void (*handler)(int fd, int sk),
 		ba2str(&addr->iso_bdaddr, ba);
 		syslog(LOG_INFO, "Connected [%s]", ba);
 
-		print_qos(nsk, addr);
+		if (peer)
+			print_bcast_snk_qos(nsk);
+		else
+			print_ucast_qos(nsk);
 
 		/* Handle deferred setup */
 		if (defer_setup) {
@@ -648,7 +721,7 @@ static int read_file(int fd, ssize_t count, bool rewind)
 	return len;
 }
 
-static void do_send(int sk, int fd, struct bt_iso_qos *qos, uint32_t num,
+static void do_send(int sk, int fd, struct bt_iso_io_qos *out, uint32_t num,
 		    bool repeat)
 {
 	uint32_t seq;
@@ -662,14 +735,14 @@ static void do_send(int sk, int fd, struct bt_iso_qos *qos, uint32_t num,
 
 	for (seq = 0; ; seq++) {
 		if (fd >= 0) {
-			len = read_file(fd, qos->out.sdu, repeat);
+			len = read_file(fd, out->sdu, repeat);
 			if (len < 0) {
 				syslog(LOG_ERR, "read failed: %s (%d)",
 						strerror(-len), -len);
 				exit(1);
 			}
 		} else
-			len = qos->out.sdu;
+			len = out->sdu;
 
 		len = send(sk, buf, len, 0);
 		if (len <= 0) {
@@ -686,7 +759,7 @@ static void do_send(int sk, int fd, struct bt_iso_qos *qos, uint32_t num,
 				seq, len, used / len, used);
 
 		if (seq && !((seq + 1) % num))
-			send_wait(&t_start, num * qos->out.interval);
+			send_wait(&t_start, num * out->interval);
 	}
 }
 
@@ -696,6 +769,7 @@ static void send_mode(char *filename, char *peer, int i, bool repeat)
 	socklen_t len;
 	int sk, fd = -1;
 	uint32_t num;
+	struct bt_iso_io_qos *out;
 
 	if (filename) {
 		char altername[PATH_MAX];
@@ -728,16 +802,21 @@ static void send_mode(char *filename, char *peer, int i, bool repeat)
 	syslog(LOG_INFO, "Sending ...");
 
 	/* Read QoS */
+	if (!strcmp(peer, "00:00:00:00:00:00"))
+		out = &qos.bcast.bsrc.out;
+	else
+		out = &qos.ucast.out;
+
 	memset(&qos, 0, sizeof(qos));
 	len = sizeof(qos);
 	if (getsockopt(sk, SOL_BLUETOOTH, BT_ISO_QOS, &qos, &len) < 0) {
 		syslog(LOG_ERR, "Can't get Output QoS socket option: %s (%d)",
 				strerror(errno), errno);
-		qos.out.sdu = ISO_DEFAULT_MTU;
+		out->sdu = ISO_DEFAULT_MTU;
 	}
 
 	/* num of packets = latency (ms) / interval (us) */
-	num = (qos.out.latency * 1000 / qos.out.interval);
+	num = (out->latency * 1000 / out->interval);
 
 	syslog(LOG_INFO, "Number of packets: %d", num);
 
@@ -746,8 +825,8 @@ static void send_mode(char *filename, char *peer, int i, bool repeat)
 		 * latency:
 		 * jitter buffer = 2 * (SDU * subevents)
 		 */
-		sndbuf = 2 * ((qos.out.latency * 1000 / qos.out.interval) *
-							qos.out.sdu);
+		sndbuf = 2 * ((out->latency * 1000 / out->interval) *
+							out->sdu);
 
 	len = sizeof(sndbuf);
 	if (setsockopt(sk, SOL_SOCKET, SO_SNDBUF, &sndbuf, len) < 0) {
@@ -768,10 +847,10 @@ static void send_mode(char *filename, char *peer, int i, bool repeat)
 		}
 	}
 
-	for (i = 6; i < qos.out.sdu; i++)
+	for (i = 6; i < out->sdu; i++)
 		buf[i] = 0x7f;
 
-	do_send(sk, fd, &qos, num, repeat);
+	do_send(sk, fd, out, num, repeat);
 }
 
 static void reconnect_mode(char *peer)
@@ -826,12 +905,14 @@ static void multy_connect_mode(char *peer)
 
 #define QOS(_interval, _latency, _sdu, _phy, _rtn) \
 { \
-	.cig = BT_ISO_QOS_CIG_UNSET, \
-	.cis = BT_ISO_QOS_CIS_UNSET, \
-	.sca = 0x07, \
-	.packing = 0x00, \
-	.framing = 0x00, \
-	.out = QOS_IO(_interval, _latency, _sdu, _phy, _rtn), \
+	.ucast = { \
+		.cig = BT_ISO_QOS_CIG_UNSET, \
+		.cis = BT_ISO_QOS_CIS_UNSET, \
+		.sca = 0x07, \
+		.packing = 0x00, \
+		.framing = 0x00, \
+		.out = QOS_IO(_interval, _latency, _sdu, _phy, _rtn), \
+	}, \
 }
 
 #define QOS_PRESET(_name, _inout, _interval, _latency, _sdu, _phy, _rtn) \
@@ -1057,43 +1138,43 @@ int main(int argc, char *argv[])
 
 		case 'M':
 			if (optarg)
-				iso_qos->out.sdu = atoi(optarg);
+				iso_qos->ucast.out.sdu = atoi(optarg);
 			break;
 
 		case 'S':
 			if (optarg)
-				iso_qos->sca = atoi(optarg);
+				iso_qos->ucast.sca = atoi(optarg);
 			break;
 
 
 		case 'P':
 			if (optarg)
-				iso_qos->packing = atoi(optarg);
+				iso_qos->ucast.packing = atoi(optarg);
 			break;
 
 		case 'F':
 			if (optarg)
-				iso_qos->framing = atoi(optarg);
+				iso_qos->ucast.framing = atoi(optarg);
 			break;
 
 		case 'I':
 			if (optarg)
-				iso_qos->out.interval = atoi(optarg);
+				iso_qos->ucast.out.interval = atoi(optarg);
 			break;
 
 		case 'L':
 			if (optarg)
-				iso_qos->out.latency = atoi(optarg);
+				iso_qos->ucast.out.latency = atoi(optarg);
 			break;
 
 		case 'Y':
 			if (optarg)
-				iso_qos->out.phy = atoi(optarg);
+				iso_qos->ucast.out.phy = atoi(optarg);
 			break;
 
 		case 'R':
 			if (optarg)
-				iso_qos->out.rtn = atoi(optarg);
+				iso_qos->ucast.out.rtn = atoi(optarg);
 			break;
 
 		case 'B':
@@ -1112,12 +1193,12 @@ int main(int argc, char *argv[])
 
 		case 'G':
 			if (optarg)
-				iso_qos->cig = atoi(optarg);
+				iso_qos->ucast.cig = atoi(optarg);
 			break;
 
 		case 'T':
 			if (optarg)
-				iso_qos->cis = atoi(optarg);
+				iso_qos->ucast.cis = atoi(optarg);
 			break;
 
 		/* fall through */
@@ -1128,11 +1209,11 @@ int main(int argc, char *argv[])
 	}
 
 	if (inout) {
-		iso_qos->in = iso_qos->out;
+		iso_qos->ucast.in = iso_qos->ucast.out;
 	} else {
 		/* Align interval and latency even if is unidirectional */
-		iso_qos->in.interval = iso_qos->out.interval;
-		iso_qos->in.latency = iso_qos->out.latency;
+		iso_qos->ucast.in.interval = iso_qos->ucast.out.interval;
+		iso_qos->ucast.in.latency = iso_qos->ucast.out.latency;
 	}
 
 	buf = malloc(data_size);

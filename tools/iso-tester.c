@@ -4,6 +4,7 @@
  *  BlueZ - Bluetooth protocol stack for Linux
  *
  *  Copyright (C) 2022  Intel Corporation.
+ *  Copyright 2023 NXP
  *
  */
 
@@ -42,13 +43,15 @@
 
 #define QOS_FULL(_cig, _cis, _in, _out) \
 { \
-	.cig = _cig, \
-	.cis = _cis, \
-	.sca = 0x07, \
-	.packing = 0x00, \
-	.framing = 0x00, \
-	.in = _in, \
-	.out = _out, \
+	.ucast = { \
+		.cig = _cig, \
+		.cis = _cis, \
+		.sca = 0x07, \
+		.packing = 0x00, \
+		.framing = 0x00, \
+		.in = _in, \
+		.out = _out, \
+	},\
 }
 
 #define QOS(_interval, _latency, _sdu, _phy, _rtn) \
@@ -119,10 +122,56 @@
 #define QOS_48_5_2 QOS_OUT(7500, 75, 117, 0x02, 13)
 #define QOS_48_6_2 QOS_OUT(10000, 100, 155, 0x02, 13)
 
-#define QOS_OUT_16_2_1 QOS_OUT(10000, 10, 40, 0x02, 2)
-#define QOS_OUT_1_16_2_1 QOS_OUT_1(10000, 10, 40, 0x02, 2)
-#define QOS_OUT_1_1_16_2_1 QOS_OUT_1_1(10000, 10, 40, 0x02, 2)
-#define QOS_IN_16_2_1 QOS_IN(10000, 10, 40, 0x02, 2)
+#define QOS_SINK_FULL(_big, _in) \
+{ \
+	.bcast.bsnk = { \
+		.options = 0x00, \
+		.skip = 0x0000, \
+		.sync_timeout = 0x4000, \
+		.sync_cte_type = 0x00, \
+		.big = _big, \
+		.encryption = 0x00, \
+		.bcode = {0}, \
+		.mse = 0x00, \
+		.timeout = 0x4000, \
+		.in = _in, \
+	}, \
+}
+
+#define QOS_SOURCE_FULL(_big, _bis, _out) \
+{ \
+	.bcast.bsrc = { \
+		.sync_interval = 0x07, \
+		.big = _big, \
+		.bis = _bis, \
+		.packing = 0x00, \
+		.framing = 0x00, \
+		.encryption = 0x00, \
+		.bcode = {0}, \
+		.out = _out, \
+	}, \
+}
+
+#define BCAST_QOS_OUT(_interval, _latency, _sdu, _phy, _rtn) \
+	QOS_SOURCE_FULL(BT_ISO_QOS_BIG_UNSET, BT_ISO_QOS_BIS_UNSET, \
+		QOS_IO(_interval, _latency, _sdu, _phy, _rtn))
+
+#define BCAST_QOS_OUT_1(_interval, _latency, _sdu, _phy, _rtn) \
+	QOS_SOURCE_FULL(0x01, BT_ISO_QOS_BIS_UNSET, \
+		QOS_IO(_interval, _latency, _sdu, _phy, _rtn))
+
+#define BCAST_QOS_OUT_1_1(_interval, _latency, _sdu, _phy, _rtn) \
+	QOS_SOURCE_FULL(0x01, 0x01, \
+		QOS_IO(_interval, _latency, _sdu, _phy, _rtn))
+
+#define BCAST_QOS_IN(_interval, _latency, _sdu, _phy, _rtn) \
+	QOS_SINK_FULL(BT_ISO_QOS_BIG_UNSET, \
+		QOS_IO(_interval, _latency, _sdu, _phy, _rtn))
+
+#define QOS_OUT_16_2_1 BCAST_QOS_OUT(10000, 10, 40, 0x02, 2)
+#define QOS_OUT_1_16_2_1 BCAST_QOS_OUT_1(10000, 10, 40, 0x02, 2)
+#define QOS_OUT_1_1_16_2_1 BCAST_QOS_OUT_1_1(10000, 10, 40, 0x02, 2)
+#define QOS_IN_16_2_1 BCAST_QOS_IN(10000, 10, 40, 0x02, 2)
 
 struct test_data {
 	const void *test_data;
@@ -670,6 +719,7 @@ static const struct iso_client_data bcast_16_2_1_recv = {
 	.expect_err = 0,
 	.recv = &send_16_2_1,
 	.bcast = true,
+	.server = true,
 };
 
 static void client_connectable_complete(uint16_t opcode, uint8_t status,
@@ -1080,8 +1130,8 @@ static bool check_io_qos(const struct bt_iso_io_qos *io1,
 	return true;
 }
 
-static bool check_qos(const struct bt_iso_qos *qos1,
-				const struct bt_iso_qos *qos2)
+static bool check_ucast_qos(const struct bt_iso_ucast_qos *qos1,
+				const struct bt_iso_ucast_qos *qos2)
 {
 	if (qos1->cig != BT_ISO_QOS_CIG_UNSET &&
 			qos2->cig != BT_ISO_QOS_CIG_UNSET &&
@@ -1113,6 +1163,63 @@ static bool check_qos(const struct bt_iso_qos *qos1,
 
 	if (!check_io_qos(&qos1->in, &qos2->in)) {
 		tester_warn("Unexpected Input QoS");
+		return false;
+	}
+
+	if (!check_io_qos(&qos1->out, &qos2->out)) {
+		tester_warn("Unexpected Output QoS");
+		return false;
+	}
+
+	return true;
+}
+
+static bool check_bcast_src_qos(const struct bt_iso_bcast_src_qos *qos1,
+				const struct bt_iso_bcast_src_qos *qos2)
+{
+	if (qos1->sync_interval != qos2->sync_interval) {
+		tester_warn("Unexpected QoS sync interval: 0x%02x != 0x%02x",
+				qos1->sync_interval, qos2->sync_interval);
+		return false;
+	}
+
+	if (qos1->big != BT_ISO_QOS_BIG_UNSET &&
+			qos2->big != BT_ISO_QOS_BIG_UNSET &&
+			qos1->big != qos2->big) {
+		tester_warn("Unexpected BIG ID: 0x%02x != 0x%02x",
+				qos1->big, qos2->big);
+		return false;
+	}
+
+	if (qos1->bis != BT_ISO_QOS_BIS_UNSET &&
+			qos2->bis != BT_ISO_QOS_BIS_UNSET &&
+			qos1->bis != qos2->bis) {
+		tester_warn("Unexpected BIS ID: 0x%02x != 0x%02x",
+				qos1->bis, qos2->bis);
+		return false;
+	}
+
+	if (qos1->packing != qos2->packing) {
+		tester_warn("Unexpected QoS packing: 0x%02x != 0x%02x",
+				qos1->packing, qos2->packing);
+		return false;
+	}
+
+	if (qos1->framing != qos2->framing) {
+		tester_warn("Unexpected QoS framing: 0x%02x != 0x%02x",
+				qos1->framing, qos2->framing);
+		return false;
+	}
+
+	if (qos1->encryption != qos2->encryption) {
+		tester_warn("Unexpected QoS encryption: 0x%02x != 0x%02x",
+				qos1->encryption, qos2->encryption);
+		return false;
+	}
+
+
+	if (memcmp(qos1->bcode, qos2->bcode, sizeof(qos1->bcode))) {
+		tester_warn("Unexpected QoS Broadcast Code");
 		return false;
 	}
 
@@ -1250,6 +1357,7 @@ static gboolean iso_connect(GIOChannel *io, GIOCondition cond,
 	int err, sk_err, sk;
 	socklen_t len;
 	struct bt_iso_qos qos;
+	bool ret = true;
 
 	sk = g_io_channel_unix_get_fd(io);
 
@@ -1264,7 +1372,13 @@ static gboolean iso_connect(GIOChannel *io, GIOCondition cond,
 		return FALSE;
 	}
 
-	if (!check_qos(&qos, &isodata->qos)) {
+	if (!isodata->bcast)
+		ret = check_ucast_qos(&qos.ucast, &isodata->qos.ucast);
+	else if (!isodata->server)
+		ret = check_bcast_src_qos(&qos.bcast.bsrc,
+					&isodata->qos.bcast.bsrc);
+
+	if (!ret) {
 		tester_warn("Unexpected QoS parameter");
 		tester_test_failed();
 		return FALSE;
@@ -1579,7 +1693,7 @@ static void setup_listen(struct test_data *data, uint8_t num, GIOFunc func)
 		client = hciemu_get_client(data->hciemu, 0);
 		host = hciemu_client_host(client);
 
-		bthost_set_cig_params(host, 0x01, 0x01, &isodata->qos);
+		bthost_set_cig_params(host, 0x01, 0x01, &isodata->qos.ucast);
 		bthost_create_cis(host, 257, data->acl_handle);
 	}
 }

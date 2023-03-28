@@ -5,6 +5,7 @@
  *
  *  Copyright (C) 2011-2012  Intel Corporation
  *  Copyright (C) 2004-2010  Marcel Holtmann <marcel@holtmann.org>
+ *  Copyright 2023 NXP
  *
  *
  */
@@ -3171,7 +3172,7 @@ bool bthost_search_ext_adv_addr(struct bthost *bthost, const uint8_t *addr)
 }
 
 void bthost_set_cig_params(struct bthost *bthost, uint8_t cig_id,
-				uint8_t cis_id, const struct bt_iso_qos *qos)
+			uint8_t cis_id, const struct bt_iso_ucast_qos *qos)
 {
 	struct bt_hci_cmd_le_set_cig_params *cp;
 
