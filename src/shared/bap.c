@@ -4,6 +4,7 @@
  *  BlueZ - Bluetooth protocol stack for Linux
  *
  *  Copyright (C) 2022  Intel Corporation. All rights reserved.
+ *  Copyright 2023 NXP
  *
  */
 
@@ -28,6 +29,7 @@
 #include "src/shared/gatt-client.h"
 #include "src/shared/bap.h"
 #include "src/shared/ascs.h"
+#include "src/shared/bass.h"
 
 /* Maximum number of ASE(s) */
 #define NUM_SINKS 2
@@ -114,14 +116,6 @@ struct bt_ascs {
 	struct gatt_db_attribute *ase_cp_ccc;
 };
 
-struct bt_bap_db {
-	struct gatt_db *db;
-	struct bt_pacs *pacs;
-	struct bt_ascs *ascs;
-	struct queue *sinks;
-	struct queue *sources;
-};
-
 struct bt_bap_req {
 	unsigned int id;
 	struct bt_bap_stream *stream;
@@ -133,43 +127,10 @@ struct bt_bap_req {
 	void *user_data;
 };
 
-typedef void (*bap_notify_t)(struct bt_bap *bap, uint16_t value_handle,
-				const uint8_t *value, uint16_t length,
-				void *user_data);
-
 struct bt_bap_notify {
 	unsigned int id;
 	struct bt_bap *bap;
 	bap_notify_t func;
-	void *user_data;
-};
-
-struct bt_bap {
-	int ref_count;
-	struct bt_bap_db *ldb;
-	struct bt_bap_db *rdb;
-	struct bt_gatt_client *client;
-	struct bt_att *att;
-	struct bt_bap_req *req;
-
-	unsigned int cp_id;
-	unsigned int process_id;
-	unsigned int disconn_id;
-	unsigned int idle_id;
-
-	struct queue *reqs;
-	struct queue *notify;
-	struct queue *streams;
-	struct queue *local_eps;
-	struct queue *remote_eps;
-
-	struct queue *pac_cbs;
-	struct queue *ready_cbs;
-	struct queue *state_cbs;
-
-	bt_bap_debug_func_t debug_func;
-	bt_bap_destroy_func_t debug_destroy;
-	void *debug_data;
 	void *user_data;
 };
 
@@ -569,7 +530,7 @@ static void bap_disconnected(int err, void *user_data)
 	bt_bap_detach(bap);
 }
 
-static struct bt_bap *bap_get_session(struct bt_att *att, struct gatt_db *db)
+struct bt_bap *bap_get_session(struct bt_att *att, struct gatt_db *db)
 {
 	const struct queue_entry *entry;
 	struct bt_bap *bap;
@@ -2189,6 +2150,7 @@ static struct bt_bap_db *bap_db_new(struct gatt_db *db)
 	bdb->db = gatt_db_ref(db);
 	bdb->sinks = queue_new();
 	bdb->sources = queue_new();
+	bdb->bass_bcast_srcs = queue_new();
 
 	if (!bap_db)
 		bap_db = queue_new();
@@ -2198,6 +2160,9 @@ static struct bt_bap_db *bap_db_new(struct gatt_db *db)
 
 	bdb->ascs = ascs_new(db);
 	bdb->ascs->bdb = bdb;
+
+	bdb->bass = bass_new(db);
+	bdb->bass->bdb = bdb;
 
 	queue_push_tail(bap_db, bdb);
 
@@ -2518,10 +2483,12 @@ static void bap_db_free(void *data)
 
 	queue_destroy(bdb->sinks, bap_pac_free);
 	queue_destroy(bdb->sources, bap_pac_free);
+	queue_destroy(bdb->bass_bcast_srcs, bass_bcast_src_free);
 	gatt_db_unref(bdb->db);
 
 	free(bdb->pacs);
 	free(bdb->ascs);
+	free(bdb->bass);
 	free(bdb);
 }
 
@@ -2669,6 +2636,7 @@ struct bt_bap *bt_bap_new(struct gatt_db *ldb, struct gatt_db *rdb)
 	bdb->db = gatt_db_ref(rdb);
 	bdb->sinks = queue_new();
 	bdb->sources = queue_new();
+	bdb->bass_bcast_srcs = queue_new();
 
 	bap->rdb = bdb;
 	bap->remote_eps = queue_new();
@@ -3382,7 +3350,7 @@ static void bap_notify_destroy(void *data)
 		free(notify);
 }
 
-static unsigned int bap_register_notify(struct bt_bap *bap,
+unsigned int bap_register_notify(struct bt_bap *bap,
 					uint16_t value_handle,
 					bap_notify_t func,
 					void *user_data)
@@ -3834,6 +3802,9 @@ clone:
 
 	bt_uuid16_create(&uuid, ASCS_UUID);
 	gatt_db_foreach_service(bap->rdb->db, &uuid, foreach_ascs_service, bap);
+
+	bt_uuid16_create(&uuid, BASS_UUID);
+	gatt_db_foreach_service(bap->rdb->db, &uuid, foreach_bass_service, bap);
 
 	return true;
 }

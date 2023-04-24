@@ -4,6 +4,7 @@
  *  BlueZ - Bluetooth protocol stack for Linux
  *
  *  Copyright (C) 2022  Intel Corporation. All rights reserved.
+ *  Copyright 2023 NXP
  *
  */
 
@@ -62,9 +63,49 @@ struct bt_bap_qos {
 	uint8_t  target_latency;	/* Target Latency */
 };
 
+struct bt_bap_db {
+	struct gatt_db *db;
+	struct bt_pacs *pacs;
+	struct bt_ascs *ascs;
+	struct bt_bass *bass;
+	struct queue *sinks;
+	struct queue *sources;
+	struct queue *bass_bcast_srcs;
+};
+
 typedef void (*bt_bap_ready_func_t)(struct bt_bap *bap, void *user_data);
 typedef void (*bt_bap_destroy_func_t)(void *user_data);
 typedef void (*bt_bap_debug_func_t)(const char *str, void *user_data);
+
+struct bt_bap {
+	int ref_count;
+	struct bt_bap_db *ldb;
+	struct bt_bap_db *rdb;
+	struct bt_gatt_client *client;
+	struct bt_att *att;
+	struct bt_bap_req *req;
+
+	unsigned int cp_id;
+	unsigned int process_id;
+	unsigned int disconn_id;
+	unsigned int idle_id;
+
+	struct queue *reqs;
+	struct queue *notify;
+	struct queue *streams;
+	struct queue *local_eps;
+	struct queue *remote_eps;
+
+	struct queue *pac_cbs;
+	struct queue *ready_cbs;
+	struct queue *state_cbs;
+
+	bt_bap_debug_func_t debug_func;
+	bt_bap_destroy_func_t debug_destroy;
+	void *debug_data;
+	void *user_data;
+};
+
 typedef void (*bt_bap_pac_func_t)(struct bt_bap_pac *pac, void *user_data);
 typedef bool (*bt_bap_pac_foreach_t)(struct bt_bap_pac *lpac,
 					struct bt_bap_pac *rpac,
@@ -85,6 +126,10 @@ typedef void (*bt_bap_stream_func_t)(struct bt_bap_stream *stream,
 					uint8_t code, uint8_t reason,
 					void *user_data);
 typedef void (*bt_bap_func_t)(struct bt_bap *bap, void *user_data);
+
+typedef void (*bap_notify_t)(struct bt_bap *bap, uint16_t value_handle,
+				const uint8_t *value, uint16_t length,
+				void *user_data);
 
 /* Local PAC related functions */
 struct bt_bap_pac_qos {
@@ -265,3 +310,9 @@ uint8_t bt_bap_stream_io_dir(struct bt_bap_stream *stream);
 
 int bt_bap_stream_io_connecting(struct bt_bap_stream *stream, int fd);
 bool bt_bap_stream_io_is_connecting(struct bt_bap_stream *stream, int *fd);
+
+struct bt_bap *bap_get_session(struct bt_att *att, struct gatt_db *db);
+unsigned int bap_register_notify(struct bt_bap *bap,
+					uint16_t value_handle,
+					bap_notify_t func,
+					void *user_data);
