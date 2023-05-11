@@ -27,6 +27,7 @@ pkginclude_HEADERS =
 AM_CFLAGS = $(MISC_CFLAGS) $(WARNING_CFLAGS) $(UDEV_CFLAGS) $(LIBEBOOK_CFLAGS) \
 				$(LIBEDATASERVER_CFLAGS) $(ell_cflags)
 AM_LDFLAGS = $(MISC_LDFLAGS)
+AM_CPPFLAGS += -D_FILE_OFFSET_BITS=64 -D_TIME_BITS=64
 
 confdir = $(sysconfdir)/bluetooth
 statedir = $(localstatedir)/lib/bluetooth
