@@ -120,11 +120,11 @@ static inline void p_indent(int level, struct frame *f)
 				struct tm tm;
 				time_t t = f->ts.tv_sec;
 				localtime_r(&t, &tm);
-				printf("%04d-%02d-%02d %02d:%02d:%02d.%06lu ",
+				printf("%04d-%02d-%02d %02d:%02d:%02d.%06llu ",
 					tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
 					tm.tm_hour, tm.tm_min, tm.tm_sec, f->ts.tv_usec);
 			} else
-				printf("%8lu.%06lu ", f->ts.tv_sec, f->ts.tv_usec);
+				printf("%8lu.%06llu ", f->ts.tv_sec, f->ts.tv_usec);
 		}
 		printf("%c ", (f->in ? '>' : '<'));
 		parser.state = 1;
