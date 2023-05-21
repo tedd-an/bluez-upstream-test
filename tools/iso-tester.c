@@ -64,6 +64,11 @@
 		QOS_IO(_interval, _latency, _sdu, _phy, _rtn), \
 		QOS_IO(_interval, _latency, _sdu, _phy, _rtn))
 
+#define QOS_2(_interval, _latency, _sdu, _phy, _rtn) \
+	QOS_FULL(0x02, BT_ISO_QOS_CIS_UNSET, \
+		QOS_IO(_interval, _latency, _sdu, _phy, _rtn), \
+		QOS_IO(_interval, _latency, _sdu, _phy, _rtn))
+
 #define QOS_1_1(_interval, _latency, _sdu, _phy, _rtn) \
 	QOS_FULL(0x01, 0x01, \
 		QOS_IO(_interval, _latency, _sdu, _phy, _rtn), \
@@ -109,6 +114,7 @@
 #define QOS_16_1_1 QOS(7500, 8, 30, 0x02, 2)
 #define QOS_16_2_1 QOS(10000, 10, 40, 0x02, 2)
 #define QOS_1_16_2_1 QOS_1(10000, 10, 40, 0x02, 2)
+#define QOS_2_16_2_1 QOS_2(10000, 10, 40, 0x02, 2)
 #define QOS_1_1_16_2_1 QOS_1_1(10000, 10, 40, 0x02, 2)
 #define QOS_24_1_1 QOS(7500, 8, 45, 0x02, 2)
 #define QOS_24_2_1 QOS(10000, 10, 60, 0x02, 2)
@@ -544,6 +550,20 @@ static const struct iso_client_data connect_16_2_1 = {
 static const struct iso_client_data connect_1_16_2_1 = {
 	.qos = QOS_1_16_2_1,
 	.expect_err = 0
+};
+
+static const struct iso_client_data connect_2_16_2_1 = {
+	.qos = QOS_1_16_2_1,
+	.qos_2 = QOS_2_16_2_1,
+	.expect_err = 0,
+	.mcis = true,
+};
+
+static const struct iso_client_data connect_2a_16_2_1 = {
+	.qos = QOS_16_2_1,
+	.qos_2 = QOS_16_2_1,
+	.expect_err = 0,
+	.mcis = true,
 };
 
 static const struct iso_client_data connect_1_1_16_2_1 = {
@@ -2126,6 +2146,25 @@ static void test_connect2(const void *test_data)
 	setup_connect_many(data, 2, num, funcs);
 }
 
+static gboolean iso_connect2_seq_cb(GIOChannel *io, GIOCondition cond,
+							gpointer user_data)
+{
+	struct test_data *data = tester_get_data();
+
+	data->io_id[0] = 0;
+
+	setup_connect(data, 1, iso_connect2_cb);
+
+	return iso_connect(io, cond, user_data);
+}
+
+static void test_connect2_seq(const void *test_data)
+{
+	struct test_data *data = tester_get_data();
+
+	setup_connect(data, 0, iso_connect2_seq_cb);
+}
+
 static void test_bcast(const void *test_data)
 {
 	struct test_data *data = tester_get_data();
@@ -2263,6 +2302,15 @@ int main(int argc, char *argv[])
 
 	test_iso("ISO QoS - Invalid", &connect_invalid, setup_powered,
 							test_connect);
+
+	test_iso2("ISO Connect2 CIG 0x01/0x02 Seq - Success", &connect_2_16_2_1,
+							setup_powered,
+							test_connect2_seq);
+
+	test_iso2("ISO Connect2 CIG auto/auto Seq - Success",
+							&connect_2a_16_2_1,
+							setup_powered,
+							test_connect2_seq);
 
 	test_iso_rej("ISO Connect - Reject", &connect_reject, setup_powered,
 			test_connect, BT_HCI_ERR_CONN_FAILED_TO_ESTABLISH);
