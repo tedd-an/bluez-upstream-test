@@ -1115,18 +1115,6 @@ static bool match_stream_io(const void *data, const void *user_data)
 	return stream->io == io;
 }
 
-static void stream_stop_disabling(void *data, void *user_data)
-{
-	struct bt_bap_stream *stream = data;
-
-	if (stream->io || stream->ep->state != BT_ASCS_ASE_STATE_DISABLING)
-		return;
-
-	DBG(stream->bap, "stream %p", stream);
-
-	bt_bap_stream_stop(stream, NULL, NULL);
-}
-
 static bool bap_stream_io_detach(struct bt_bap_stream *stream)
 {
 	struct bt_bap_stream *link;
@@ -1145,9 +1133,6 @@ static bool bap_stream_io_detach(struct bt_bap_stream *stream)
 		/* Detach link if in QoS state */
 		if (link->ep->state == BT_ASCS_ASE_STATE_QOS)
 			bap_stream_io_detach(link);
-	} else {
-		/* Links without IO on disabling state shall be stopped. */
-		queue_foreach(stream->links, stream_stop_disabling, NULL);
 	}
 
 	stream_io_unref(io);
@@ -1218,7 +1203,6 @@ static void bap_stream_state_changed(struct bt_bap_stream *stream)
 		bap_stream_update_io_links(stream);
 		break;
 	case BT_ASCS_ASE_STATE_DISABLING:
-		bap_stream_io_detach(stream);
 		break;
 	case BT_ASCS_ASE_STATE_QOS:
 		if (stream->io && !stream->io->connecting)
@@ -1252,8 +1236,8 @@ static void bap_stream_state_changed(struct bt_bap_stream *stream)
 			bt_bap_stream_start(stream, NULL, NULL);
 		break;
 	case BT_ASCS_ASE_STATE_DISABLING:
-		if (!bt_bap_stream_get_io(stream))
-			bt_bap_stream_stop(stream, NULL, NULL);
+		/* IO is detached when back in QOS */
+		bt_bap_stream_stop(stream, NULL, NULL);
 		break;
 	}
 
