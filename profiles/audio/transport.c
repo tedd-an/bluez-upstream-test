@@ -526,6 +526,13 @@ static void media_owner_add(struct media_owner *owner,
 	owner->pending = req;
 }
 
+static void *get_stream_bap(struct media_transport *transport)
+{
+	struct bap_transport *bap = transport->data;
+
+	return bap->stream;
+}
+
 static DBusMessage *acquire(DBusConnection *conn, DBusMessage *msg,
 					void *data)
 {
@@ -541,15 +548,24 @@ static DBusMessage *acquire(DBusConnection *conn, DBusMessage *msg,
 		return btd_error_not_authorized(msg);
 
 	owner = media_owner_create(msg);
+	if (bt_bap_stream_get_type(get_stream_bap(transport)) ==
+				BT_BAP_STREAM_TYPE_BROADCAST) {
+		req = media_request_create(msg, 0x00);
+		media_owner_add(owner, req);
+		media_transport_set_owner(transport, owner);
+	}
 	id = transport->resume(transport, owner);
 	if (id == 0) {
 		media_owner_free(owner);
 		return btd_error_not_authorized(msg);
 	}
 
-	req = media_request_create(msg, id);
-	media_owner_add(owner, req);
-	media_transport_set_owner(transport, owner);
+	if (bt_bap_stream_get_type(get_stream_bap(transport)) ==
+				BT_BAP_STREAM_TYPE_UNICAST) {
+		req = media_request_create(msg, id);
+		media_owner_add(owner, req);
+		media_transport_set_owner(transport, owner);
+	}
 
 	return NULL;
 }
@@ -1483,13 +1499,6 @@ static void bap_connecting(struct bt_bap_stream *stream, bool state, int fd,
 	bap_update_links(transport);
 }
 
-static void *get_stream_bap(struct media_transport *transport)
-{
-	struct bap_transport *bap = transport->data;
-
-	return bap->stream;
-}
-
 static void free_bap(void *data)
 {
 	struct bap_transport *bap = data;
@@ -1560,7 +1569,8 @@ struct media_transport *media_transport_create(struct btd_device *device,
 			goto fail;
 		properties = a2dp_properties;
 	} else if (!strcasecmp(uuid, PAC_SINK_UUID) ||
-				!strcasecmp(uuid, PAC_SOURCE_UUID)) {
+				!strcasecmp(uuid, PAC_SOURCE_UUID) ||
+				!strcasecmp(uuid, BAA_SERVICE_UUID)) {
 		if (media_transport_init_bap(transport, stream) < 0)
 			goto fail;
 		properties = bap_properties;

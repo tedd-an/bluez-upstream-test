@@ -750,6 +750,7 @@ static int parse_select_properties(DBusMessageIter *props, struct iovec *caps,
 	const char *key;
 	struct bt_bap_io_qos io_qos;
 	uint8_t framing = 0;
+	bool broadcast = false;
 
 	memset(&io_qos, 0, sizeof(io_qos));
 	while (dbus_message_iter_get_arg_type(props) == DBUS_TYPE_DICT_ENTRY) {
@@ -781,11 +782,21 @@ static int parse_select_properties(DBusMessageIter *props, struct iovec *caps,
 				goto fail;
 
 			dbus_message_iter_get_basic(&value, &qos->ucast.cig_id);
+		} else if (!strcasecmp(key, "BIG")) {
+			if (var != DBUS_TYPE_BYTE)
+				goto fail;
+
+			dbus_message_iter_get_basic(&value, &qos->bcast.big);
 		} else if (!strcasecmp(key, "CIS")) {
 			if (var != DBUS_TYPE_BYTE)
 				goto fail;
 
 			dbus_message_iter_get_basic(&value, &qos->ucast.cis_id);
+		} else if (!strcasecmp(key, "BIS")) {
+			if (var != DBUS_TYPE_BYTE)
+				goto fail;
+
+			dbus_message_iter_get_basic(&value, &qos->bcast.bis);
 		} else if (!strcasecmp(key, "Interval")) {
 			if (var != DBUS_TYPE_UINT32)
 				goto fail;
@@ -840,13 +851,75 @@ static int parse_select_properties(DBusMessageIter *props, struct iovec *caps,
 
 			dbus_message_iter_get_basic(&value,
 						&qos->ucast.target_latency);
+		} else if (!strcasecmp(key, "Encryption")) {
+			if (var != DBUS_TYPE_BYTE)
+				goto fail;
+
+			dbus_message_iter_get_basic(&value,
+							&qos->bcast.encryption);
+			broadcast = true;
+		} else if (!strcasecmp(key, "Options")) {
+			if (var != DBUS_TYPE_BYTE)
+				goto fail;
+
+			dbus_message_iter_get_basic(&value,
+							&qos->bcast.options);
+		} else if (!strcasecmp(key, "Skip")) {
+			if (var != DBUS_TYPE_UINT16)
+				goto fail;
+
+			dbus_message_iter_get_basic(&value,
+							&qos->bcast.skip);
+		} else if (!strcasecmp(key, "SyncTimeout")) {
+			if (var != DBUS_TYPE_UINT16)
+				goto fail;
+
+			dbus_message_iter_get_basic(&value,
+						&qos->bcast.sync_timeout);
+		} else if (!strcasecmp(key, "SyncCteType")) {
+			if (var != DBUS_TYPE_BYTE)
+				goto fail;
+
+			dbus_message_iter_get_basic(&value,
+						&qos->bcast.sync_cte_type);
+
+		} else if (!strcasecmp(key, "SyncInterval")) {
+			if (var != DBUS_TYPE_BYTE)
+				goto fail;
+
+			dbus_message_iter_get_basic(&value,
+						&qos->bcast.sync_interval);
+		} else if (!strcasecmp(key, "MSE")) {
+			if (var != DBUS_TYPE_BYTE)
+				goto fail;
+
+			dbus_message_iter_get_basic(&value,
+							&qos->bcast.mse);
+		} else if (!strcasecmp(key, "Timeout")) {
+			if (var != DBUS_TYPE_UINT16)
+				goto fail;
+
+			dbus_message_iter_get_basic(&value,
+							&qos->bcast.timeout);
+		} else if (!strcasecmp(key, "BroadcastCode")) {
+			if (var != DBUS_TYPE_ARRAY)
+				goto fail;
+
+			parse_array(&value, &qos->bcast.bcode);
 		}
 
 		dbus_message_iter_next(props);
 	}
 
-	memcpy(&qos->ucast.io_qos, &io_qos, sizeof(io_qos));
-	qos->ucast.framing = framing;
+	if (broadcast) {
+		memcpy(&qos->bcast.io_qos, &io_qos, sizeof(io_qos));
+		qos->bcast.framing = framing;
+
+	} else {
+		memcpy(&qos->ucast.io_qos, &io_qos, sizeof(io_qos));
+		qos->ucast.framing = framing;
+	}
+
 	return 0;
 
 fail:
@@ -1169,16 +1242,26 @@ static bool endpoint_init_pac(struct media_endpoint *endpoint, uint8_t type,
 		metadata->iov_len = endpoint->metadata_size;
 	}
 
-	endpoint->pac = bt_bap_add_vendor_pac(db, name, type, endpoint->codec,
-				endpoint->cid, endpoint->vid, &endpoint->qos,
+	if (type == BT_BAP_SINK || type == BT_BAP_SOURCE) {
+		endpoint->pac = bt_bap_add_vendor_pac(db, name, type,
+				endpoint->codec, endpoint->cid,
+				endpoint->vid, &endpoint->qos,
 				&data, metadata);
+	} else {
+		endpoint->pac = bt_bap_add_vendor_pac_bcast(db, name,
+				type, endpoint->codec, endpoint->cid,
+				endpoint->vid, &endpoint->qos,
+				&data, metadata, &pac_ops, endpoint);
+	}
+
 	if (!endpoint->pac) {
 		error("Unable to create PAC");
 		free(metadata);
 		return false;
 	}
 
-	bt_bap_pac_set_ops(endpoint->pac, &pac_ops, endpoint);
+	if (type == BT_BAP_SINK || type == BT_BAP_SOURCE)
+		bt_bap_pac_set_ops(endpoint->pac, &pac_ops, endpoint);
 
 	DBG("PAC %s registered", name);
 
@@ -1196,6 +1279,12 @@ static bool endpoint_init_pac_sink(struct media_endpoint *endpoint, int *err)
 static bool endpoint_init_pac_source(struct media_endpoint *endpoint, int *err)
 {
 	return endpoint_init_pac(endpoint, BT_BAP_SOURCE, err);
+}
+
+static bool endpoint_init_broadcast_source(struct media_endpoint *endpoint,
+						int *err)
+{
+	return endpoint_init_pac(endpoint, BT_BAP_BCAST_SOURCE, err);
 }
 
 static bool endpoint_properties_exists(const char *uuid,
@@ -1300,6 +1389,18 @@ static bool experimental_endpoint_supported(struct btd_adapter *adapter)
 	return g_dbus_get_flags() & G_DBUS_FLAG_ENABLE_EXPERIMENTAL;
 }
 
+static bool experimental_broadcaster_ep_supported(struct btd_adapter *adapter)
+{
+
+	if (!btd_adapter_has_exp_feature(adapter, EXP_FEAT_ISO_SOCKET))
+		return false;
+
+	if (!btd_adapter_has_settings(adapter, MGMT_SETTING_ISO_BROADCASTER))
+		return false;
+
+	return g_dbus_get_flags() & G_DBUS_FLAG_ENABLE_EXPERIMENTAL;
+}
+
 static struct media_endpoint_init {
 	const char *uuid;
 	bool (*func)(struct media_endpoint *endpoint, int *err);
@@ -1313,6 +1414,8 @@ static struct media_endpoint_init {
 				experimental_endpoint_supported },
 	{ PAC_SOURCE_UUID, endpoint_init_pac_source,
 				experimental_endpoint_supported },
+	{ BAA_SERVICE_UUID, endpoint_init_broadcast_source,
+			experimental_broadcaster_ep_supported },
 };
 
 static struct media_endpoint *
