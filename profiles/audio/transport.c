@@ -345,7 +345,7 @@ static void a2dp_resume_complete(struct avdtp *session, int err,
 	struct media_owner *owner = user_data;
 	struct media_request *req = owner->pending;
 	struct media_transport *transport = owner->transport;
-	struct a2dp_sep *sep = media_endpoint_get_sep(transport->endpoint);
+	struct a2dp_sep *sep;
 	struct avdtp_stream *stream;
 	int fd;
 	uint16_t imtu, omtu;
@@ -355,7 +355,10 @@ static void a2dp_resume_complete(struct avdtp *session, int err,
 
 	if (err)
 		goto fail;
+	if (!transport)
+		goto fail;
 
+	sep = media_endpoint_get_sep(transport->endpoint);
 	stream = a2dp_sep_get_stream(sep);
 	if (stream == NULL)
 		goto fail;
