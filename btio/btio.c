@@ -16,6 +16,7 @@
 
 #include <stdarg.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <unistd.h>
 #include <errno.h>
 #include <poll.h>
@@ -71,6 +72,8 @@ struct set_opts {
 	uint16_t voice;
 	struct bt_iso_qos qos;
 	struct bt_iso_base base;
+	struct sockaddr_iso_bc iso_bc_addr;
+	bool bc_addr_set;
 };
 
 struct connect {
@@ -771,21 +774,40 @@ static int sco_bind(int sock, const bdaddr_t *src, GError **err)
 }
 
 static int iso_bind(int sock, const bdaddr_t *src, uint8_t src_type,
-							GError **err)
+					struct sockaddr_iso_bc *bc_addr,
+					GError **err)
 {
-	struct sockaddr_iso addr;
+	struct sockaddr_iso *addr = NULL;
+	size_t addr_len;
+	int ret = 0;
 
-	memset(&addr, 0, sizeof(addr));
-	addr.iso_family = AF_BLUETOOTH;
-	bacpy(&addr.iso_bdaddr, src);
-	addr.iso_bdaddr_type = src_type;
+	if (bc_addr)
+		addr_len = sizeof(*addr) + sizeof(*addr->iso_bc);
+	else
+		addr_len = sizeof(*addr);
 
-	if (!bind(sock, (struct sockaddr *) &addr, sizeof(addr)))
-		return 0;
+	addr = malloc(addr_len);
 
+	if (!addr)
+		return -ENOMEM;
+
+	memset(addr, 0, addr_len);
+	addr->iso_family = AF_BLUETOOTH;
+	bacpy(&addr->iso_bdaddr, src);
+	addr->iso_bdaddr_type = src_type;
+
+	if (bc_addr)
+		memcpy(addr->iso_bc, bc_addr, sizeof(*bc_addr));
+
+	if (!bind(sock, (struct sockaddr *)addr, addr_len))
+		goto done;
+
+	ret = -errno;
 	ERROR_FAILED(err, "iso_bind", errno);
 
-	return -errno;
+done:
+	free(addr);
+	return ret;
 }
 
 static int sco_connect(int sock, const bdaddr_t *dst)
@@ -979,6 +1001,11 @@ static gboolean parse_set_opts(struct set_opts *opts, GError **err,
 			break;
 		case BT_IO_OPT_BASE:
 			opts->base = *va_arg(args, struct bt_iso_base *);
+			break;
+		case BT_IO_OPT_ISO_BC_ADDR:
+			opts->iso_bc_addr = *va_arg(args,
+						struct sockaddr_iso_bc *);
+			opts->bc_addr_set = true;
 			break;
 		case BT_IO_OPT_INVALID:
 		case BT_IO_OPT_KEY_SIZE:
@@ -1305,6 +1332,7 @@ parse_opts:
 		case BT_IO_OPT_VOICE:
 		case BT_IO_OPT_QOS:
 		case BT_IO_OPT_BASE:
+		case BT_IO_OPT_ISO_BC_ADDR:
 		default:
 			g_set_error(err, BT_IO_ERROR, EINVAL,
 					"Unknown option %d", opt);
@@ -1460,6 +1488,7 @@ static gboolean rfcomm_get(int sock, GError **err, BtIOOption opt1,
 		case BT_IO_OPT_VOICE:
 		case BT_IO_OPT_QOS:
 		case BT_IO_OPT_BASE:
+		case BT_IO_OPT_ISO_BC_ADDR:
 		case BT_IO_OPT_INVALID:
 		default:
 			g_set_error(err, BT_IO_ERROR, EINVAL,
@@ -1571,6 +1600,7 @@ static gboolean sco_get(int sock, GError **err, BtIOOption opt1, va_list args)
 		case BT_IO_OPT_VOICE:
 		case BT_IO_OPT_QOS:
 		case BT_IO_OPT_BASE:
+		case BT_IO_OPT_ISO_BC_ADDR:
 		case BT_IO_OPT_INVALID:
 		default:
 			g_set_error(err, BT_IO_ERROR, EINVAL,
@@ -1660,6 +1690,7 @@ static gboolean iso_get(int sock, GError **err, BtIOOption opt1, va_list args)
 		case BT_IO_OPT_FLUSHABLE:
 		case BT_IO_OPT_PRIORITY:
 		case BT_IO_OPT_VOICE:
+		case BT_IO_OPT_ISO_BC_ADDR:
 		case BT_IO_OPT_INVALID:
 		default:
 			g_set_error(err, BT_IO_ERROR, EINVAL,
@@ -1790,6 +1821,7 @@ static GIOChannel *create_io(gboolean server, struct set_opts *opts,
 {
 	int sock;
 	GIOChannel *io;
+	struct sockaddr_iso_bc *iso_bc_addr = NULL;
 
 	switch (opts->type) {
 	case BT_IO_L2CAP:
@@ -1836,7 +1868,11 @@ static GIOChannel *create_io(gboolean server, struct set_opts *opts,
 			ERROR_FAILED(err, "socket(SEQPACKET, ISO)", errno);
 			return NULL;
 		}
-		if (iso_bind(sock, &opts->src, opts->src_type, err) < 0)
+		if (opts->bc_addr_set)
+			iso_bc_addr = &opts->iso_bc_addr;
+
+		if (iso_bind(sock, &opts->src, opts->src_type,
+					 iso_bc_addr, err) < 0)
 			goto failed;
 		if (!iso_set_qos(sock, &opts->qos, err))
 			goto failed;
