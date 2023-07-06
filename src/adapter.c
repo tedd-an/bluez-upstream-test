@@ -7031,6 +7031,27 @@ static bool is_filter_match(GSList *discovery_filter, struct eir_data *eir_data,
 	return got_match;
 }
 
+static int find_baas(gconstpointer a, gconstpointer b)
+{
+	const struct eir_sd *sd = a;
+	const char *baas_uuid = b;
+
+	return strcmp(sd->uuid, baas_uuid);
+}
+
+static bool accept_bcast_adv(struct btd_adapter *adapter,
+				struct eir_data *eir_data)
+{
+	if ((btd_adapter_has_settings(adapter, MGMT_SETTING_ISO_SYNC_RECEIVER))
+		&& !(eir_data->flags & (EIR_LIM_DISC | EIR_GEN_DISC))
+		&& (g_slist_find_custom(eir_data->sd_list,
+					BAA_SERVICE_UUID, find_baas))) {
+		return true;
+	}
+
+	return false;
+}
+
 static void filter_duplicate_data(void *data, void *user_data)
 {
 	struct discovery_client *client = data;
@@ -7153,6 +7174,9 @@ void btd_adapter_device_found(struct btd_adapter *adapter,
 			eir_data_free(&eir_data);
 			return;
 		}
+
+		if (accept_bcast_adv(adapter, &eir_data))
+			monitoring = true;
 
 		if (!discoverable && !monitoring && !eir_data.rsi) {
 			eir_data_free(&eir_data);
