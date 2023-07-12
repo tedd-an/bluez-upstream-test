@@ -198,7 +198,7 @@ static void print_device(GDBusProxy *proxy, const char *description)
 		if (filter.discoverable)
 			return;
 
-		bt_shell_printf("%s%s%s" COLOR_BOLDGRAY "Device %s %s"
+		bt_shell_printf("%s%s%s" COLOR_GREEN "Device %s %s"
 					COLOR_OFF "\n",
 					description ? "[" : "",
 					description ? : "",
@@ -304,6 +304,57 @@ static gboolean proxy_is_child(GDBusProxy *device, GDBusProxy *parent)
 	return FALSE;
 }
 
+static bool parse_service_data(GDBusProxy *proxy)
+{
+	DBusMessageIter iter, entries;
+
+	if (!g_dbus_proxy_get_property(proxy, "ServiceData", &iter))
+		return false;
+
+	if (dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_ARRAY)
+		return false;
+
+	dbus_message_iter_recurse(&iter, &entries);
+
+	while (dbus_message_iter_get_arg_type(&entries)
+						== DBUS_TYPE_DICT_ENTRY) {
+		DBusMessageIter value, entry, array;
+		const char *uuid_str;
+		uint8_t *service_data;
+		int len;
+
+		dbus_message_iter_recurse(&entries, &entry);
+		dbus_message_iter_get_basic(&entry, &uuid_str);
+
+		dbus_message_iter_next(&entry);
+
+		if (dbus_message_iter_get_arg_type(&entry) != DBUS_TYPE_VARIANT)
+			goto fail;
+
+		dbus_message_iter_recurse(&entry, &value);
+
+		if (dbus_message_iter_get_arg_type(&value) != DBUS_TYPE_ARRAY)
+			goto fail;
+
+		dbus_message_iter_recurse(&value, &array);
+
+		if (dbus_message_iter_get_arg_type(&array) != DBUS_TYPE_BYTE)
+			goto fail;
+
+		dbus_message_iter_get_fixed_array(&array, &service_data, &len);
+
+		if (!strcmp(uuid_str, BAA_SERVICE_UUID)) {
+			player_add_bcast_source(proxy, service_data, len);
+			return true;
+		}
+
+		dbus_message_iter_next(&entries);
+	}
+
+fail:
+	return false;
+}
+
 static gboolean service_is_child(GDBusProxy *service)
 {
 	DBusMessageIter iter;
@@ -399,6 +450,8 @@ static void device_added(GDBusProxy *proxy)
 		if (connected)
 			set_default_device(proxy, NULL);
 	}
+
+	parse_service_data(proxy);
 }
 
 static struct adapter *find_ctrl(GList *source, const char *path);
@@ -531,6 +584,8 @@ static void device_removed(GDBusProxy *proxy)
 		/* TODO: Error */
 		return;
 	}
+	/* Check if it was a broadcast source and remove it */
+	player_remove_bcast_source(proxy);
 
 	adapter->devices = g_list_remove(adapter->devices, proxy);
 
