@@ -81,6 +81,7 @@ struct endpoint {
 	struct preset *preset;
 	bool broadcast;
 	struct iovec *bcode;
+	struct queue *bcast_sources;
 };
 
 static DBusConnection *dbus_conn;
@@ -93,6 +94,11 @@ static GList *endpoints = NULL;
 static GList *local_endpoints = NULL;
 static GList *transports = NULL;
 static struct queue *ios = NULL;
+
+struct bcast_source {
+	GDBusProxy *proxy;
+	uint32_t bcast_id;
+};
 
 struct transport {
 	GDBusProxy *proxy;
@@ -2285,6 +2291,9 @@ static void register_endpoint_setup(DBusMessageIter *iter, void *user_data)
 		bt_shell_hexdump(ep->meta->iov_base, ep->meta->iov_len);
 	}
 
+	g_dbus_dict_append_entry(&dict, "Broadcast", DBUS_TYPE_BOOLEAN,
+				&ep->broadcast);
+
 	dbus_message_iter_close_container(iter, &dict);
 }
 
@@ -2424,6 +2433,28 @@ static void endpoint_iso_group(const char *input, void *user_data)
 			endpoint_iso_stream, ep);
 }
 
+static void endpoint_iso_mode(const char *input, void *user_data)
+{
+	struct endpoint *ep = user_data;
+
+	if (!strcasecmp(input, "u") || !strcasecmp(input, "unicast")) {
+		ep->broadcast = false;
+	} else if (!strcasecmp(input, "b") || !strcasecmp(input, "broadcast")) {
+		ep->broadcast = true;
+		ep->bcast_sources = queue_new();
+	} else {
+		bt_shell_printf("Invalid input for Auto Accept\n");
+		return bt_shell_noninteractive_quit(EXIT_FAILURE);
+	}
+
+	if (!ep->broadcast)
+		bt_shell_prompt_input(ep->path, "CIG (auto/value):",
+						endpoint_iso_group, ep);
+	else
+		bt_shell_prompt_input(ep->path, "BIG (auto/value):",
+						endpoint_iso_group, ep);
+}
+
 static void endpoint_max_transports(const char *input, void *user_data)
 {
 	struct endpoint *ep = user_data;
@@ -2445,7 +2476,10 @@ static void endpoint_max_transports(const char *input, void *user_data)
 
 	if (ep->broadcast)
 		bt_shell_prompt_input(ep->path, "BIG (auto/value):",
-			endpoint_iso_group, ep);
+					endpoint_iso_group, ep);
+	else if (!strcmp(ep->uuid, PAC_SINK_UUID))
+		bt_shell_prompt_input(ep->path, "unicast/broadcast (u/b):",
+					endpoint_iso_mode, ep);
 	else
 		bt_shell_prompt_input(ep->path, "CIG (auto/value):",
 			endpoint_iso_group, ep);
@@ -2472,13 +2506,6 @@ static void endpoint_auto_accept(const char *input, void *user_data)
 		bt_shell_printf("Invalid input for Auto Accept\n");
 		return bt_shell_noninteractive_quit(EXIT_FAILURE);
 	}
-
-	if (ep->broadcast)
-		bt_shell_prompt_input(ep->path, "BIG (auto/value):",
-					endpoint_iso_group, ep);
-	else
-		bt_shell_prompt_input(ep->path, "CIG (auto/value):",
-					endpoint_iso_group, ep);
 }
 
 static void endpoint_set_metadata(const char *input, void *user_data)
@@ -2714,6 +2741,103 @@ static void endpoint_set_config(struct endpoint_config *cfg)
 	}
 }
 
+static void sink_create_reply(DBusMessage *message, void *user_data)
+{
+	DBusError error;
+
+	dbus_error_init(&error);
+
+	if (dbus_set_error_from_message(&error, message) == TRUE) {
+		bt_shell_printf("Failed to create broadcast sink: %s\n",
+					error.name);
+		dbus_error_free(&error);
+		return bt_shell_noninteractive_quit(EXIT_FAILURE);
+	}
+
+	return bt_shell_noninteractive_quit(EXIT_SUCCESS);
+}
+
+struct bcast_sink {
+		uint8_t		bc_sid;
+		uint8_t		bc_num_bis;
+} bcast_sink = {
+		.bc_sid = 1,
+		.bc_num_bis = 1,
+};
+
+static bool match_bcast_source_by_address(
+			const void *data, const void *match_data)
+{
+	const struct bcast_source *source = data;
+	const char *addr = match_data;
+	char *source_addr;
+	DBusMessageIter iter;
+
+	if (!g_dbus_proxy_get_property(source->proxy, "Address", &iter))
+		return false;
+
+	dbus_message_iter_get_basic(&iter, &source_addr);
+
+	if (!strcasecmp(addr, source_addr))
+		return true;
+
+	return false;
+}
+static void sink_create_setup(DBusMessageIter *iter, void *user_data)
+{
+	struct bcast_source *bcast_source = user_data;
+	DBusMessageIter dict, source_iter;
+	const char *source_type, *source_address;
+
+	g_dbus_proxy_get_property(bcast_source->proxy, "Address", &source_iter);
+
+	dbus_message_iter_get_basic(&source_iter, &source_address);
+
+	g_dbus_proxy_get_property(bcast_source->proxy, "AddressType",
+					&source_iter);
+
+	dbus_message_iter_get_basic(&source_iter, &source_type);
+
+	dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY, "{sv}", &dict);
+
+	g_dbus_dict_append_entry(&dict, "SourceAddress", DBUS_TYPE_STRING,
+					&source_address);
+
+	g_dbus_dict_append_entry(&dict, "SourceAddressType", DBUS_TYPE_STRING,
+					&source_type);
+
+	g_dbus_dict_append_entry(&dict, "BIS", DBUS_TYPE_BYTE,
+					&bcast_sink.bc_sid);
+
+	g_dbus_dict_append_entry(&dict, "NumBis", DBUS_TYPE_BYTE,
+					&bcast_sink.bc_num_bis);
+
+	g_dbus_dict_append_entry(&dict, "BcastID", DBUS_TYPE_UINT32,
+					&bcast_source->bcast_id);
+
+	dbus_message_iter_close_container(iter, &dict);
+}
+
+static void endpoint_bcast_sink_sync(struct endpoint_config *cfg, char *source)
+{
+	struct bcast_source *bcast_source = NULL;
+
+	bcast_source = queue_find(cfg->ep->bcast_sources,
+					match_bcast_source_by_address, source);
+
+	if (!bcast_source) {
+		bt_shell_printf("Source not found\n");
+		return bt_shell_noninteractive_quit(EXIT_FAILURE);
+	}
+
+
+	if (g_dbus_proxy_method_call(cfg->proxy, "BcastSinkCreate",
+			sink_create_setup, sink_create_reply,
+			bcast_source, NULL) == FALSE) {
+		return bt_shell_noninteractive_quit(EXIT_FAILURE);
+	}
+}
+
 static void endpoint_config(const char *input, void *user_data)
 {
 	struct endpoint_config *cfg = user_data;
@@ -2771,6 +2895,10 @@ static void cmd_config_endpoint(int argc, char *argv[])
 		cfg->qos = &preset->qos;
 
 		endpoint_set_config(cfg);
+
+		if (argv[4])
+			endpoint_bcast_sink_sync(cfg, argv[4]);
+
 		return;
 	}
 
@@ -3172,7 +3300,7 @@ static const struct bt_shell_menu endpoint_menu = {
 	{ "unregister",   "<UUID/object>", cmd_unregister_endpoint,
 						"Register Endpoint",
 						local_endpoint_generator },
-	{ "config",       "<endpoint> <local endpoint> [preset]",
+	{ "config",       "<endpoint> <local endpoint> [preset] [source]",
 						cmd_config_endpoint,
 						"Configure Endpoint",
 						endpoint_generator },
@@ -4237,4 +4365,45 @@ void player_remove_submenu(void)
 {
 	g_dbus_client_unref(client);
 	queue_destroy(ios, transport_free);
+}
+
+void player_add_bcast_source(GDBusProxy *proxy, uint8_t *service_data, int len)
+{
+	GList *l;
+
+	for (l = local_endpoints; l; l = g_list_next(l)) {
+		struct endpoint *ep = l->data;
+
+		if (ep->broadcast && ep->bcast_sources) {
+			struct bcast_source *bcast_source =
+				new0(struct bcast_source, 1);
+
+			bcast_source->proxy = proxy;
+			bcast_source->bcast_id = get_le24(service_data);
+			queue_push_tail(ep->bcast_sources, bcast_source);
+		}
+	}
+
+}
+static bool match_bcast_source_by_proxy(const void *data,
+			const void *user_data)
+{
+	const struct bcast_source *bcast_source = data;
+
+	if (bcast_source->proxy == user_data)
+		return true;
+
+	return false;
+}
+void player_remove_bcast_source(GDBusProxy *proxy)
+{
+	GList *l;
+
+	for (l = local_endpoints; l; l = g_list_next(l)) {
+		struct endpoint *ep = l->data;
+
+		if (ep->broadcast && ep->bcast_sources)
+			queue_remove_if(ep->bcast_sources,
+				match_bcast_source_by_proxy, proxy);
+	}
 }
