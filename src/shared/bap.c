@@ -633,14 +633,15 @@ static struct bt_bap_endpoint *bap_endpoint_new(struct bt_bap_db *bdb,
 	return ep;
 }
 
-static struct bt_bap_endpoint *bap_endpoint_new_broacast(struct bt_bap_db *bdb)
+static struct bt_bap_endpoint *bap_endpoint_new_broacast(struct bt_bap_db *bdb,
+						uint8_t type)
 {
 	struct bt_bap_endpoint *ep;
 
 	ep = new0(struct bt_bap_endpoint, 1);
 	ep->bdb = bdb;
 	ep->attr = NULL;
-	ep->dir = BT_BAP_BCAST_SOURCE;
+	ep->dir = type;
 
 	return ep;
 }
@@ -668,7 +669,7 @@ static struct bt_bap_endpoint *bap_get_endpoint(struct queue *endpoints,
 }
 
 static struct bt_bap_endpoint *bap_get_endpoint_bcast(struct queue *endpoints,
-						struct bt_bap_db *db)
+					struct bt_bap_db *db, uint8_t type)
 {
 	struct bt_bap_endpoint *ep;
 
@@ -682,7 +683,7 @@ static struct bt_bap_endpoint *bap_get_endpoint_bcast(struct queue *endpoints,
 	if (queue_length(endpoints) > 0)
 		return queue_peek_head(endpoints);
 
-	ep = bap_endpoint_new_broacast(db);
+	ep = bap_endpoint_new_broacast(db, type);
 	if (!ep)
 		return NULL;
 
@@ -1347,6 +1348,9 @@ static void stream_set_state(struct bt_bap_stream *stream, uint8_t state)
 
 	ep->old_state = ep->state;
 	ep->state = state;
+
+	if (stream->lpac->type == BT_BAP_BCAST_SINK)
+		goto done;
 
 	if (stream->client)
 		goto done;
@@ -2518,7 +2522,7 @@ struct bt_bap_pac *bt_bap_add_vendor_pac(struct gatt_db *db,
 					struct iovec *metadata)
 {
 	struct bt_bap_db *bdb;
-	struct bt_bap_pac *pac, *pac_brodcast_sink;
+	struct bt_bap_pac *pac, *pac_brodcast_sink, *pac_brodcast_source;
 	struct bt_bap_codec codec;
 
 	if (!db)
@@ -2550,6 +2554,13 @@ struct bt_bap_pac *bt_bap_add_vendor_pac(struct gatt_db *db,
 		pac_brodcast_sink = bap_pac_new(bdb, name, type, &codec, qos,
 					data, metadata);
 		bap_add_broadcast_sink(pac_brodcast_sink);
+		break;
+	case BT_BAP_BCAST_SINK:
+		bap_add_broadcast_sink(pac);
+		pac_brodcast_source = bap_pac_new(bdb, name,
+					BT_BAP_BCAST_SOURCE,
+					&codec, qos, data, metadata);
+		bap_add_broadcast_source(pac_brodcast_source);
 		break;
 	default:
 		bap_pac_free(pac);
@@ -3996,7 +4007,7 @@ clone:
 	return true;
 }
 
-bool bt_bap_attach_broadcast(struct bt_bap *bap)
+bool bt_bap_attach_broadcast(struct bt_bap *bap, uint8_t type)
 {
 	struct bt_bap_endpoint *ep;
 
@@ -4008,7 +4019,7 @@ bool bt_bap_attach_broadcast(struct bt_bap *bap)
 
 	queue_push_tail(sessions, bap);
 
-	ep = bap_get_endpoint_bcast(bap->remote_eps, bap->ldb);
+	ep = bap_get_endpoint_bcast(bap->remote_eps, bap->ldb, type);
 	if (ep)
 		ep->bap = bap;
 
@@ -4224,6 +4235,10 @@ void bt_bap_foreach_pac(struct bt_bap *bap, uint8_t type,
 		return bap_foreach_pac(bap->ldb->broadcast_sources,
 					bap->ldb->broadcast_sinks,
 					func, user_data);
+	case BT_BAP_BCAST_SINK:
+		return bap_foreach_pac(bap->ldb->broadcast_sinks,
+					bap->ldb->broadcast_sources,
+					func, user_data);
 	}
 }
 
@@ -4382,6 +4397,12 @@ unsigned int bt_bap_stream_config(struct bt_bap_stream *stream,
 		return req->id;
 	case BT_BAP_STREAM_TYPE_BCAST:
 		stream->qos = *qos;
+		if (stream->lpac->type == BT_BAP_BCAST_SINK) {
+			if (data)
+				stream_config(stream, data, NULL);
+
+			stream_set_state(stream, BT_BAP_STREAM_STATE_CONFIG);
+		}
 		return 1;
 	}
 
@@ -4446,12 +4467,18 @@ struct bt_bap_stream *bt_bap_stream_new(struct bt_bap *bap,
 		if (rpac)
 			type = rpac->type;
 		else if (lpac) {
-			switch(lpac->type) {
+			switch (lpac->type) {
 			case BT_BAP_SINK:
 				type = BT_BAP_SOURCE;
 				break;
 			case BT_BAP_SOURCE:
 				type = BT_BAP_SINK;
+				break;
+			case BT_BAP_BCAST_SOURCE:
+				type = BT_BAP_BCAST_SINK;
+				break;
+			case BT_BAP_BCAST_SINK:
+				type = BT_BAP_BCAST_SOURCE;
 				break;
 			default:
 				return NULL;
@@ -4911,6 +4938,13 @@ struct io *bt_bap_stream_get_io(struct bt_bap_stream *stream)
 		return NULL;
 
 	return io->io;
+}
+
+bool bt_bap_match_bcast_sink_stream(const void *data, const void *user_data)
+{
+	const struct bt_bap_stream *stream = data;
+
+	return stream->lpac->type == BT_BAP_BCAST_SINK;
 }
 
 static bool stream_io_disconnected(struct io *io, void *user_data)
