@@ -2504,6 +2504,16 @@ static uint8_t select_conn_bearer(struct btd_device *dev)
 	return dev->bdaddr_type;
 }
 
+static uint8_t select_active_bearer(struct btd_device *dev)
+{
+	if (dev->bredr_state.connected)
+		return BDADDR_BREDR;
+	else if (dev->le_state.connected)
+		return dev->bdaddr_type == BDADDR_BREDR
+			? BDADDR_LE_PUBLIC : dev->bdaddr_type;
+	return select_conn_bearer(dev);
+}
+
 static DBusMessage *dev_connect(DBusConnection *conn, DBusMessage *msg,
 							void *user_data)
 {
@@ -3018,7 +3028,7 @@ static DBusMessage *pair_device(DBusConnection *conn, DBusMessage *msg,
 	else if (device->le_state.bonded)
 		bdaddr_type = BDADDR_BREDR;
 	else
-		bdaddr_type = select_conn_bearer(device);
+		bdaddr_type = select_active_bearer(device);
 
 	state = get_state(device, bdaddr_type);
 
@@ -3055,7 +3065,7 @@ static DBusMessage *pair_device(DBusConnection *conn, DBusMessage *msg,
 			err = device_connect_le(device);
 		else
 			err = adapter_create_bonding(adapter, &device->bdaddr,
-							device->bdaddr_type,
+							bdaddr_type,
 							io_cap);
 	} else {
 		err = adapter_create_bonding(adapter, &device->bdaddr,
@@ -6207,12 +6217,9 @@ static bool start_discovery_cb(gpointer user_data)
 {
 	struct btd_device *device = user_data;
 
-	if (device->bredr)
-		device_browse_sdp(device, NULL);
-	else
-		device_browse_gatt(device, NULL);
-
 	device->discov_timer = 0;
+	device_discover_services(device, select_active_bearer(device),
+			NULL);
 
 	return FALSE;
 }
