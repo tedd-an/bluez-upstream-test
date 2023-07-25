@@ -8823,6 +8823,8 @@ static void store_irk(struct btd_adapter *adapter, const bdaddr_t *peer,
 
 	g_key_file_set_string(key_file, "IdentityResolvingKey", "Key", str);
 
+	create_file(filename, 0600);
+
 	store_data = g_key_file_to_data(key_file, &length, NULL);
 	if (!g_file_set_contents(filename, store_data, length, &gerr)) {
 		error("Unable set contents for %s: (%s)", filename,
