@@ -186,7 +186,7 @@ static gboolean get_uuid(const GDBusPropertyTable *property,
 	else if (queue_find(ep->data->srcs, NULL, ep))
 		uuid = PAC_SOURCE_UUID;
 	else
-		uuid = BAA_SERVICE_UUID;
+		uuid = BASIC_AA_SERVICE_UUID;
 
 	dbus_message_iter_append_basic(iter, DBUS_TYPE_STRING, &uuid);
 
