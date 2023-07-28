@@ -95,6 +95,8 @@ struct dbus_obj_match {
 	const char *path;
 };
 
+static int get_adv_flags(struct btd_adv_client *client);
+
 static bool match_client(const void *a, const void *b)
 {
 	const struct btd_adv_client *client = a;
@@ -736,11 +738,11 @@ static bool set_flags(struct btd_adv_client *client, uint8_t flags)
 	if (!btd_adapter_get_bredr(client->manager->adapter))
 		flags |= BT_AD_FLAG_NO_BREDR;
 
-	/* Set BR/EDR Not Supported if adapter is not discoverable but the
+	/* Set BR/EDR Not Supported if adapter is not connectable but the
 	 * instance is.
 	 */
-	if ((flags & (BT_AD_FLAG_GENERAL | BT_AD_FLAG_LIMITED)) &&
-			!btd_adapter_get_discoverable(client->manager->adapter))
+	if ((get_adv_flags(client) & MGMT_ADV_FLAG_CONNECTABLE) &&
+			!btd_adapter_get_connectable(client->manager->adapter))
 		flags |= BT_AD_FLAG_NO_BREDR;
 
 	if (!bt_ad_add_flags(client->data, &flags, 1))
