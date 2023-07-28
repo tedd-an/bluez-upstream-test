@@ -182,7 +182,7 @@ Methods		void StartDiscovery()
 			profile will be connected. There is no need for calling
 			Connect on Device1 after this call. If connection was
 			successful this method returns object path to created
-			device object.
+			device object or device that already exist.
 
 			Parameters that may be set in the filter dictionary
 			include the following:
