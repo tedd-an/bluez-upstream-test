@@ -3017,6 +3017,11 @@ static DBusMessage *pair_device(DBusConnection *conn, DBusMessage *msg,
 		bdaddr_type = device->bdaddr_type;
 	else if (device->le_state.bonded)
 		bdaddr_type = BDADDR_BREDR;
+	else if (device->bredr_state.connected && !device->le_state.connected)
+		bdaddr_type = BDADDR_BREDR;
+	else if (!device->bredr_state.connected && device->le_state.connected)
+		bdaddr_type = device->bdaddr_type == BDADDR_BREDR
+			? BDADDR_LE_PUBLIC : device->bdaddr_type;
 	else
 		bdaddr_type = select_conn_bearer(device);
 
