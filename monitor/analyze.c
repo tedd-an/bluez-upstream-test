@@ -221,11 +221,13 @@ static void conn_destroy(void *data)
 	print_field("%lu RX packets", conn->rx_num);
 	print_field("%lu TX packets", conn->tx_num);
 	print_field("%lu TX completed packets", conn->tx_num_comp);
-	print_field("%lld-%lld msec (~%lld msec) TX Latency",
+	print_field("%lld-%lld msec (~%lld msec/~lld Kb/s) TX Latency",
 			TV_MSEC(conn->tx_l.min), TV_MSEC(conn->tx_l.max),
 			TV_MSEC(conn->tx_l.med));
 	print_field("%u-%u octets (~%u octets) TX packet size",
 			conn->tx_pkt_min, conn->tx_pkt_max, conn->tx_pkt_med);
+	print_field("~%lld Kb/s TX transfer speed",
+			conn->tx_bytes * 8 / TV_MSEC(conn->tx_l.total));
 
 	plot_draw(conn->plot);
 
