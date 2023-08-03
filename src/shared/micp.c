@@ -1042,3 +1042,29 @@ void micp_char_write_value(uint16_t handle)
 
 }
 #endif /*MICP_MICS_PTS_FLAG*/
+
+static void micp_write_cb1(bool success, uint8_t att_ecode, void *user_data)
+{
+	if (success)
+		printf("MICP Write successful\n");
+	else
+		printf("\nWrite failed: 0x%02x\n", att_ecode);
+}
+
+void micp_write_value(struct bt_micp *micp, void *user_data)
+{
+	struct bt_mics *mics = micp_get_mics(micp);
+	uint16_t	value_handle;
+	int ret;
+	const uint16_t value = 0x0001;
+
+	gatt_db_attribute_get_char_data(mics->ms, NULL, &value_handle,
+							NULL, NULL, NULL);
+
+	printf("%s handle: %x\n", __func__, value_handle);
+	ret = bt_gatt_client_write_value(micp->client, value_handle,
+		(void *)&value, sizeof(value), micp_write_cb1, NULL, NULL);
+	if (!ret)
+		printf("bt_gatt_client_write_value() : Write FAILED");
+
+}

@@ -52,3 +52,5 @@ void micp_discover_mute_char(void);
 void mics_mute_char_read(uint16_t handle);
 void micp_char_write_value(uint16_t handle);
 #endif /*MICP_MICS_PTS_FLAG*/
+
+void micp_write_value(struct bt_micp *micp, void *user_data);
