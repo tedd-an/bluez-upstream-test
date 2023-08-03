@@ -68,6 +68,10 @@
 #include "eir.h"
 #include "battery.h"
 
+#ifdef MICP_MICS_PTS_FLAG
+#include "src/shared/micp.h"
+#endif /*MICP_MICS_PTS_FLAG*/
+
 #define MODE_OFF		0x00
 #define MODE_CONNECTABLE	0x01
 #define MODE_DISCOVERABLE	0x02
@@ -3333,6 +3337,82 @@ static void property_set_pairable(const GDBusPropertyTable *property,
 	property_set_mode(adapter, MGMT_SETTING_BONDABLE, iter, id);
 }
 
+#ifdef MICP_MICS_PTS_FLAG
+static void property_set_mute_state(const GDBusPropertyTable *property,
+				DBusMessageIter *iter,
+				GDBusPendingPropertySet id, void *user_data)
+{
+	dbus_bool_t enable;
+
+	dbus_message_iter_get_basic(iter, &enable);
+	DBG("SET %s: %d\n", __func__, enable);
+	mics_change_mute_state(enable);
+	g_dbus_pending_property_success(id);
+}
+
+static void property_mute_enable_disable(const GDBusPropertyTable *propert,
+				DBusMessageIter *iter,
+				GDBusPendingPropertySet id, void *user_data)
+{
+	dbus_bool_t enable;
+
+	dbus_message_iter_get_basic(iter, &enable);
+	DBG("%s: %d\n", __func__, enable);
+	mics_enable_disable_mute(enable);
+	g_dbus_pending_property_success(id);
+}
+
+static void property_micp_discover_mute(const GDBusPropertyTable *propert,
+				DBusMessageIter *iter,
+				GDBusPendingPropertySet id, void *user_data)
+{
+	dbus_bool_t enable;
+
+	dbus_message_iter_get_basic(iter, &enable);
+	DBG("%s : %d\n", __func__, enable);
+	micp_discover_mute_char();
+	g_dbus_pending_property_success(id);
+}
+
+static void property_micp_read_mute(const GDBusPropertyTable *propert,
+				DBusMessageIter *iter,
+				GDBusPendingPropertySet id, void *user_data)
+{
+	uint16_t handle;
+
+	if (dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_UINT16) {
+		g_dbus_pending_property_error(id,
+				ERROR_INTERFACE ".InvalidArguments",
+				"Expected UINT16");
+		return;
+	}
+	dbus_message_iter_get_basic(iter, &handle);
+	DBG("%s : %x\n", __func__, handle);
+
+	mics_mute_char_read(handle);
+	g_dbus_pending_property_success(id);
+}
+
+static void property_micp_write_mute(const GDBusPropertyTable *propert,
+				DBusMessageIter *iter,
+				GDBusPendingPropertySet id, void *user_data)
+{
+	uint16_t handle;
+
+	if (dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_UINT16) {
+		g_dbus_pending_property_error(id,
+				ERROR_INTERFACE ".InvalidArguments",
+				"Expected UINT16");
+		return;
+	}
+	dbus_message_iter_get_basic(iter, &handle);
+	DBG("%s : %x\n", __func__, handle);
+
+	micp_char_write_value(handle);
+	g_dbus_pending_property_success(id);
+}
+#endif /*MICP_MICS_PTS_FLAG*/
+
 static gboolean property_get_pairable_timeout(
 					const GDBusPropertyTable *property,
 					DBusMessageIter *iter, void *user_data)
@@ -3883,6 +3963,13 @@ static const GDBusPropertyTable adapter_properties[] = {
 	{ "DiscoverableTimeout", "u", property_get_discoverable_timeout,
 					property_set_discoverable_timeout },
 	{ "Pairable", "b", property_get_pairable, property_set_pairable },
+#ifdef MICP_MICS_PTS_FLAG
+	{ "mics", "b", NULL, property_set_mute_state },
+	{ "mics_state", "b", NULL, property_mute_enable_disable },
+	{ "micp_disc", "b", NULL, property_micp_discover_mute },
+	{ "micp_read_char", "q", NULL, property_micp_read_mute },
+	{ "micp_write_char", "q", NULL, property_micp_write_mute },
+#endif /*MICP_MICS_PTS_FLAG*/
 	{ "PairableTimeout", "u", property_get_pairable_timeout,
 					property_set_pairable_timeout },
 	{ "Discovering", "b", property_get_discovering },

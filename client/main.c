@@ -413,6 +413,10 @@ static struct adapter *adapter_new(GDBusProxy *proxy)
 	if (!default_ctrl)
 		default_ctrl = adapter;
 
+#ifdef MICP_MICS_PTS_FLAG
+	mics_set_proxy((void *)adapter);
+#endif /* MICP_MICS_PTS_FLAG */
+
 	return adapter;
 }
 
@@ -892,6 +896,10 @@ static void cmd_show(int argc, char *argv[])
 		}
 	}
 
+#ifdef MICP_MICS_PTS_FLAG
+	mics_set_proxy((void *)adapter);
+#endif /*MICP_MICS_PTS_FLAG*/
+
 	if (!g_dbus_proxy_get_property(adapter->proxy, "Address", &iter))
 		return bt_shell_noninteractive_quit(EXIT_FAILURE);
 
@@ -950,6 +958,10 @@ static void cmd_select(int argc, char *argv[])
 		bt_shell_printf("Controller %s not available\n", argv[1]);
 		return bt_shell_noninteractive_quit(EXIT_FAILURE);
 	}
+
+#ifdef MICP_MICS_PTS_FLAG
+	mics_set_proxy((void *)adapter);
+#endif /*MICP_MICS_PTS_FLAG*/
 
 	if (default_ctrl && default_ctrl->proxy == adapter->proxy)
 		return bt_shell_noninteractive_quit(EXIT_SUCCESS);

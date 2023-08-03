@@ -215,6 +215,9 @@ AC_ARG_ENABLE(micp, AS_HELP_STRING([--disable-micp],
 		[disable MICP profile]), [enable_micp=${enableval}])
 AM_CONDITIONAL(MICP, test "${enable_micp}" != "no")
 
+#AC_DEFINE(MICP_MICS_PTS_FLAG, 1,
+#	[Enable/Disable PTS related code changes in MICP and MICS])
+
 AC_ARG_ENABLE(csip, AS_HELP_STRING([--disable-csip],
 		[disable CSIP profile]), [enable_csip=${enableval}])
 AM_CONDITIONAL(CSIP, test "${enable_csip}" != "no")

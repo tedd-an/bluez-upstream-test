@@ -10,3 +10,7 @@
 
 void player_add_submenu(void);
 void player_remove_submenu(void);
+
+#ifdef MICP_MICS_PTS_FLAG
+void mics_set_proxy(void *proxy);
+#endif /*MICP_MICS_PTS_FLAG*/

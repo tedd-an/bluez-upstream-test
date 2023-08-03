@@ -44,3 +44,11 @@ bool bt_micp_ready_unregister(struct bt_micp *micp, unsigned int id);
 
 bool bt_micp_unregister(unsigned int id);
 struct bt_micp *bt_micp_new(struct gatt_db *ldb, struct gatt_db *rdb);
+
+#ifdef MICP_MICS_PTS_FLAG
+void mics_change_mute_state(bool state);
+void mics_enable_disable_mute(bool state);
+void micp_discover_mute_char(void);
+void mics_mute_char_read(uint16_t handle);
+void micp_char_write_value(uint16_t handle);
+#endif /*MICP_MICS_PTS_FLAG*/

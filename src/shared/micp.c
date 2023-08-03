@@ -6,6 +6,10 @@
  *  Copyright (C) 2023  NXP Semiconductors. All rights reserved.
  *
  */
+#ifdef HAVE_CONFIG_H
+#include <config.h>
+#endif
+
 #define _GNU_SOURCE
 #include <inttypes.h>
 #include <string.h>
@@ -73,6 +77,11 @@ struct bt_micp {
 	void *debug_data;
 	void *user_data;
 };
+
+#ifdef MICP_MICS_PTS_FLAG
+struct bt_mics *pts_mics;
+struct bt_micp *pts_micp;
+#endif /*MICP_MICS_PTS_FLAG*/
 
 static struct queue *micp_db;
 static struct queue *micp_cbs;
@@ -532,6 +541,9 @@ static struct bt_micp_db *micp_db_new(struct gatt_db *db)
 	mdb->mics = mics_new(db);
 	mdb->mics->mdb = mdb;
 
+#ifdef MICP_MICS_PTS_FLAG
+	pts_mics = mdb->mics;
+#endif /*MICP_MICS_PTS_FLAG*/
 	queue_push_tail(micp_db, mdb);
 
 	return mdb;
@@ -783,6 +795,10 @@ static void foreach_mics_char(struct gatt_db_attribute *attr, void *user_data)
 	bt_uuid_t uuid, uuid_mute;
 	struct bt_mics *mics;
 
+#ifdef MICP_MICS_PTS_FLAG
+	pts_micp = micp;
+#endif /*MICP_MICS_PTS_FLAG*/
+
 	if (!gatt_db_attribute_get_char_data(attr, NULL, &value_handle,
 			NULL, NULL, &uuid))
 		return;
@@ -920,3 +936,109 @@ bool bt_micp_attach(struct bt_micp *micp, struct bt_gatt_client *client)
 						micp);
 	return true;
 }
+
+#ifdef MICP_MICS_PTS_FLAG
+void mics_change_mute_state(bool state)
+{
+	if (pts_micp == NULL)
+		return;
+
+	DBG(pts_micp, "%s: %d", __func__, state);
+	state == true ? mics_muted(pts_mics, pts_micp, 0) :
+					mics_not_muted(pts_mics, pts_micp, 0);
+}
+
+static uint8_t mics_mute_enable_disable(struct bt_mics *mics, uint8_t state)
+{
+	uint8_t *mute_state;
+
+	mute_state = mdb_get_mute_state(mics->mdb);
+
+	*mute_state = state;
+
+	return 0;
+}
+
+void mics_enable_disable_mute(bool state)
+{
+	state == true ? mics_mute_enable_disable(pts_mics, MICS_MUTED) :
+			mics_mute_enable_disable(pts_mics, MICS_DISABLED);
+}
+
+static void micp_char_search_cb(bool success, uint8_t att_ecode,
+						struct bt_gatt_result *result,
+						void *user_data)
+{
+	DBG(pts_micp, "micp_char_search_cb");
+
+}
+
+static void micp_foreach_mics_service(struct gatt_db_attribute *attr,
+							void *user_data)
+{
+	uint16_t start, end;
+	bool primary;
+	bt_uuid_t uuid;
+	struct bt_gatt_request *gatt_ret;
+	struct bt_att *micp_att;
+	struct bt_micp *micp = user_data;
+	struct bt_mics *mics = micp_get_mics(micp);
+
+	if (!gatt_db_attribute_get_service_data(attr, &start, &end, &primary,
+		&uuid)) {
+		DBG(micp, "%s: ERR! gatt_db_attribute_get_service_data\n",
+			__func__);
+		return;
+
+	}
+	micp_att = bt_micp_get_att(micp);
+	gatt_ret = bt_gatt_discover_characteristics(micp_att, start, end,
+					micp_char_search_cb, NULL, NULL);
+
+	if (gatt_ret)
+		DBG(micp, "MICP GATT DISCOVER START\n");
+	else
+		DBG(micp, "MICP GATT DISCOVER FAILED\n");
+
+	mics->service = attr;
+
+	gatt_db_service_set_claimed(attr, true);
+	gatt_db_service_foreach_char(attr, foreach_mics_char, micp);
+}
+
+void micp_discover_mute_char(void)
+{
+	bt_uuid_t uuid;
+
+	bt_uuid16_create(&uuid, MICS_UUID);
+	gatt_db_foreach_service(pts_micp->ldb->db, &uuid,
+					micp_foreach_mics_service, pts_micp);
+}
+
+void mics_mute_char_read(uint16_t handle)
+{
+	DBG(pts_micp, "%s. handle: %x\n", __func__, handle);
+	micp_read_value(pts_micp, handle, read_mute_state, pts_micp);
+}
+
+static void micp_write_cb(bool success, uint8_t att_ecode, void *user_data)
+{
+	if (success)
+		DBG(pts_micp, "MICP Write successful\n");
+	else
+		DBG(pts_micp, "\nWrite failed: 0x%02x\n", att_ecode);
+}
+
+void micp_char_write_value(uint16_t handle)
+{
+	const uint8_t value = 0x01;
+
+	if (!pts_micp->client) {
+		DBG(pts_micp, "%s: pts_micp->client is NULL", __func__);
+		return;
+	}
+	bt_gatt_client_write_value(pts_micp->client, handle, &value, 0x01,
+			micp_write_cb, NULL, NULL);
+
+}
+#endif /*MICP_MICS_PTS_FLAG*/

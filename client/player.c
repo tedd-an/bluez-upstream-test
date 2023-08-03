@@ -596,6 +596,153 @@ static void cmd_show_item(int argc, char *argv[])
 	return bt_shell_noninteractive_quit(EXIT_SUCCESS);
 }
 
+#ifdef MICP_MICS_PTS_FLAG
+struct mics_adapter {
+	GDBusProxy *proxy;
+};
+static struct mics_adapter *mics_default_ctrl;
+void mics_set_proxy(void *proxy)
+{
+	mics_default_ctrl = (struct mics_adapter *)proxy;
+	if (mics_default_ctrl == NULL) {
+		bt_shell_printf("mics_default_ctrl is NULL\n");
+		return;
+	}
+}
+static gboolean parse_argument(int argc, char *argv[], const char **arg_table,
+					const char *msg, dbus_bool_t *value,
+					const char **option)
+{
+	const char **opt;
+
+	if (!strcmp(argv[1], "help")) {
+		for (opt = arg_table; opt && *opt; opt++)
+			bt_shell_printf("%s\n", *opt);
+		bt_shell_noninteractive_quit(EXIT_SUCCESS);
+		return FALSE;
+	}
+
+	if (!strcmp(argv[1], "on") || !strcmp(argv[1], "yes")) {
+		*value = TRUE;
+		if (option)
+			*option = "";
+		return TRUE;
+	}
+
+	if (!strcmp(argv[1], "off") || !strcmp(argv[1], "no")) {
+		*value = FALSE;
+		return TRUE;
+	}
+
+	for (opt = arg_table; opt && *opt; opt++) {
+		if (strcmp(argv[1], *opt) == 0) {
+			*value = TRUE;
+			*option = *opt;
+			return TRUE;
+		}
+	}
+
+	bt_shell_printf("Invalid argument %s\n", argv[1]);
+	return FALSE;
+}
+
+static void cmd_set_mute_state(int argc, char *argv[])
+{
+	dbus_bool_t mute_state;
+	char *str;
+
+	if (!parse_argument(argc, argv, NULL, NULL, &mute_state, NULL))
+		return bt_shell_noninteractive_quit(EXIT_FAILURE);
+
+	str = g_strdup_printf("mics %s", mute_state == TRUE ? "on" : "off");
+
+	if (g_dbus_proxy_set_property_basic(mics_default_ctrl->proxy, "mics",
+					DBUS_TYPE_BOOLEAN, &mute_state,
+					generic_callback, str, g_free) == TRUE)
+		return;
+	g_free(str);
+
+	return bt_shell_noninteractive_quit(EXIT_FAILURE);
+}
+
+static void cmd_enable_disable_mute_state(int argc, char *argv[])
+{
+	dbus_bool_t mute_state;
+	char *str;
+
+	if (!parse_argument(argc, argv, NULL, NULL, &mute_state, NULL))
+		return bt_shell_noninteractive_quit(EXIT_FAILURE);
+
+	str = g_strdup_printf("mics %s", mute_state == TRUE ? "on" : "off");
+
+	if (g_dbus_proxy_set_property_basic(mics_default_ctrl->proxy,
+				"mics_state", DBUS_TYPE_BOOLEAN, &mute_state,
+				generic_callback, str, g_free) == TRUE)
+		return;
+	g_free(str);
+
+	return bt_shell_noninteractive_quit(EXIT_FAILURE);
+}
+
+static void cmd_micp_discover_mute(int argc, char *argv[])
+{
+	dbus_bool_t mute_state = 0;
+	char *str;
+
+
+	if (!parse_argument(argc, argv, NULL, NULL, &mute_state, NULL))
+		return bt_shell_noninteractive_quit(EXIT_FAILURE);
+
+	str = g_strdup_printf("mics %s", mute_state == TRUE ? "on" : "off");
+
+	if (g_dbus_proxy_set_property_basic(mics_default_ctrl->proxy,
+				"micp_disc", DBUS_TYPE_BOOLEAN, &mute_state,
+				generic_callback, str, g_free) == TRUE)
+		return;
+	g_free(str);
+
+	return bt_shell_noninteractive_quit(EXIT_FAILURE);
+}
+
+static void cmd_enable_read_mute_state(int argc, char *argv[])
+{
+	char *endptr = NULL;
+	int handle;
+
+	handle = strtol(argv[1], &endptr, 0);
+	if (!endptr || *endptr != '\0' || handle > UINT16_MAX) {
+		bt_shell_printf("Invalid argument: %s\n", argv[1]);
+		return bt_shell_noninteractive_quit(EXIT_FAILURE);
+	}
+	bt_shell_printf("%s: %x\n", __func__, handle);
+	if (g_dbus_proxy_set_property_basic(mics_default_ctrl->proxy,
+				"micp_read_char", DBUS_TYPE_UINT16, &handle,
+				generic_callback, NULL, NULL) == TRUE)
+		return;
+
+	return bt_shell_noninteractive_quit(EXIT_FAILURE);
+}
+
+static void cmd_enable_write_mute_state(int argc, char *argv[])
+{
+	char *endptr = NULL;
+	int handle;
+
+	handle = strtol(argv[1], &endptr, 0);
+	if (!endptr || *endptr != '\0' || handle > UINT16_MAX) {
+		bt_shell_printf("Invalid argument: %s\n", argv[1]);
+		return bt_shell_noninteractive_quit(EXIT_FAILURE);
+	}
+	bt_shell_printf("%s : %x\n", __func__, handle);
+	if (g_dbus_proxy_set_property_basic(mics_default_ctrl->proxy,
+				"micp_write_char", DBUS_TYPE_UINT16, &handle,
+				generic_callback, NULL, NULL) == TRUE)
+		return;
+
+	return bt_shell_noninteractive_quit(EXIT_FAILURE);
+}
+#endif /* MICP_MICS_PTS_FLAG */
+
 static void cmd_show(int argc, char *argv[])
 {
 	GDBusProxy *proxy;
@@ -969,6 +1116,23 @@ static const struct bt_shell_menu player_menu = {
 							item_generator},
 	{ "show-item",   "<item>",    cmd_show_item, "Show item information",
 							item_generator},
+#ifdef MICP_MICS_PTS_FLAG
+	{ "mics_mute",     "<on/off>", cmd_set_mute_state,
+					"Set Mics Mute state to on / off",
+							NULL },
+	{ "mics_state",     "<on/off>", cmd_enable_disable_mute_state,
+					"Set Mics Mute state to on[enable] / off[disable]",
+							NULL },
+	{ "micp_discover",     "<on/off>", cmd_micp_discover_mute,
+					"discover Mute Characteristic",
+							NULL },
+	{ "micp_read",     "<handle>", cmd_enable_read_mute_state,
+					"Read Mute Characteristic",
+							NULL },
+	{ "micp_write",     "<handle>", cmd_enable_write_mute_state,
+					"Write Mute Characteristic",
+							NULL },
+#endif /* MICP_MICS_PTS_FLAG */
 	{} },
 };
 
