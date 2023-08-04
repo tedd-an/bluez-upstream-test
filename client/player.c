@@ -1735,6 +1735,7 @@ struct endpoint_config {
 	struct iovec *meta;
 	uint8_t target_latency;
 	const struct codec_qos *qos;
+	struct iovec *base;
 };
 
 #define BCODE {0x01, 0x02, 0x68, 0x05, 0x53, 0xf1, 0x41, 0x5a, \
@@ -1766,6 +1767,7 @@ static void append_properties(DBusMessageIter *iter,
 	const char *key = "Capabilities";
 	const char *meta = "Metadata";
 	const char *keyBCode = "BroadcastCode";
+	const char *base = "BASE";
 
 	dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY, "{sv}", &dict);
 
@@ -1901,6 +1903,14 @@ static void append_properties(DBusMessageIter *iter,
 
 	g_dbus_dict_append_entry(&dict, "Timeout", DBUS_TYPE_UINT16,
 						&bcast_qos.bcast.timeout);
+
+	bt_shell_printf("BASE:\n");
+	bt_shell_hexdump(cfg->base->iov_base, cfg->base->iov_len);
+
+	g_dbus_dict_append_basic_array(&dict, DBUS_TYPE_STRING, &base,
+						DBUS_TYPE_BYTE,
+						&cfg->base->iov_base,
+						cfg->base->iov_len);
 
 	bt_shell_printf("BroadcastCode:\n");
 	bt_shell_hexdump(cfg->ep->bcode->iov_base, cfg->ep->bcode->iov_len);
@@ -2758,14 +2768,14 @@ static void cmd_config_endpoint(int argc, char *argv[])
 		if (cfg->ep->broadcast) {
 			iov_append(&cfg->ep->bcode, bcast_qos.bcast.bcode,
 				sizeof(bcast_qos.bcast.bcode));
-			/* Copy capabilities for broadcast*/
-			iov_append(&cfg->caps, base_lc3_16_2_1,
-				sizeof(base_lc3_16_2_1));
-		} else {
-			/* Copy capabilities */
-			iov_append(&cfg->caps, preset->data.iov_base,
-							preset->data.iov_len);
+			/* Copy BASE for broadcast*/
+			iov_append(&cfg->base, base_lc3_16_2_1,
+			sizeof(base_lc3_16_2_1));
 		}
+
+		/* Copy capabilities */
+		iov_append(&cfg->caps, preset->data.iov_base,
+						preset->data.iov_len);
 
 		/* Set QoS parameters */
 		cfg->qos = &preset->qos;
