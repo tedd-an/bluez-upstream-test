@@ -74,6 +74,7 @@ struct bap_ep {
 	struct bt_bap_qos qos;
 	unsigned int id;
 	DBusMessage *msg;
+	struct iovec *base;
 };
 
 struct bap_data {
@@ -272,7 +273,8 @@ static int parse_array(DBusMessageIter *iter, struct iovec **iov)
 }
 
 static int parse_properties(DBusMessageIter *props, struct iovec **caps,
-				struct iovec **metadata, struct bt_bap_qos *qos)
+				struct iovec **metadata, struct iovec **base,
+				struct bt_bap_qos *qos)
 {
 	const char *key;
 	struct bt_bap_io_qos io_qos;
@@ -432,6 +434,10 @@ static int parse_properties(DBusMessageIter *props, struct iovec **caps,
 			if (var != DBUS_TYPE_ARRAY)
 				goto fail;
 			parse_array(&value, &qos->bcast.bcode);
+		} else if (!strcasecmp(key, "BASE")) {
+			if (var != DBUS_TYPE_ARRAY)
+				goto fail;
+			parse_array(&value, base);
 		}
 
 		dbus_message_iter_next(props);
@@ -565,7 +571,8 @@ static DBusMessage *set_configuration(DBusConnection *conn, DBusMessage *msg,
 		ep->qos.ucast.cis_id = BT_ISO_QOS_CIS_UNSET;
 	}
 
-	if (parse_properties(&props, &ep->caps, &ep->metadata, &ep->qos) < 0) {
+	if (parse_properties(&props, &ep->caps, &ep->metadata,
+				&ep->base, &ep->qos) < 0) {
 		DBG("Unable to parse properties");
 		return btd_error_invalid_args(msg);
 	}
@@ -1247,7 +1254,7 @@ static void bap_connect_io_broadcast(struct bap_data *data, struct bap_ep *ep,
 	base.base_len = ep->caps->iov_len;
 
 	memset(base.base, 0, 248);
-	memcpy(base.base, ep->caps->iov_base, base.base_len);
+	memcpy(base.base, ep->base->iov_base, ep->base->iov_len);
 	DBG("ep %p stream %p ", ep, stream);
 	ba2str(btd_adapter_get_address(adapter), addr);
 
