@@ -7029,6 +7029,13 @@ static bool is_filter_match(GSList *discovery_filter, struct eir_data *eir_data,
 	return got_match;
 }
 
+static bool accept_bcast_adv(struct btd_adapter *adapter)
+{
+	if ((btd_adapter_has_settings(adapter, MGMT_SETTING_ISO_SYNC_RECEIVER)))
+		return true;
+
+	return false;
+}
 static void filter_duplicate_data(void *data, void *user_data)
 {
 	struct discovery_client *client = data;
@@ -7151,6 +7158,9 @@ void btd_adapter_device_found(struct btd_adapter *adapter,
 			eir_data_free(&eir_data);
 			return;
 		}
+
+		if (accept_bcast_adv(adapter))
+			monitoring = true;
 
 		if (!discoverable && !monitoring && !eir_data.rsi) {
 			eir_data_free(&eir_data);
