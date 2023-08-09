@@ -331,6 +331,8 @@ struct btd_adapter {
 
 	bool is_default;		/* true if adapter is default one */
 
+	unsigned int set_exp_iso_id;
+	unsigned int exp_pending;
 	struct queue *exps;
 };
 
@@ -5782,6 +5784,8 @@ static void adapter_free(gpointer user_data)
 	g_queue_free(adapter->auths);
 	queue_destroy(adapter->exps, NULL);
 
+	adapter->exp_pending = 0;
+
 	/*
 	 * Unregister all handlers for this specific index since
 	 * the adapter bound to them is no longer valid.
@@ -5796,6 +5800,8 @@ static void adapter_free(gpointer user_data)
 	 * since the adapter bound to them is no longer valid.
 	 */
 	mgmt_cancel_index(adapter->mgmt, adapter->dev_id);
+	if (adapter->set_exp_iso_id)
+		mgmt_cancel(adapter->mgmt, adapter->set_exp_iso_id);
 
 	mgmt_unref(adapter->mgmt);
 
@@ -6895,6 +6901,8 @@ static void adapter_remove(struct btd_adapter *adapter)
 
 	g_slist_free(adapter->msd_callbacks);
 	adapter->msd_callbacks = NULL;
+
+	adapter->exp_pending = 0;
 }
 
 const char *adapter_get_path(struct btd_adapter *adapter)
@@ -9824,6 +9832,8 @@ static bool set_blocked_keys(struct btd_adapter *adapter)
 	.func = _func, \
 }
 
+static void exp_complete(void *user_data);
+
 static void set_exp_debug_complete(uint8_t status, uint16_t len,
 					const void *param, void *user_data)
 {
@@ -9854,8 +9864,10 @@ static void exp_debug_func(struct btd_adapter *adapter, uint8_t action)
 
 	if (mgmt_send(adapter->mgmt, MGMT_OP_SET_EXP_FEATURE,
 			adapter->dev_id, sizeof(cp), &cp,
-			set_exp_debug_complete, adapter, NULL) > 0)
+			set_exp_debug_complete, adapter, exp_complete) > 0) {
+		++adapter->exp_pending;
 		return;
+	}
 
 	btd_error(adapter->dev_id, "Failed to set exp debug");
 }
@@ -9904,8 +9916,11 @@ static void rpa_resolution_func(struct btd_adapter *adapter, uint8_t action)
 
 	if (mgmt_send(adapter->mgmt, MGMT_OP_SET_EXP_FEATURE,
 			adapter->dev_id, sizeof(cp), &cp,
-			set_rpa_resolution_complete, adapter, NULL) > 0)
+			set_rpa_resolution_complete, adapter,
+			exp_complete) > 0) {
+		++adapter->exp_pending;
 		return;
+	}
 
 	btd_error(adapter->dev_id, "Failed to set RPA Resolution");
 }
@@ -9940,10 +9955,20 @@ static void codec_offload_func(struct btd_adapter *adapter, uint8_t action)
 
 	if (mgmt_send(adapter->mgmt, MGMT_OP_SET_EXP_FEATURE,
 			adapter->dev_id, sizeof(cp), &cp,
-			codec_offload_complete, adapter, NULL) > 0)
+			codec_offload_complete, adapter, exp_complete) > 0) {
+		++adapter->exp_pending;
 		return;
+	}
 
 	btd_error(adapter->dev_id, "Failed to set Codec Offload");
+}
+
+static void iso_socket_done(void *user_data)
+{
+	struct btd_adapter *adapter = user_data;
+
+	adapter->set_exp_iso_id = 0;
+	exp_complete(adapter);
 }
 
 static void iso_socket_complete(uint8_t status, uint16_t len,
@@ -9969,15 +9994,20 @@ static void iso_socket_complete(uint8_t status, uint16_t len,
 static void iso_socket_func(struct btd_adapter *adapter, uint8_t action)
 {
 	struct mgmt_cp_set_exp_feature cp;
+	unsigned int id;
 
 	memset(&cp, 0, sizeof(cp));
 	memcpy(cp.uuid, iso_socket_uuid.val, 16);
 	cp.action = action;
 
-	if (mgmt_send(adapter->mgmt, MGMT_OP_SET_EXP_FEATURE,
-			MGMT_INDEX_NONE, sizeof(cp), &cp,
-			iso_socket_complete, adapter, NULL) > 0)
+	id = mgmt_send(adapter->mgmt, MGMT_OP_SET_EXP_FEATURE, MGMT_INDEX_NONE,
+			sizeof(cp), &cp, iso_socket_complete, adapter,
+			iso_socket_done);
+	if (id > 0) {
+		adapter->set_exp_iso_id = id;
+		++adapter->exp_pending;
 		return;
+	}
 
 	btd_error(adapter->dev_id, "Failed to set ISO Socket");
 }
@@ -10063,8 +10093,10 @@ static void read_exp_features(struct btd_adapter *adapter)
 {
 	if (mgmt_send(adapter->mgmt, MGMT_OP_READ_EXP_FEATURES_INFO,
 			adapter->dev_id, 0, NULL, read_exp_features_complete,
-			adapter, NULL) > 0)
+			adapter, exp_complete) > 0) {
+		++adapter->exp_pending;
 		return;
+	}
 
 	btd_error(adapter->dev_id, "Failed to read exp features info");
 }
@@ -10389,6 +10421,36 @@ static void reset_adv_monitors(uint16_t index)
 	error("Failed to reset Adv Monitors");
 }
 
+static void read_info(struct btd_adapter *adapter)
+{
+	DBG("sending read info command for index %u", adapter->dev_id);
+
+	if (mgmt_send(mgmt_primary, MGMT_OP_READ_INFO, adapter->dev_id, 0, NULL,
+					read_info_complete, adapter, NULL) > 0)
+		return;
+
+	btd_error(adapter->dev_id,
+			"Failed to read controller info for index %u",
+			adapter->dev_id);
+
+	adapter_list = g_list_remove(adapter_list, adapter);
+
+	btd_adapter_unref(adapter);
+}
+
+static void exp_complete(void *user_data)
+{
+	struct btd_adapter *adapter = user_data;
+
+	adapter->exp_pending--;
+
+	DBG("index %u has %u pending MGMT EXP requests", adapter->dev_id,
+							adapter->exp_pending);
+
+	if (!adapter->exp_pending)
+		read_info(adapter);
+}
+
 static void index_added(uint16_t index, uint16_t length, const void *param,
 							void *user_data)
 {
@@ -10435,18 +10497,8 @@ static void index_added(uint16_t index, uint16_t length, const void *param,
 	 */
 	adapter_list = g_list_append(adapter_list, adapter);
 
-	DBG("sending read info command for index %u", index);
-
-	if (mgmt_send(mgmt_primary, MGMT_OP_READ_INFO, index, 0, NULL,
-					read_info_complete, adapter, NULL) > 0)
-		return;
-
-	btd_error(adapter->dev_id,
-			"Failed to read controller info for index %u", index);
-
-	adapter_list = g_list_remove(adapter_list, adapter);
-
-	btd_adapter_unref(adapter);
+	if (!adapter->exp_pending)
+		read_info(adapter);
 }
 
 static void index_removed(uint16_t index, uint16_t length, const void *param,
