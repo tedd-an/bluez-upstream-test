@@ -2,21 +2,6 @@
 test-runner
 ===========
 
-------------------
-Kernel test runner
-------------------
-
-:Authors: - Luiz Augusto Von Dentz <luiz.von.dentz@intel.com>
-:Version: BlueZ
-:Copyright: Free use of this software is granted under ther terms of the GNU
-            Lesser General Public Licenses (LGPL).
-:Date: Jul 6, 2023
-:Manual section: 1
-:Manual group: Linux System Administration
-
-SYNOPSIS
-========
-
 **test-runner** [*OPTIONS*] -- <test-name>
 
 DESCRIPTION
@@ -28,27 +13,17 @@ it lunches a virtual machine using the local filesystem.
 OPTIONS
 =======
 
--a, --auto             Find tests and run them
-
--b, --dbus             Start D-Bus system daemon
-
--s, --dbus-session     Start D-Bus session daemon
-
--d, --daemon           Start bluetoothd
-
--m, --monitor          Start btmon
-
--l, --emulator         Start btvirt
-
--A, --audio[=path]      Start audio server
-
--u, --unix [path]      Provide serial device
-
--q, --qemu <path>      QEMU binary
-
--k, --kernel <image>   Kernel image (bzImage)
-
--h, --help             Show help options
+:-a:--auto: Find tests and run them
+:-b/--dbus: Start D-Bus system daemon
+:-s/--dbus-session: Start D-Bus session daemon
+:-d/--daemon: Start bluetoothd
+:-m/--monitor: Start btmon
+:-l/--emulator: Start btvirt
+:-A/-audio[=path]: Start audio server
+:-u/--unix[=path]: Provide serial device
+:-q/--qemu=<path>: QEMU binary
+:-k/--kernel=<image>: Kernel image (bzImage)
+:-h/--help: Show help options
 
 Kernel
 ======
