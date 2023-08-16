@@ -2297,9 +2297,6 @@ static void register_endpoint_setup(DBusMessageIter *iter, void *user_data)
 		bt_shell_hexdump(ep->meta->iov_base, ep->meta->iov_len);
 	}
 
-	g_dbus_dict_append_entry(&dict, "Broadcast", DBUS_TYPE_BOOLEAN,
-				&ep->broadcast);
-
 	dbus_message_iter_close_container(iter, &dict);
 }
 
