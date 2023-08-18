@@ -2923,6 +2923,103 @@ bool bap_print_cc(void *data, size_t len, util_debug_func_t func,
 	return bap_print_ltv("CC", data, len, func, user_data);
 }
 
+bool bap_parse_base(void *data, size_t len, util_debug_func_t func,
+		uint32_t *presDelay, uint8_t *numSubgroups, uint8_t *numBis,
+		struct bt_bap_codec *codec, struct iovec **caps,
+		struct iovec **meta)
+{
+	struct iovec iov = {
+		.iov_base = data,
+		.iov_len = len,
+	};
+
+	uint8_t capsLen, metaLen;
+	uint8_t *hexstream;
+
+	if (presDelay) {
+		if (!util_iov_pull_le24(&iov, presDelay))
+			return false;
+		util_debug(func, NULL, "PresentationDelay %d", *presDelay);
+	}
+
+	if (numSubgroups) {
+		if (!util_iov_pull_u8(&iov, numSubgroups))
+			return false;
+		util_debug(func, NULL, "NumSubgroups %d", *numSubgroups);
+	}
+
+	if (numBis) {
+		if (!util_iov_pull_u8(&iov, numBis))
+			return false;
+		util_debug(func, NULL, "NumBis %d", *numBis);
+	}
+
+	if (codec) {
+		codec = util_iov_pull_mem(&iov, sizeof(*codec));
+		if (!codec)
+			return false;
+		util_debug(func, NULL, "%s: ID %d CID 0x%2.2x VID 0x%2.2x",
+				"Codec", codec->id, codec->cid, codec->vid);
+	}
+
+	if (!util_iov_pull_u8(&iov, &capsLen))
+		return false;
+	util_debug(func, NULL, "CC Len %d", capsLen);
+
+	if (!capsLen)
+		return false;
+	if (caps) {
+		if (!(*caps))
+			*caps = new0(struct iovec, 1);
+		(*caps)->iov_len = capsLen;
+		(*caps)->iov_base = iov.iov_base;
+	}
+
+	for (int i = 0; capsLen > 1; i++) {
+		struct bt_ltv *ltv = util_iov_pull_mem(&iov, sizeof(*ltv));
+		uint8_t *caps;
+
+		if (!ltv) {
+			util_debug(func, NULL, "Unable to parse %s",
+								"Capabilities");
+			return false;
+		}
+
+		util_debug(func, NULL, "%s #%u: len %u type %u",
+					"CC", i, ltv->len, ltv->type);
+
+		caps = util_iov_pull_mem(&iov, ltv->len - 1);
+		if (!caps) {
+			util_debug(func, NULL, "Unable to parse %s",
+								"CC");
+			return false;
+		}
+		util_hexdump(' ', caps, ltv->len - 1, func, NULL);
+
+		capsLen -= (ltv->len + 1);
+	}
+
+	if (!util_iov_pull_u8(&iov, &metaLen))
+		return false;
+	util_debug(func, NULL, "Metadata Len %d", metaLen);
+
+	if (!metaLen)
+		return false;
+	if (meta) {
+		if (!(*meta))
+			*meta = new0(struct iovec, 1);
+		(*meta)->iov_len = metaLen;
+		(*meta)->iov_base = iov.iov_base;
+	}
+
+	hexstream = util_iov_pull_mem(&iov, metaLen);
+	if (!hexstream)
+		return false;
+	util_hexdump(' ', hexstream, metaLen, func, NULL);
+
+	return true;
+}
+
 static void bap_parse_pacs(struct bt_bap *bap, uint8_t type,
 				struct queue *queue,
 				const uint8_t *value,
