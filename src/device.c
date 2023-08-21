@@ -1545,6 +1545,11 @@ void device_set_wake_override(struct btd_device *device, bool wake_override)
 	}
 }
 
+bool device_get_wake_override(struct btd_device *device)
+{
+	return device->wake_override;
+}
+
 static void device_set_wake_allowed_complete(struct btd_device *device)
 {
 	if (device->wake_id != -1U) {
