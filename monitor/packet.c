@@ -15396,6 +15396,37 @@ static void mgmt_mesh_device_found_evt(const void *data, uint16_t size)
 	print_hex_field("EIR Data", eir_data, size);
 }
 
+static void mgmt_big_info_adv_report(const void *data, uint16_t size)
+{
+	uint16_t sync_handle = get_le16(data);
+	uint8_t num_bis = get_u8(data + 2);
+	uint8_t nse = get_u8(data + 3);
+	uint16_t iso_interval = get_le16(data + 4);
+	uint8_t bn = get_u8(data + 6);
+	uint8_t pto = get_u8(data + 7);
+	uint8_t irc = get_u8(data + 8);
+	uint16_t max_pdu = get_le16(data + 9);
+	const uint8_t *sdu_interval = data + 11;
+	uint16_t max_sdu = get_le16(data + 14);
+	uint8_t phy = get_u8(data + 16);
+	uint8_t framing = get_u8(data + 17);
+	uint8_t encryption = get_u8(data + 18);
+
+	print_field("Sync Handle: 0x%4.4x", sync_handle);
+	print_field("Number BIS: %u", num_bis);
+	print_field("NSE: %u", nse);
+	print_slot_125("ISO Interval", iso_interval);
+	print_field("BN: %u", bn);
+	print_field("PTO: %u", pto);
+	print_field("IRC: %u", irc);
+	print_field("Maximum PDU: %u", max_pdu);
+	print_usec_interval("SDU Interval", sdu_interval);
+	print_field("Maximum SDU: %u", max_sdu);
+	print_le_phy("PHY", phy);
+	print_framing(framing);
+	print_field("Encryption: 0x%02x", encryption);
+}
+
 static void mgmt_mesh_packet_cmplt_evt(const void *data, uint16_t size)
 {
 	uint8_t handle = get_u8(data);
@@ -15500,6 +15531,8 @@ static const struct mgmt_data mgmt_event_table[] = {
 			mgmt_mesh_device_found_evt, 22, false },
 	{ 0x0032, "Mesh Packet Complete",
 			mgmt_mesh_packet_cmplt_evt, 1, true },
+	{ 0x0033, "BIGInfo advertising report",
+			mgmt_big_info_adv_report, 19, false },
 	{ }
 };
 

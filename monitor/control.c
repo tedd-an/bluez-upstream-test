@@ -5,6 +5,7 @@
  *
  *  Copyright (C) 2011-2014  Intel Corporation
  *  Copyright (C) 2002-2010  Marcel Holtmann <marcel@holtmann.org>
+ *  Copyright 2023 NXP
  *
  *
  */
@@ -788,6 +789,27 @@ static void mgmt_advertising_removed(uint16_t len, const void *buf)
 	packet_hexdump(buf, len);
 }
 
+static void mgmt_big_info_adv_report(uint16_t len, const void *buf)
+{
+	const struct mgmt_ev_le_big_info_adv_report *ev = buf;
+	uint16_t sync_handle;
+
+	if (len < sizeof(*ev)) {
+		printf("* Malformed BIGInfo advertising report control\n");
+		return;
+	}
+
+	sync_handle = le16_to_cpu(ev->sync_handle);
+
+	printf("@ BIGInfo Advertising Report: sync_handle 0x%4.4x num_bis %u "
+		"encryption %u\n", sync_handle, ev->num_bis, ev->encryption);
+
+	buf += sizeof(*ev);
+	len -= sizeof(*ev);
+
+	packet_hexdump(buf, len);
+}
+
 void control_message(uint16_t opcode, const void *data, uint16_t size)
 {
 	if (!decode_control)
@@ -892,6 +914,9 @@ void control_message(uint16_t opcode, const void *data, uint16_t size)
 		break;
 	case MGMT_EV_ADVERTISING_REMOVED:
 		mgmt_advertising_removed(size, data);
+		break;
+	case MGMT_EV_LE_BIG_INFO_ADV_REPORT:
+		mgmt_big_info_adv_report(size, data);
 		break;
 	default:
 		printf("* Unknown control (code %d len %d)\n", opcode, size);
