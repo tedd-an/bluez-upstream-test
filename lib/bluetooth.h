@@ -187,6 +187,7 @@ struct bt_iso_bcast_qos {
 	uint8_t  sync_cte_type;
 	uint8_t  mse;
 	uint16_t timeout;
+	uint16_t sync_handle;
 };
 
 /* (HCI_MAX_PER_AD_LENGTH - EIR_SERVICE_DATA_LENGTH) */
