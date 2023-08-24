@@ -4,6 +4,7 @@
  *
  *  Copyright (C) 2010  Nokia Corporation
  *  Copyright (C) 2010  Marcel Holtmann <marcel@holtmann.org>
+ *  Copyright 2023 NXP
  *
  *
  */
@@ -1090,6 +1091,23 @@ struct mgmt_ev_mesh_device_found {
 #define MGMT_EV_MESH_PACKET_CMPLT		0x0032
 struct mgmt_ev_mesh_pkt_cmplt {
 	uint8_t	handle;
+} __packed;
+
+#define MGMT_EV_LE_BIG_INFO_ADV_REPORT	0x0033
+struct mgmt_ev_le_big_info_adv_report {
+	uint16_t sync_handle;
+	uint8_t num_bis;
+	uint8_t nse;
+	uint16_t iso_interval;
+	uint8_t bn;
+	uint8_t pto;
+	uint8_t irc;
+	uint16_t max_pdu;
+	uint8_t sdu_interval[3];
+	uint16_t max_sdu;
+	uint8_t phy;
+	uint8_t framing;
+	uint8_t encryption;
 } __packed;
 
 static const char *mgmt_op[] = {
