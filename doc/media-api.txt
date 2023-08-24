@@ -816,42 +816,40 @@ Properties	object Device [readonly]
 			Linked transport objects which the transport is
 			associated with.
 
-		byte CIG [ISO only, optional, experimental]
+		dict QoS [ISO only, optional, experimental]
 
-			Indicates configured QoS CIG.
 			Only present when QoS is configured.
 
-		byte CIS [ISO only, optional, experimental]
+			Possible values for Unicast:
 
-			Indicates configured QoS CIS.
-			Only present when QoS is configured.
+			byte CIG
 
-		uint32 Interval [ISO only, optional, experimental]
+				Indicates configured QoS CIG.
 
-			Indicates configured QoS interval.
-			Only present when QoS is configured.
+			byte CIS
 
-		boolean Framing [ISO only, optional, experimental]
+				Only present when QoS is configured.
 
-			Indicates configured QoS framing.
-			Only present when QoS is configured.
+			uint32 Interval
 
-		byte PHY [ISO only, optional, experimental]
+				Indicates configured QoS interval.
 
-			Indicates configured QoS PHY.
-			Only present when QoS is configured.
+			boolean Framing
 
-		uint16 SDU [ISO only, optional, experimental]
+				Indicates configured QoS framing.
 
-			Indicates configured QoS SDU.
-			Only present when QoS is configured.
+			byte PHY
 
-		byte Retransmissions [ISO only, optional, experimental]
+				Indicates configured QoS PHY.
 
-			Indicates configured QoS retransmissions.
-			Only present when QoS is configured.
+			uint16 SDU
 
-		uint16 Latency [ISO only, optional, experimental]
+				Indicates configured QoS SDU.
 
-			Indicates configured QoS latency.
-			Only present when QoS is configured.
+			byte Retransmissions
+
+				Indicates configured QoS retransmissions.
+
+			uint16 Latency
+
+				Indicates configured QoS latency.
