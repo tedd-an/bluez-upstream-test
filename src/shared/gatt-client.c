@@ -2230,45 +2230,46 @@ static void notify_cb(struct bt_att_chan *chan, uint8_t opcode,
 					void *user_data)
 {
 	struct bt_gatt_client *client = user_data;
-	struct value_data data;
-
-	if (queue_isempty(client->notify_list))
-		return;
 
 	bt_gatt_client_ref(client);
 
-	memset(&data, 0, sizeof(data));
+	if (!queue_isempty(client->notify_list)) {
+		struct value_data data;
 
-	if (opcode == BT_ATT_OP_HANDLE_NFY_MULT) {
-		while (length >= 4) {
+		memset(&data, 0, sizeof(data));
+
+		if (opcode == BT_ATT_OP_HANDLE_NFY_MULT) {
+			while (length >= 4) {
+				data.handle = get_le16(pdu);
+				length -= 2;
+				pdu += 2;
+
+				data.len = get_le16(pdu);
+				length -= 2;
+				pdu += 2;
+
+				if (data.len > length)
+					data.len = length;
+
+				data.data = pdu;
+
+				queue_foreach(client->notify_list,
+					      notify_handler, &data);
+
+				length -= data.len;
+				pdu += data.len;
+			}
+		} else {
 			data.handle = get_le16(pdu);
 			length -= 2;
 			pdu += 2;
 
-			data.len = get_le16(pdu);
-			length -= 2;
-			pdu += 2;
-
-			if (data.len > length)
-				data.len = length;
-
+			data.len = length;
 			data.data = pdu;
 
-			queue_foreach(client->notify_list, notify_handler,
-								&data);
-
-			length -= data.len;
-			pdu += data.len;
+			queue_foreach(client->notify_list,
+				      notify_handler, &data);
 		}
-	} else {
-		data.handle = get_le16(pdu);
-		length -= 2;
-		pdu += 2;
-
-		data.len = length;
-		data.data = pdu;
-
-		queue_foreach(client->notify_list, notify_handler, &data);
 	}
 
 	if (opcode == BT_ATT_OP_HANDLE_IND && !client->parent)
