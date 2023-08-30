@@ -658,6 +658,9 @@ static void bap_io_close(struct bap_ep *ep)
 	g_io_channel_unref(ep->io);
 	ep->io = NULL;
 	ep->cig_active = false;
+
+	if (bt_bap_pac_get_type(ep->lpac) == BT_BAP_BCAST_SINK)
+		btd_device_set_temporary(ep->data->device, true);
 }
 
 static DBusMessage *set_configuration(DBusConnection *conn, DBusMessage *msg,
@@ -796,6 +799,8 @@ static void iso_bcast_confirm_cb(GIOChannel *io, GError *err, void *user_data)
 		g_error_free(err);
 		goto drop;
 	}
+
+	btd_device_set_temporary(data->device, false);
 
 	g_io_channel_ref(io);
 	btd_service_connecting_complete(data->service, 0);
