@@ -5945,8 +5945,17 @@ void btd_device_set_temporary(struct btd_device *device, bool temporary)
 	if (device->temporary == temporary)
 		return;
 
-	if (device_address_is_private(device))
-		return;
+	if (device_address_is_private(device)) {
+		/* For audio LE broadcast, we need to set the device
+		 * temporary flag even if the address is private.
+		 * If the device that is temporarily set on
+		 * has BCAA_SERVICE_UUID (is a broadcast source)
+		 * will set the temporary flag even if the address
+		 * is private.
+		 */
+		if (!btd_device_has_uuid(device, BCAA_SERVICE_UUID))
+			return;
+	}
 
 	DBG("temporary %d", temporary);
 
