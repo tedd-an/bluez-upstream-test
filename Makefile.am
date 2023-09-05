@@ -573,6 +573,19 @@ unit_test_gattrib_LDADD = src/libshared-glib.la \
 				lib/libbluetooth-internal.la \
 				$(GLIB_LIBS) $(DBUS_LIBS) -ldl -lrt
 
+unit_tests += unit/test-micp
+
+unit_test_micp_SOURCES = unit/test-micp.c
+
+unit_test_micp_LDADD = src/libshared-glib.la \
+			lib/libbluetooth-internal.la $(GLIB_LIBS)
+
+unit_tests += unit/test-mics
+
+unit_test_mics_SOURCES = unit/test-mics.c
+unit_test_mics_LDADD = src/libshared-glib.la \
+				lib/libbluetooth-internal.la $(GLIB_LIBS)
+
 unit_tests += unit/test-bap
 
 unit_test_bap_SOURCES = unit/test-bap.c
