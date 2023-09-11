@@ -653,7 +653,12 @@ static void bap_io_close(struct bap_ep *ep)
 	DBG("ep %p", ep);
 
 	fd = g_io_channel_unix_get_fd(ep->io);
-	close(fd);
+	if (bt_bap_stream_get_type(ep->stream) ==
+				BT_BAP_STREAM_TYPE_BCAST) {
+		shutdown(fd, SHUT_RDWR);
+	} else {
+		close(fd);
+	}
 
 	g_io_channel_unref(ep->io);
 	ep->io = NULL;
@@ -1176,6 +1181,10 @@ static void iso_connect_cb(GIOChannel *chan, GError *err, gpointer user_data)
 	fd = g_io_channel_unix_get_fd(chan);
 
 	if (bt_bap_stream_set_io(stream, fd)) {
+		if (bt_bap_stream_get_type(stream) ==
+						BT_BAP_STREAM_TYPE_BCAST) {
+			bt_bap_stream_streaming(stream);
+		}
 		g_io_channel_set_close_on_unref(chan, FALSE);
 		return;
 	}
@@ -1712,6 +1721,12 @@ static void bap_state(struct bt_bap_stream *stream, uint8_t old_state,
 		} else
 			queue_remove(data->streams, stream);
 		break;
+	case BT_BAP_STREAM_STATE_RELEASING:
+		if (bt_bap_stream_get_type(stream) ==
+					BT_BAP_STREAM_TYPE_BCAST) {
+			bap_io_close(ep);
+		}
+		break;
 	case BT_BAP_STREAM_STATE_CONFIG:
 		if (ep && !ep->id) {
 			bap_create_io(data, ep, stream, true);
@@ -1735,18 +1750,16 @@ static void bap_state(struct bt_bap_stream *stream, uint8_t old_state,
 		}
 		break;
 	case BT_BAP_STREAM_STATE_QOS:
-		bap_create_io(data, ep, stream, true);
+		if (bt_bap_stream_get_type(stream) ==
+					BT_BAP_STREAM_TYPE_UCAST) {
+			bap_create_io(data, ep, stream, true);
+		}
 		break;
 	case BT_BAP_STREAM_STATE_ENABLING:
 		if (ep)
 			bap_create_io(data, ep, stream, false);
 		break;
 	case BT_BAP_STREAM_STATE_STREAMING:
-		if (bt_bap_stream_get_type(stream) ==
-				BT_BAP_STREAM_TYPE_BCAST) {
-			if (ep)
-				bap_create_io(data, ep, stream, false);
-		}
 		break;
 	}
 }
