@@ -264,6 +264,8 @@ unsigned int bt_bap_stream_start(struct bt_bap_stream *stream,
 					bt_bap_stream_func_t func,
 					void *user_data);
 
+void bt_bap_stream_streaming(struct bt_bap_stream *stream);
+
 unsigned int bt_bap_stream_disable(struct bt_bap_stream *stream,
 					bool disable_links,
 					bt_bap_stream_func_t func,
