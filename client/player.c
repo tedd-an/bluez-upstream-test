@@ -3196,6 +3196,28 @@ done:
 	return bt_shell_noninteractive_quit(EXIT_SUCCESS);
 }
 
+static void cmd_encryption_endpoint(int argc, char *argv[])
+{
+
+	uint8_t value;
+
+	if (argc < 2) {
+		bt_shell_printf("Encryption: %s\n",
+				bcast_qos.bcast.encryption ? "on" : "off");
+		return bt_shell_noninteractive_quit(EXIT_SUCCESS);
+	}
+
+	if (!strcmp(argv[1], "on") || !strcmp(argv[1], "yes"))
+		value = 1;
+	else if (!strcmp(argv[1], "off") || !strcmp(argv[1], "no"))
+		value = 0;
+	else
+		return bt_shell_noninteractive_quit(EXIT_FAILURE);
+
+	bcast_qos.bcast.encryption = value;
+	return bt_shell_noninteractive_quit(EXIT_SUCCESS);
+}
+
 static const struct bt_shell_menu endpoint_menu = {
 	.name = "endpoint",
 	.desc = "Media Endpoint Submenu",
@@ -3221,6 +3243,10 @@ static const struct bt_shell_menu endpoint_menu = {
 						cmd_presets_endpoint,
 						"List available presets",
 						uuid_generator },
+	{ "encryption",    "[on/off]",
+						cmd_encryption_endpoint,
+						"Enable/disable BIS encryption (mode 3 security)",
+						NULL },
 	{} },
 };
 
