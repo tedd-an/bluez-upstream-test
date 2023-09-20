@@ -313,7 +313,7 @@ static struct hciemu_client *hciemu_client_new(struct hciemu *hciemu,
 	if (!client)
 		return NULL;
 
-	client->dev = btdev_create(hciemu->btdev_type, id++);
+	client->dev = btdev_create(hciemu->btdev_type, id);
 	if (!client->dev) {
 		free(client);
 		return NULL;
