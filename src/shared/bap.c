@@ -2681,8 +2681,10 @@ static void remove_streams(void *data, void *user_data)
 	struct bt_bap_stream *stream;
 
 	stream = queue_remove_if(bap->streams, match_stream_lpac, pac);
-	if (stream)
+	if (stream) {
+		stream->lpac = NULL; /* mark stream->lpac to NULL, as it will be freed in bt_bap_remove_pac  */
 		bt_bap_stream_release(stream, NULL, NULL);
+	}
 }
 
 bool bt_bap_remove_pac(struct bt_bap_pac *pac)
