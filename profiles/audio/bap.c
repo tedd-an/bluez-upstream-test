@@ -278,16 +278,17 @@ static const GDBusPropertyTable ep_properties[] = {
 static int parse_array(DBusMessageIter *iter, struct iovec **iov)
 {
 	DBusMessageIter array;
+	struct iovec tmp_iov = {0};
 
 	if (!iov)
 		return 0;
 
-	if (!(*iov))
-		*iov = new0(struct iovec, 1);
-
 	dbus_message_iter_recurse(iter, &array);
-	dbus_message_iter_get_fixed_array(&array, &(*iov)->iov_base,
-						(int *)&(*iov)->iov_len);
+	dbus_message_iter_get_fixed_array(&array, &(tmp_iov).iov_base,
+						(int *)&(tmp_iov).iov_len);
+
+	*iov = util_iov_dup(&tmp_iov, 1);
+
 	return 0;
 }
 
@@ -300,7 +301,8 @@ static bool parse_base(void *data, size_t len, util_debug_func_t func,
 		.iov_base = data,
 		.iov_len = len,
 	};
-
+	struct iovec *csc_iov = NULL;
+	struct iovec *meta_iov = NULL;
 	uint8_t capsLen, metaLen;
 	uint8_t *hexstream;
 
@@ -330,22 +332,21 @@ static bool parse_base(void *data, size_t len, util_debug_func_t func,
 				"Codec", codec->id, codec->cid, codec->vid);
 	}
 
+	/* Fetch Codec Specific Configuration */
 	if (!util_iov_pull_u8(&iov, &capsLen))
 		return false;
 	util_debug(func, NULL, "CC Len %d", capsLen);
 
 	if (!capsLen)
 		return false;
-	if (caps) {
-		if (!(*caps))
-			*caps = new0(struct iovec, 1);
-		(*caps)->iov_len = capsLen;
-		(*caps)->iov_base = iov.iov_base;
-	}
 
+	csc_iov = new0(struct iovec, 1);
+	util_iov_memcpy(csc_iov, iov.iov_base, capsLen);
+
+	/* Print Codec Specific Configuration */
 	for (int i = 0; capsLen > 1; i++) {
 		struct bt_ltv *ltv = util_iov_pull_mem(&iov, sizeof(*ltv));
-		uint8_t *caps;
+		uint8_t *csc;
 
 		if (!ltv) {
 			util_debug(func, NULL, "Unable to parse %s",
@@ -356,34 +357,45 @@ static bool parse_base(void *data, size_t len, util_debug_func_t func,
 		util_debug(func, NULL, "%s #%u: len %u type %u",
 					"CC", i, ltv->len, ltv->type);
 
-		caps = util_iov_pull_mem(&iov, ltv->len - 1);
-		if (!caps) {
+		csc = util_iov_pull_mem(&iov, ltv->len - 1);
+		if (!csc) {
 			util_debug(func, NULL, "Unable to parse %s",
 								"CC");
 			return false;
 		}
-		util_hexdump(' ', caps, ltv->len - 1, func, NULL);
+		util_hexdump(' ', csc, ltv->len - 1, func, NULL);
 
 		capsLen -= (ltv->len + 1);
 	}
 
+	/* Fetch Metadata */
 	if (!util_iov_pull_u8(&iov, &metaLen))
 		return false;
 	util_debug(func, NULL, "Metadata Len %d", metaLen);
 
 	if (!metaLen)
 		return false;
-	if (meta) {
-		if (!(*meta))
-			*meta = new0(struct iovec, 1);
-		(*meta)->iov_len = metaLen;
-		(*meta)->iov_base = iov.iov_base;
-	}
+
+	meta_iov = new0(struct iovec, 1);
+	util_iov_memcpy(meta_iov, iov.iov_base, metaLen);
 
 	hexstream = util_iov_pull_mem(&iov, metaLen);
 	if (!hexstream)
 		return false;
 	util_hexdump(' ', hexstream, metaLen, func, NULL);
+
+	/* Update caps and meta with received Codec Specific Configuration and Metadata */
+	if (caps) {
+		if (*caps)
+			util_iov_free(*caps, 1);
+		*caps = csc_iov;
+	}
+
+	if (meta) {
+		if (*meta)
+			util_iov_free(*meta, 1);
+		*meta = meta_iov;
+	}
 
 	return true;
 }
@@ -780,7 +792,6 @@ static void iso_bcast_confirm_cb(GIOChannel *io, GError *err, void *user_data)
 	char address[18];
 	struct bap_ep *ep;
 	int fd;
-	struct iovec *base_io;
 	uint32_t presDelay;
 	uint8_t numSubgroups;
 	uint8_t numBis;
@@ -807,12 +818,11 @@ static void iso_bcast_confirm_cb(GIOChannel *io, GError *err, void *user_data)
 	if (!ep)
 		return;
 
+	/* Update endpoint with the values of the peer's (BAP source) QOS */
 	update_bcast_qos(&qos, &ep->qos);
 
-	base_io = new0(struct iovec, 1);
-	util_iov_memcpy(base_io, base.base, base.base_len);
-
-	parse_base(base_io->iov_base, base_io->iov_len, bap_debug,
+	/* Update endpoint with the value received from the peer's (BAP source) BASE */
+	parse_base(base.base, base.base_len, bap_debug,
 			&presDelay, &numSubgroups, &numBis,
 			&codec, &ep->caps, &ep->metadata);
 
@@ -930,6 +940,7 @@ static struct bap_ep *ep_register_bcast(struct bap_data *data,
 		return ep;
 
 	ep = new0(struct bap_ep, 1);
+	memset(ep, 0, sizeof(struct bap_ep));
 	ep->data = data;
 	ep->lpac = lpac;
 	ep->rpac = rpac;
@@ -2301,6 +2312,7 @@ static int bap_init(void)
 static void bap_exit(void)
 {
 	btd_profile_unregister(&bap_profile);
+	btd_profile_unregister(&bap_bcast_profile);
 	bt_bap_unregister(bap_id);
 }
 
