@@ -2792,10 +2792,10 @@ static void cmd_config_endpoint(int argc, char *argv[])
 	const struct capabilities *cap;
 	char *uuid;
 	uint8_t codec_id;
-	bool broadcast = false;
+	bool local_ep_not_provided = false;
+	uint8_t bcode_arg_position = 0;
 
 	cfg = new0(struct endpoint_config, 1);
-
 	/* Search for the remote endpoint name on DBUS */
 	cfg->proxy = g_dbus_proxy_lookup(endpoints, NULL, argv[1],
 						BLUEZ_MEDIA_ENDPOINT_INTERFACE);
@@ -2815,7 +2815,7 @@ static void cmd_config_endpoint(int argc, char *argv[])
 		codec_id = strtol(argv[3], NULL, 0);
 		cap = find_capabilities(uuid, codec_id);
 		if (cap) {
-			broadcast = true;
+			local_ep_not_provided = true;
 			cfg->ep = endpoint_new(cap);
 			cfg->ep->preset = find_presets_name(uuid, argv[3]);
 			if (!cfg->ep->preset)
@@ -2827,9 +2827,10 @@ static void cmd_config_endpoint(int argc, char *argv[])
 		}
 	}
 
-	if (((broadcast == false) && (argc > 3)) ||
-		((broadcast == true) && (argc > 4))) {
-		char *preset_name = (broadcast == false)?argv[3]:argv[4];
+	if (((local_ep_not_provided == false) && (argc > 3)) ||
+		((local_ep_not_provided == true) && (argc > 4))) {
+		uint8_t offset = (local_ep_not_provided == false)?0:1;
+		char *preset_name = argv[3 + offset];
 
 		preset = preset_find_name(cfg->ep->preset, preset_name);
 		if (!preset) {
@@ -2837,7 +2838,42 @@ static void cmd_config_endpoint(int argc, char *argv[])
 			goto fail;
 		}
 
+		/* If the endpoint is configured to be a source allow
+		 *the user to decide if encryption is enabled or not.
+		 */
+		if (!strcmp(cfg->ep->uuid, BCAA_SERVICE_UUID) &&
+			argc > 4 + offset) {
+			uint8_t value = strtol(argv[4 + offset],
+							NULL, 0);
+
+			if (value < 2)
+				bcast_qos.bcast.encryption = value;
+			else
+				goto fail;
+		}
+
+		/* If the endpoint is configured to be a source or a
+		 *sink allow the user to set a custom broadcast code.
+		 *If no broadcast code is set, the default will be used.
+		 */
+		if (!strcmp(cfg->ep->uuid, BCAA_SERVICE_UUID) &&
+			(argc > 5 + offset))
+			bcode_arg_position = 5 + offset;
+
+		/*The broadcast code is found at a smaller index due to the sink
+		 *config not using the encryption flag parameter.
+		 */
+		if (!strcmp(cfg->ep->uuid, BAA_SERVICE_UUID) &&
+			argc > 4 + offset)
+			bcode_arg_position = 4  + offset;
+
+		if (bcode_arg_position != 0)
+			for (uint8_t i = 0; i < 16; i++)
+				bcast_qos.bcast.bcode[i] =
+				strtol(argv[bcode_arg_position + i], NULL, 16);
+
 		if (cfg->ep->broadcast) {
+
 			iov_append(&cfg->ep->bcode, bcast_qos.bcast.bcode,
 				sizeof(bcast_qos.bcast.bcode));
 			/* Copy capabilities for broadcast*/
@@ -3253,7 +3289,7 @@ static const struct bt_shell_menu endpoint_menu = {
 						"Register Endpoint",
 						local_endpoint_generator },
 	{ "config",
-		"<endpoint> [local endpoint/UUID] [preset/codec id] [preset]",
+		"<endpoint> [local endpoint/UUID] [preset/codec id] [preset] [encryption] [broadcast code=xx xx ...]",
 						cmd_config_endpoint,
 						"Configure Endpoint",
 						endpoint_generator },
