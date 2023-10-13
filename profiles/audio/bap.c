@@ -1053,6 +1053,7 @@ static struct bap_ep *ep_register_bcast(struct bap_data *data,
 	switch (bt_bap_pac_get_type(rpac)) {
 	case BT_BAP_BCAST_SOURCE:
 	case BT_BAP_BCAST_SINK:
+	case BT_BAP_SIMULATED_BCAST_SINK:
 		queue = data->bcast;
 		i = queue_length(data->bcast);
 		suffix = "bcast";
@@ -1075,6 +1076,7 @@ static struct bap_ep *ep_register_bcast(struct bap_data *data,
 
 	switch (bt_bap_pac_get_type(rpac)) {
 	case BT_BAP_BCAST_SINK:
+	case BT_BAP_SIMULATED_BCAST_SINK:
 		err = asprintf(&ep->path, "%s/pac_%s%d",
 				adapter_get_path(adapter), suffix, i);
 		ep->base = new0(struct iovec, 1);
@@ -1265,6 +1267,9 @@ static bool pac_found_bcast(struct bt_bap_pac *lpac, struct bt_bap_pac *rpac,
 	struct bap_ep *ep;
 
 	DBG("lpac %p rpac %p", lpac, rpac);
+
+	if (bt_bap_pac_get_type(lpac) == BT_BAP_SIMULATED_BCAST_SINK)
+		return true;
 
 	ep = ep_register_bcast(user_data, lpac, rpac);
 	if (!ep) {
@@ -1792,7 +1797,7 @@ static void bap_listen_io_broadcast(struct bap_data *data, struct bap_ep *ep,
 		error("%s", err->message);
 		g_error_free(err);
 	}
-
+	ep->io = io;
 	ep->data->listen_io = io;
 
 }
@@ -1958,12 +1963,8 @@ static void pac_added_broadcast(struct bt_bap_pac *pac, void *user_data)
 {
 	struct bap_data *data = user_data;
 
-	if (bt_bap_pac_get_type(pac) == BT_BAP_BCAST_SOURCE)
-		bt_bap_foreach_pac(data->bap, BT_BAP_BCAST_SOURCE,
-						pac_found_bcast, data);
-	else if (bt_bap_pac_get_type(pac) == BT_BAP_BCAST_SINK)
-		bt_bap_foreach_pac(data->bap, BT_BAP_BCAST_SINK,
-						pac_found_bcast, data);
+	bt_bap_foreach_pac(data->bap, bt_bap_pac_get_type(pac),
+				pac_found_bcast, data);
 }
 
 static bool ep_match_pac(const void *data, const void *match_data)
