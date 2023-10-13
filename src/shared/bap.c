@@ -644,7 +644,7 @@ static struct bt_bap_endpoint *bap_endpoint_new_broadcast(struct bt_bap_db *bdb,
 	if (type == BT_BAP_BCAST_SINK)
 		ep->dir = BT_BAP_BCAST_SOURCE;
 	else
-		ep->dir = BT_BAP_BCAST_SINK;
+		ep->dir = BT_BAP_SIMULATED_BCAST_SINK;
 
 	return ep;
 }
@@ -1500,12 +1500,12 @@ static void ep_config_cb(struct bt_bap_stream *stream, int err)
 		return;
 
 	if (bt_bap_stream_get_type(stream) == BT_BAP_STREAM_TYPE_BCAST) {
-		if (bt_bap_stream_io_dir(stream) == BT_BAP_BCAST_SINK)
+		if (bt_bap_stream_io_dir(stream) == BT_BAP_SIMULATED_BCAST_SINK)
 			stream_set_state_broadcast(stream,
-						BT_BAP_STREAM_STATE_QOS);
+				BT_BAP_STREAM_STATE_QOS);
 		else if (bt_bap_stream_io_dir(stream) == BT_BAP_BCAST_SOURCE)
 			stream_set_state_broadcast(stream,
-						BT_BAP_STREAM_STATE_CONFIG);
+				BT_BAP_STREAM_STATE_CONFIG);
 		return;
 	}
 
@@ -2710,15 +2710,15 @@ struct bt_bap_pac *bt_bap_add_vendor_pac(struct gatt_db *db,
 		break;
 	case BT_BAP_BCAST_SOURCE:
 		bap_add_broadcast_source(pac);
-		if (queue_isempty(bdb->broadcast_sinks)) {
-			/* When adding a local broadcast source, add also a
-			 * local broadcast sink
-			 */
-			pac_broadcast_sink = bap_pac_new(bdb, name,
-					BT_BAP_BCAST_SINK, &codec, qos,
-					data, metadata);
-			bap_add_broadcast_sink(pac_broadcast_sink);
-		}
+		/* When adding a local broadcast source, add also a
+		 * local broadcast sink
+		 */
+		pac_broadcast_sink = bap_pac_new(bdb, name,
+			BT_BAP_SIMULATED_BCAST_SINK, &codec, qos,
+			data, metadata);
+		bap_add_broadcast_sink(pac_broadcast_sink);
+		queue_foreach(sessions, notify_session_pac_added, pac_broadcast_sink);
+		return pac;
 		break;
 	case BT_BAP_BCAST_SINK:
 		bap_add_broadcast_sink(pac);
@@ -4457,13 +4457,23 @@ static void bap_foreach_pac(struct queue *l, struct queue *r,
 		for (er = queue_get_entries(r); er; er = er->next) {
 			struct bt_bap_pac *rpac = er->data;
 
+			if ((lpac->type == BT_BAP_BCAST_SOURCE)
+				&& (rpac->type != BT_BAP_SIMULATED_BCAST_SINK))
+				continue;
+			if ((rpac->type == BT_BAP_SIMULATED_BCAST_SINK)
+				&& (lpac->type == BT_BAP_BCAST_SOURCE)) {
+				func(lpac, rpac, user_data);
+				return;
+			}
+
 			/* Skip checking codec for bcast source,
 			 * it will be checked when BASE info are received
 			 */
 			if ((rpac->type != BT_BAP_BCAST_SOURCE) &&
 				(!bap_codec_equal(&lpac->codec, &rpac->codec)))
 				continue;
-
+			if (rpac->type == BT_BAP_SIMULATED_BCAST_SINK)
+				continue;
 			if (!func(lpac, rpac, user_data))
 				return;
 		}
@@ -4484,18 +4494,16 @@ void bt_bap_foreach_pac(struct bt_bap *bap, uint8_t type,
 		return bap_foreach_pac(bap->ldb->sinks, bap->rdb->sources,
 							   func, user_data);
 	case BT_BAP_BCAST_SOURCE:
-		if (queue_isempty(bap->rdb->broadcast_sources)
-			&& queue_isempty(bap->rdb->broadcast_sinks))
-			return bap_foreach_pac(bap->ldb->broadcast_sources,
-					bap->ldb->broadcast_sinks,
-					func, user_data);
-
 		return bap_foreach_pac(bap->ldb->broadcast_sinks,
 					bap->rdb->broadcast_sources,
 					func, user_data);
 	case BT_BAP_BCAST_SINK:
 		return bap_foreach_pac(bap->ldb->broadcast_sinks,
 					bap->rdb->broadcast_sources,
+					func, user_data);
+	case BT_BAP_SIMULATED_BCAST_SINK:
+		return bap_foreach_pac(bap->ldb->broadcast_sources,
+					bap->ldb->broadcast_sinks,
 					func, user_data);
 	}
 }
@@ -4927,12 +4935,12 @@ unsigned int bt_bap_stream_enable(struct bt_bap_stream *stream,
 		queue_foreach(stream->links, bap_stream_enable_link, metadata);
 		break;
 	case BT_BAP_STREAM_TYPE_BCAST:
-		if (bt_bap_stream_io_dir(stream) == BT_BAP_BCAST_SINK)
+		if (bt_bap_stream_io_dir(stream) == BT_BAP_SIMULATED_BCAST_SINK)
 			stream_set_state_broadcast(stream,
-						BT_BAP_STREAM_STATE_CONFIG);
+				BT_BAP_STREAM_STATE_CONFIG);
 		else if (bt_bap_stream_io_dir(stream) == BT_BAP_BCAST_SOURCE)
 			stream_set_state_broadcast(stream,
-						BT_BAP_STREAM_STATE_STREAMING);
+				 BT_BAP_STREAM_STATE_STREAMING);
 
 		return 1;
 	}
