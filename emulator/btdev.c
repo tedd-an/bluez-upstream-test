@@ -1324,6 +1324,8 @@ static int cmd_add_sco_conn(struct btdev *dev, const void *data, uint8_t len)
 		goto done;
 	}
 
+	pending_conn_del(dev, conn->link->dev);
+
 	cc.status = BT_HCI_ERR_SUCCESS;
 	memcpy(cc.bdaddr, conn->link->dev->bdaddr, 6);
 	cc.handle = cpu_to_le16(conn->handle);
@@ -1331,8 +1333,6 @@ static int cmd_add_sco_conn(struct btdev *dev, const void *data, uint8_t len)
 	cc.encr_mode = 0x00;
 
 done:
-	pending_conn_del(dev, conn->link->dev);
-
 	send_event(dev, BT_HCI_EVT_CONN_COMPLETE, &cc, sizeof(cc));
 
 	return 0;
