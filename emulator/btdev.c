@@ -1450,7 +1450,7 @@ static void auth_complete(struct btdev_conn *conn, uint8_t status)
 
 	memset(&ev, 0, sizeof(ev));
 
-	ev.handle = conn ? cpu_to_le16(conn->handle) : 0x0000;
+	ev.handle = cpu_to_le16(conn->handle);
 	ev.status = status;
 
 	send_event(conn->dev, BT_HCI_EVT_AUTH_COMPLETE, &ev, sizeof(ev));
@@ -1488,10 +1488,10 @@ static int cmd_link_key_reply_complete(struct btdev *dev, const void *data,
 		status = BT_HCI_ERR_AUTH_FAILURE;
 
 done:
-	auth_complete(conn, status);
-
 	if (conn)
 		auth_complete(conn->link, status);
+	else
+		conn_complete(dev, cmd->bdaddr, status);
 
 	return 0;
 }
@@ -1678,28 +1678,25 @@ static int cmd_pin_code_neg_reply_complete(struct btdev *dev, const void *data,
 							uint8_t len)
 {
 	const struct bt_hci_cmd_pin_code_request_neg_reply *cmd = data;
+	const uint8_t status = BT_HCI_ERR_PIN_OR_KEY_MISSING;
 	struct btdev *remote;
 	struct btdev_conn *conn;
-	uint8_t status;
 
 	remote = find_btdev_by_bdaddr(cmd->bdaddr);
 	if (!remote)
 		return 0;
 
-	status = BT_HCI_ERR_PIN_OR_KEY_MISSING;
-
 	conn = queue_find(dev->conns, match_bdaddr, cmd->bdaddr);
 	if (conn)
 		auth_complete(conn, status);
 	else
-		conn_complete(dev, cmd->bdaddr, BT_HCI_ERR_PIN_OR_KEY_MISSING);
+		conn_complete(dev, cmd->bdaddr, status);
 
 	if (conn) {
 		if (remote->pin_len)
 			auth_complete(conn->link, status);
 	} else {
-		conn_complete(remote, dev->bdaddr,
-					BT_HCI_ERR_PIN_OR_KEY_MISSING);
+		conn_complete(remote, dev->bdaddr, status);
 	}
 
 	return 0;
