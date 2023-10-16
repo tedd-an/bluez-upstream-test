@@ -655,12 +655,22 @@ static void connect_cb(GIOChannel *io, GError *gerr,
 		g_io_channel_unref(bcast_src->listen_io);
 		bcast_src->listen_io = NULL;
 
+		if (bcast_src->listen_io_id > 0) {
+			g_source_remove(bcast_src->listen_io_id);
+			bcast_src->listen_io_id  = 0;
+		}
+
 		/* Close pa sync io */
 		if (bcast_src->pa_sync_io) {
 			g_io_channel_shutdown(bcast_src->pa_sync_io,
 					TRUE, NULL);
 			g_io_channel_unref(bcast_src->pa_sync_io);
 			bcast_src->pa_sync_io = NULL;
+		}
+
+		if (bcast_src->pa_sync_io_id > 0) {
+			g_source_remove(bcast_src->pa_sync_io_id);
+			bcast_src->pa_sync_io_id  = 0;
 		}
 
 		for (i = 0; i < bcast_src->num_subgroups; i++)
@@ -703,6 +713,18 @@ static bool bass_trigger_big_sync(struct bt_bcast_src *bcast_src)
 	return false;
 }
 
+static gboolean pa_sync_io_disconnect_cb(GIOChannel *io, GIOCondition cond,
+			gpointer data)
+{
+	struct bt_bcast_src *bcast_src = data;
+
+	DBG(bcast_src->bass, "PA sync io has been disconnected");
+
+	bcast_src->pa_sync_io_id = 0;
+	bcast_src->pa_sync_io = NULL;
+
+	return FALSE;
+}
 
 static void confirm_cb(GIOChannel *io, gpointer user_data)
 {
@@ -725,6 +747,15 @@ static void confirm_cb(GIOChannel *io, gpointer user_data)
 	bcast_src->sync_state = BT_BASS_SYNCHRONIZED_TO_PA;
 	bcast_src->pa_sync_io = io;
 	g_io_channel_ref(bcast_src->pa_sync_io);
+
+	if (bcast_src->pa_sync_io_id > 0) {
+		g_source_remove(bcast_src->pa_sync_io_id);
+		bcast_src->pa_sync_io_id  = 0;
+	}
+
+	bcast_src->pa_sync_io_id = g_io_add_watch(io, G_IO_ERR | G_IO_HUP |
+				G_IO_NVAL, (GIOFunc) pa_sync_io_disconnect_cb,
+				bcast_src);
 
 	len = sizeof(qos);
 	memset(&qos, 0, len);
@@ -842,6 +873,19 @@ static bool bass_validate_add_src_params(uint8_t *value, size_t len)
 		return false;
 
 	return true;
+}
+
+static gboolean listen_io_disconnect_cb(GIOChannel *io, GIOCondition cond,
+			gpointer data)
+{
+	struct bt_bcast_src *bcast_src = data;
+
+	DBG(bcast_src->bass, "Listen io has been disconnected");
+
+	bcast_src->listen_io_id = 0;
+	bcast_src->listen_io = NULL;
+
+	return FALSE;
 }
 
 static void bass_handle_add_src_op(struct bt_bass *bass,
@@ -1022,6 +1066,11 @@ static void bass_handle_add_src_op(struct bt_bass *bass,
 
 		bcast_src->listen_io = io;
 		g_io_channel_ref(bcast_src->listen_io);
+
+		bcast_src->listen_io_id = g_io_add_watch(io, G_IO_ERR |
+					G_IO_HUP | G_IO_NVAL,
+					(GIOFunc)listen_io_disconnect_cb,
+					bcast_src);
 
 		if (num_bis > 0 && !bcast_src->bises)
 			bcast_src->bises = queue_new();
@@ -1318,9 +1367,19 @@ static void bass_bcast_src_free(void *data)
 		g_io_channel_unref(bcast_src->listen_io);
 	}
 
+	if (bcast_src->listen_io_id > 0) {
+		g_source_remove(bcast_src->listen_io_id);
+		bcast_src->listen_io_id  = 0;
+	}
+
 	if (bcast_src->pa_sync_io) {
 		g_io_channel_shutdown(bcast_src->pa_sync_io, TRUE, NULL);
 		g_io_channel_unref(bcast_src->pa_sync_io);
+	}
+
+	if (bcast_src->pa_sync_io_id > 0) {
+		g_source_remove(bcast_src->pa_sync_io_id);
+		bcast_src->pa_sync_io_id  = 0;
 	}
 
 	queue_destroy(bcast_src->bises, bass_bis_unref);
