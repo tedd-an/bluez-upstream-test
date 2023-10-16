@@ -190,6 +190,7 @@ struct bt_bap_pac {
 	uint8_t type;
 	struct bt_bap_codec codec;
 	struct bt_bap_pac_qos qos;
+	uint32_t location;
 	struct iovec *data;
 	struct iovec *metadata;
 	struct bt_bap_pac_ops *ops;
@@ -368,6 +369,14 @@ static void pac_foreach(void *data, void *user_data)
 		meta->len = 0;
 }
 
+static void get_pac_loc(void *data, void *user_data)
+{
+	struct bt_bap_pac *pac = data;
+	uint32_t *location = user_data;
+
+	*location |= pac->location;
+}
+
 static void pacs_sink_read(struct gatt_db_attribute *attrib,
 				unsigned int id, uint16_t offset,
 				uint8_t opcode, struct bt_att *att,
@@ -395,7 +404,15 @@ static void pacs_sink_loc_read(struct gatt_db_attribute *attrib,
 				void *user_data)
 {
 	struct bt_pacs *pacs = user_data;
-	uint32_t value = cpu_to_le32(pacs->sink_loc_value);
+	struct bt_bap_db *bdb = pacs->bdb;
+	uint32_t value;
+
+	queue_foreach(bdb->sinks, get_pac_loc, &pacs->sink_loc_value);
+	if (pacs->sink_loc_value)
+		value = cpu_to_le32(pacs->sink_loc_value);
+	else
+		/* Set default value */
+		value = cpu_to_le32(PACS_SNK_LOCATION);
 
 	gatt_db_attribute_read_result(attrib, id, 0, (void *) &value,
 							sizeof(value));
@@ -428,7 +445,15 @@ static void pacs_source_loc_read(struct gatt_db_attribute *attrib,
 				void *user_data)
 {
 	struct bt_pacs *pacs = user_data;
-	uint32_t value = cpu_to_le32(pacs->source_loc_value);
+	struct bt_bap_db *bdb = pacs->bdb;
+	uint32_t value;
+
+	queue_foreach(bdb->sources, get_pac_loc, &pacs->source_loc_value);
+	if (pacs->source_loc_value)
+		value = cpu_to_le32(pacs->source_loc_value);
+	else
+		/* Set default value */
+		value = cpu_to_le32(PACS_SRC_LOCATION);
 
 	gatt_db_attribute_read_result(attrib, id, 0, (void *) &value,
 							sizeof(value));
@@ -474,9 +499,8 @@ static struct bt_pacs *pacs_new(struct gatt_db *db)
 
 	pacs = new0(struct bt_pacs, 1);
 
-	/* Set default values */
-	pacs->sink_loc_value = PACS_SNK_LOCATION;
-	pacs->source_loc_value = PACS_SRC_LOCATION;
+	pacs->sink_loc_value = 0;
+	pacs->source_loc_value = 0;
 	pacs->sink_context_value = PACS_SNK_CTXT;
 	pacs->source_context_value = PACS_SRC_CTXT;
 	pacs->supported_sink_context_value = PACS_SUPPORTED_SNK_CTXT;
@@ -2451,7 +2475,8 @@ static struct bt_bap_pac *bap_pac_new(struct bt_bap_db *bdb, const char *name,
 					struct bt_bap_codec *codec,
 					struct bt_bap_pac_qos *qos,
 					struct iovec *data,
-					struct iovec *metadata)
+					struct iovec *metadata,
+					uint32_t location)
 {
 	struct bt_bap_pac *pac;
 
@@ -2467,6 +2492,8 @@ static struct bt_bap_pac *bap_pac_new(struct bt_bap_db *bdb, const char *name,
 		pac->metadata = util_iov_dup(metadata, 1);
 	if (qos)
 		pac->qos = *qos;
+
+	pac->location = location;
 
 	return pac;
 }
@@ -2679,7 +2706,8 @@ struct bt_bap_pac *bt_bap_add_vendor_pac(struct gatt_db *db,
 					uint8_t id, uint16_t cid, uint16_t vid,
 					struct bt_bap_pac_qos *qos,
 					struct iovec *data,
-					struct iovec *metadata)
+					struct iovec *metadata,
+					uint32_t location)
 {
 	struct bt_bap_db *bdb;
 	struct bt_bap_pac *pac, *pac_broadcast_sink;
@@ -2699,7 +2727,8 @@ struct bt_bap_pac *bt_bap_add_vendor_pac(struct gatt_db *db,
 	codec.cid = cid;
 	codec.vid = vid;
 
-	pac = bap_pac_new(bdb, name, type, &codec, qos, data, metadata);
+	pac = bap_pac_new(bdb, name, type, &codec, qos, data, metadata,
+				location);
 
 	switch (type) {
 	case BT_BAP_SINK:
@@ -2716,7 +2745,7 @@ struct bt_bap_pac *bt_bap_add_vendor_pac(struct gatt_db *db,
 			 */
 			pac_broadcast_sink = bap_pac_new(bdb, name,
 					BT_BAP_BCAST_SINK, &codec, qos,
-					data, metadata);
+					data, metadata, 0);
 			bap_add_broadcast_sink(pac_broadcast_sink);
 		}
 		break;
@@ -2737,10 +2766,11 @@ struct bt_bap_pac *bt_bap_add_pac(struct gatt_db *db, const char *name,
 					uint8_t type, uint8_t id,
 					struct bt_bap_pac_qos *qos,
 					struct iovec *data,
-					struct iovec *metadata)
+					struct iovec *metadata,
+					uint32_t location)
 {
 	return bt_bap_add_vendor_pac(db, name, type, id, 0x0000, 0x0000, qos,
-							data, metadata);
+						data, metadata, location);
 }
 
 uint8_t bt_bap_pac_get_type(struct bt_bap_pac *pac)
@@ -3256,7 +3286,7 @@ static void bap_parse_pacs(struct bt_bap *bap, uint8_t type,
 		}
 
 		pac = bap_pac_new(bap->rdb, NULL, type, &p->codec, NULL, &data,
-								&metadata);
+							&metadata, 0);
 		if (!pac)
 			continue;
 
@@ -5481,7 +5511,7 @@ bool bt_bap_new_bcast_source(struct bt_bap *bap, const char *name)
 		return true;
 
 	pac_broadcast_source = bap_pac_new(bap->rdb, name, BT_BAP_BCAST_SOURCE,
-			NULL, NULL, NULL, NULL);
+			NULL, NULL, NULL, NULL, 0);
 	queue_push_tail(bap->rdb->broadcast_sources, pac_broadcast_source);
 
 	if (!pac_broadcast_source)

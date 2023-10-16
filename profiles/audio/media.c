@@ -1250,7 +1250,7 @@ static bool endpoint_init_pac(struct media_endpoint *endpoint, uint8_t type,
 
 	endpoint->pac = bt_bap_add_vendor_pac(db, name, type, endpoint->codec,
 				endpoint->cid, endpoint->vid, &endpoint->qos,
-				&data, metadata);
+				&data, metadata, endpoint->location);
 	if (!endpoint->pac) {
 		error("Unable to create PAC");
 		free(metadata);
