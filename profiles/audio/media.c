@@ -99,6 +99,7 @@ struct media_endpoint {
 	size_t			size;		/* Endpoint capabilities size */
 	uint8_t                 *metadata;      /* Endpoint property metadata */
 	size_t                  metadata_size;  /* Endpoint metadata size */
+	uint32_t		location;	/* Endpoint location */
 	guint			hs_watch;
 	guint			ag_watch;
 	guint			watch;
@@ -1445,6 +1446,7 @@ media_endpoint_create(struct media_adapter *adapter,
 						int size,
 						uint8_t *metadata,
 						int metadata_size,
+						uint32_t location,
 						int *err)
 {
 	struct media_endpoint *endpoint;
@@ -1460,6 +1462,7 @@ media_endpoint_create(struct media_adapter *adapter,
 	endpoint->cid = cid;
 	endpoint->vid = vid;
 	endpoint->delay_reporting = delay_reporting;
+	endpoint->location = location;
 
 	if (qos)
 		endpoint->qos = *qos;
@@ -1525,7 +1528,8 @@ static int parse_properties(DBusMessageIter *props, const char **uuid,
 				uint16_t *cid, uint16_t *vid,
 				struct bt_bap_pac_qos *qos,
 				uint8_t **capabilities, int *size,
-				uint8_t **metadata, int *metadata_size)
+				uint8_t **metadata, int *metadata_size,
+				uint32_t *location)
 {
 	gboolean has_uuid = FALSE;
 	gboolean has_codec = FALSE;
@@ -1609,6 +1613,10 @@ static int parse_properties(DBusMessageIter *props, const char **uuid,
 			if (var != DBUS_TYPE_UINT16)
 				return -EINVAL;
 			dbus_message_iter_get_basic(&value, &qos->ppd_max);
+		} else if (strcasecmp(key, "Location") == 0) {
+			if (var != DBUS_TYPE_UINT32)
+				return -EINVAL;
+			dbus_message_iter_get_basic(&value, location);
 		}
 
 		dbus_message_iter_next(props);
@@ -1633,6 +1641,7 @@ static DBusMessage *register_endpoint(DBusConnection *conn, DBusMessage *msg,
 	int size = 0;
 	int metadata_size = 0;
 	int err;
+	uint32_t location;
 
 	sender = dbus_message_get_sender(msg);
 
@@ -1650,12 +1659,12 @@ static DBusMessage *register_endpoint(DBusConnection *conn, DBusMessage *msg,
 
 	if (parse_properties(&props, &uuid, &delay_reporting, &codec, &cid,
 			&vid, &qos, &capabilities, &size, &metadata,
-			&metadata_size) < 0)
+			&metadata_size, &location) < 0)
 		return btd_error_invalid_args(msg);
 
 	if (media_endpoint_create(adapter, sender, path, uuid, delay_reporting,
 					codec, cid, vid, &qos, capabilities,
-					size, metadata, metadata_size,
+					size, metadata, metadata_size, location,
 					&err) == NULL) {
 		if (err == -EPROTONOSUPPORT)
 			return btd_error_not_supported(msg);
@@ -2688,6 +2697,7 @@ static void app_register_endpoint(void *data, void *user_data)
 	int size = 0;
 	uint8_t *metadata = NULL;
 	int metadata_size = 0;
+	uint32_t location;
 	DBusMessageIter iter, array;
 	struct media_endpoint *endpoint;
 
@@ -2748,6 +2758,13 @@ static void app_register_endpoint(void *data, void *user_data)
 						&metadata_size);
 	}
 
+	if (g_dbus_proxy_get_property(proxy, "Location", &iter))	{
+		if (dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_UINT32)
+			goto fail;
+
+		dbus_message_iter_get_basic(&iter, &location);
+	}
+
 	/* Parse QoS preferences */
 	memset(&qos, 0, sizeof(qos));
 	if (g_dbus_proxy_get_property(proxy, "Framing", &iter)) {
@@ -2804,7 +2821,7 @@ static void app_register_endpoint(void *data, void *user_data)
 						vendor.cid, vendor.vid, &qos,
 						capabilities, size,
 						metadata, metadata_size,
-						&app->err);
+						location, &app->err);
 	if (!endpoint) {
 		error("Unable to register endpoint %s:%s: %s", app->sender,
 						path, strerror(-app->err));
