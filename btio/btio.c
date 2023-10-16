@@ -247,7 +247,8 @@ static gboolean server_cb(GIOChannel *io, GIOCondition cond,
 	GIOChannel *cli_io;
 
 	/* If the user closed the server */
-	if ((cond & G_IO_NVAL) || check_nval(io))
+	if ((cond & (G_IO_NVAL | G_IO_ERR | G_IO_HUP)) ||
+			check_nval(io))
 		return FALSE;
 
 	srv_sock = g_io_channel_unix_get_fd(io);
