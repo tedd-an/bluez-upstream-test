@@ -32,6 +32,8 @@ struct bt_bass;
 #define BT_BASS_BIG_ENC_STATE_DEC			0x02
 #define BT_BASS_BIG_ENC_STATE_BAD_CODE			0x03
 
+#define DEFAULT_BIS_SYNC_BITMASK			0x00000001
+
 /* BASS subgroup field of the Broadcast
  * Receive State characteristic
  */

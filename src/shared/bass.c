@@ -614,6 +614,9 @@ static void connect_cb(GIOChannel *io, GError *gerr,
 	g_io_channel_ref(io);
 	queue_push_tail(bcast_src->bises, io);
 
+	if (!bcast_src->bises)
+		bcast_src->bises = queue_new();
+
 	for (i = 0; i < bcast_src->num_subgroups; i++) {
 		struct bt_bass_subgroup_data *data =
 				&bcast_src->subgroup_data[i];
@@ -649,29 +652,6 @@ static void connect_cb(GIOChannel *io, GError *gerr,
 		/* Close all connected bises */
 		queue_destroy(bcast_src->bises, bass_bis_unref);
 		bcast_src->bises = NULL;
-
-		/* Close listen io */
-		g_io_channel_shutdown(bcast_src->listen_io, TRUE, NULL);
-		g_io_channel_unref(bcast_src->listen_io);
-		bcast_src->listen_io = NULL;
-
-		if (bcast_src->listen_io_id > 0) {
-			g_source_remove(bcast_src->listen_io_id);
-			bcast_src->listen_io_id  = 0;
-		}
-
-		/* Close pa sync io */
-		if (bcast_src->pa_sync_io) {
-			g_io_channel_shutdown(bcast_src->pa_sync_io,
-					TRUE, NULL);
-			g_io_channel_unref(bcast_src->pa_sync_io);
-			bcast_src->pa_sync_io = NULL;
-		}
-
-		if (bcast_src->pa_sync_io_id > 0) {
-			g_source_remove(bcast_src->pa_sync_io_id);
-			bcast_src->pa_sync_io_id  = 0;
-		}
 
 		for (i = 0; i < bcast_src->num_subgroups; i++)
 			bcast_src->subgroup_data[i].bis_sync =
@@ -741,6 +721,17 @@ static void confirm_cb(GIOChannel *io, gpointer user_data)
 
 		/* Mark PA sync as failed and notify client */
 		bcast_src->sync_state = BT_BASS_FAILED_TO_SYNCHRONIZE_TO_PA;
+
+		/* Close listen io */
+		g_io_channel_shutdown(bcast_src->listen_io, TRUE, NULL);
+		g_io_channel_unref(bcast_src->listen_io);
+		bcast_src->listen_io = NULL;
+
+		if (bcast_src->listen_io_id > 0) {
+			g_source_remove(bcast_src->listen_io_id);
+			bcast_src->listen_io_id  = 0;
+		}
+
 		goto notify;
 	}
 
@@ -1037,7 +1028,7 @@ static void bass_handle_add_src_op(struct bt_bass *bass,
 					data->meta_len), data->meta_len);
 	}
 
-	if (pa_sync != PA_SYNC_NO_SYNC) {
+	if (*pa_sync != PA_SYNC_NO_SYNC) {
 		/* Convert to three-value type */
 		if (bcast_src->addr_type)
 			addr_type = BDADDR_LE_RANDOM;
@@ -1072,9 +1063,6 @@ static void bass_handle_add_src_op(struct bt_bass *bass,
 					G_IO_HUP | G_IO_NVAL,
 					(GIOFunc)listen_io_disconnect_cb,
 					bcast_src);
-
-		if (num_bis > 0 && !bcast_src->bises)
-			bcast_src->bises = queue_new();
 	} else {
 		for (int i = 0; i < bcast_src->num_subgroups; i++)
 			bcast_src->subgroup_data[i].bis_sync =
@@ -1179,9 +1167,252 @@ static void bass_handle_set_bcast_code_op(struct bt_bass *bass,
 	}
 
 	if (!bt_io_bcast_accept(bcast_src->pa_sync_io, connect_cb,
-		bcast_src, NULL, &gerr,  BT_IO_OPT_INVALID)) {
+		bcast_src, NULL, &gerr, BT_IO_OPT_INVALID)) {
 		DBG(bcast_src->bass, "bt_io_bcast_accept: %s", gerr->message);
 		g_error_free(gerr);
+	}
+}
+
+static bool bass_validate_mod_src_params(struct bt_bass_mod_src_params *params,
+							struct iovec *iov)
+{
+	struct iovec subgroup_data = {
+		.iov_base = iov->iov_base,
+		.iov_len = iov->iov_len,
+	};
+
+	if (params->pa_sync > PA_SYNC_NO_PAST)
+		return false;
+
+	if (!bass_validate_bis_sync(params->num_subgroups,
+					&subgroup_data))
+		return false;
+
+	return true;
+}
+
+static void bass_handle_mod_src_op(struct bt_bass *bass,
+					struct gatt_db_attribute *attrib,
+					uint8_t opcode,
+					unsigned int id,
+					struct iovec *iov,
+					struct bt_att *att)
+{
+	struct bt_bass_mod_src_params *params;
+	struct bt_bcast_src *bcast_src;
+	uint8_t num_bis = 0;
+	uint8_t bis[ISO_MAX_NUM_BIS];
+	uint8_t addr_type;
+	GIOChannel *io;
+	GError *err = NULL;
+	struct bt_iso_qos iso_qos = default_qos;
+	struct bt_bass_subgroup_data *subgroup_data = NULL;
+	uint8_t *notify_data;
+	size_t notify_data_len;
+	bool changed = false;
+
+	/* Get Modify Source command parameters */
+	params = util_iov_pull_mem(iov, sizeof(*params));
+
+	bcast_src = queue_find(bass->ldb->bcast_srcs,
+						bass_src_id_match,
+						&params->id);
+
+	if (!bcast_src) {
+		/* No source matches the written source id */
+		gatt_db_attribute_write_result(attrib, id,
+					BT_BASS_ERROR_INVALID_SOURCE_ID);
+
+		return;
+	}
+
+	gatt_db_attribute_write_result(attrib, id, 0x00);
+
+	/* Ignore operation if parameters are invalid */
+	if (!bass_validate_mod_src_params(params, iov))
+		return;
+
+	/* Only subgroup metadata can change */
+	if (params->num_subgroups != bcast_src->num_subgroups)
+		return;
+
+	/* Extract subgroup information */
+	subgroup_data = malloc(params->num_subgroups * sizeof(*subgroup_data));
+	if (!subgroup_data)
+		return;
+
+	memset(subgroup_data, 0, params->num_subgroups *
+		sizeof(*subgroup_data));
+
+	for (int i = 0; i < params->num_subgroups; i++) {
+		struct bt_bass_subgroup_data *data = &subgroup_data[i];
+		struct bt_bass_subgroup_data *old_data =
+				&bcast_src->subgroup_data[i];
+
+		util_iov_pull_le32(iov, &data->pending_bis_sync);
+
+		if (old_data->pending_bis_sync)
+			goto err;
+
+		if (old_data->bis_sync && data->pending_bis_sync &&
+			data->pending_bis_sync != old_data->bis_sync)
+			/* The Server cannot resync to different BIS indxes */
+			goto err;
+
+		if (data->pending_bis_sync == BIS_SYNC_NO_PREF)
+			data->pending_bis_sync = DEFAULT_BIS_SYNC_BITMASK;
+
+		if (data->pending_bis_sync != 0) {
+			/* Client instructs Server to sync to some BISes */
+			for (int bis_idx = 0; bis_idx < 31; bis_idx++) {
+				if (data->pending_bis_sync & (1 << bis_idx)) {
+					bis[num_bis] = bis_idx + 1;
+					num_bis++;
+				}
+			}
+		}
+
+		data->meta_len = *(uint8_t *)util_iov_pull_mem(iov,
+						sizeof(data->meta_len));
+		if (!data->meta_len)
+			continue;
+
+		data->meta = malloc(data->meta_len);
+		if (!data->meta)
+			goto err;
+
+		memcpy(data->meta, (uint8_t *)util_iov_pull_mem(iov,
+					data->meta_len), data->meta_len);
+
+		if (old_data->meta_len != data->meta_len ||
+			memcmp(old_data->meta, data->meta, old_data->meta_len))
+			changed = true;
+	}
+
+	if (bcast_src->sync_state == BT_BASS_NOT_SYNCHRONIZED_TO_PA &&
+		bcast_src->listen_io)
+		return;
+
+	/* If subgroup information has been extracted successfully,
+	 * update broadcast source
+	 */
+	if (bcast_src->subgroup_data) {
+		for (int i = 0; i < bcast_src->num_subgroups; i++)
+			free(bcast_src->subgroup_data[i].meta);
+
+		free(bcast_src->subgroup_data);
+	}
+
+	bcast_src->subgroup_data = subgroup_data;
+
+	/* Client instructs Server to sync to PA */
+	if (bcast_src->sync_state == BT_BASS_NOT_SYNCHRONIZED_TO_PA) {
+		if (params->pa_sync == PA_SYNC_NO_PAST) {
+			/* Convert to three-value type */
+			if (bcast_src->addr_type)
+				addr_type = BDADDR_LE_RANDOM;
+			else
+				addr_type = BDADDR_LE_PUBLIC;
+
+			/* Try to synchronize to the source */
+			io = bt_io_listen(NULL, confirm_cb, bcast_src,
+						NULL, &err,
+						BT_IO_OPT_SOURCE_BDADDR,
+						&bass->ldb->adapter_bdaddr,
+						BT_IO_OPT_DEST_BDADDR,
+						&bcast_src->addr,
+						BT_IO_OPT_DEST_TYPE,
+						addr_type,
+						BT_IO_OPT_MODE, BT_IO_MODE_ISO,
+						BT_IO_OPT_QOS, &iso_qos,
+						BT_IO_OPT_ISO_BC_SID,
+						bcast_src->sid,
+						BT_IO_OPT_ISO_BC_NUM_BIS,
+						num_bis,
+						BT_IO_OPT_ISO_BC_BIS, bis,
+						BT_IO_OPT_INVALID);
+
+			if (!io) {
+				DBG(bass, "%s", err->message);
+				g_error_free(err);
+				return;
+			}
+
+			bcast_src->listen_io = io;
+			g_io_channel_ref(bcast_src->listen_io);
+
+			if (bcast_src->listen_io_id > 0) {
+				g_source_remove(bcast_src->listen_io_id);
+				bcast_src->listen_io_id  = 0;
+			}
+
+			bcast_src->listen_io_id = g_io_add_watch(io, G_IO_ERR |
+					G_IO_HUP | G_IO_NVAL,
+					(GIOFunc)listen_io_disconnect_cb,
+					bcast_src);
+		}
+
+		if (changed)
+			goto notify;
+
+		return;
+	}
+
+	/* Client instructs Server to stop PA sync */
+	if (params->pa_sync == PA_SYNC_NO_SYNC) {
+		/* TODO */
+		return;
+	}
+
+	/* Server is already synchronized to PA, and Client now
+	 * instructs the Server to also sync to some BISes
+	 */
+	if (num_bis && !queue_length(bcast_src->bises)) {
+		/* Since the Server has never been synced to any BIS before,
+		 * the PA sync socket must be bound to the num_bis to sync with
+		 */
+		if (!bt_io_bcast_accept(bcast_src->pa_sync_io, connect_cb,
+					bcast_src, NULL, &err,
+					BT_IO_OPT_ISO_BC_NUM_BIS, num_bis,
+					BT_IO_OPT_ISO_BC_BIS, bis,
+					BT_IO_OPT_INVALID)) {
+			DBG(bcast_src->bass, "bt_io_bcast_accept: %s",
+				err->message);
+			g_error_free(err);
+		}
+
+		return;
+	}
+
+	/* Client instructs Server to keep PA sync but stop BIG sync */
+	if (!num_bis && queue_length(bcast_src->bises)) {
+		/* TODO */
+		return;
+	}
+
+	/* If no change has occurred, just return */
+	if (!changed)
+		return;
+
+notify:
+	notify_data = bass_build_notif_from_bcast_src(bcast_src,
+						&notify_data_len);
+
+	gatt_db_attribute_notify(bcast_src->attr,
+			(void *)notify_data,
+			notify_data_len,
+			bt_bass_get_att(bcast_src->bass));
+
+	free(notify_data);
+
+	return;
+
+err:
+	if (subgroup_data) {
+		for (int i = 0; i < params->num_subgroups; i++)
+			free(subgroup_data[i].meta);
+
+		free(subgroup_data);
 	}
 }
 
@@ -1214,6 +1445,8 @@ struct bass_op_handler {
 		0, bass_handle_add_src_op),
 	BASS_OP("Set Broadcast Code", BT_BASS_SET_BCAST_CODE,
 		0, bass_handle_set_bcast_code_op),
+	BASS_OP("Modify Source", BT_BASS_MOD_SRC,
+		0, bass_handle_mod_src_op),
 	{}
 };
 
