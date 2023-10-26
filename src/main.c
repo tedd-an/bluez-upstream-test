@@ -1137,6 +1137,13 @@ static void parse_advmon(GKeyFile *config)
 				0, UINT8_MAX);
 }
 
+static void parse_bcast(GKeyFile *config)
+{
+	parse_config_u8(config, "Bcast", "NumberOfBISes",
+				&btd_opts.bcast.nb_bises,
+				0, UINT8_MAX);
+}
+
 static void parse_config(GKeyFile *config)
 {
 	if (!config)
@@ -1154,6 +1161,7 @@ static void parse_config(GKeyFile *config)
 	parse_csis(config);
 	parse_avdtp(config);
 	parse_advmon(config);
+	parse_bcast(config);
 }
 
 static void init_defaults(void)
@@ -1195,6 +1203,8 @@ static void init_defaults(void)
 	btd_opts.avdtp.stream_mode = BT_IO_MODE_BASIC;
 
 	btd_opts.advmon.rssi_sampling_period = 0xFF;
+
+	btd_opts.bcast.nb_bises = 0x01;
 	btd_opts.csis.encrypt = true;
 }
 

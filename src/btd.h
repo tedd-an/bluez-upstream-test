@@ -108,6 +108,10 @@ struct btd_advmon_opts {
 	uint8_t		rssi_sampling_period;
 };
 
+struct btd_bcast_opts {
+	uint8_t		nb_bises;
+};
+
 struct btd_opts {
 	char		*name;
 	uint32_t	class;
@@ -151,6 +155,8 @@ struct btd_opts {
 	struct btd_advmon_opts	advmon;
 
 	struct btd_csis csis;
+
+	struct btd_bcast_opts bcast;
 };
 
 extern struct btd_opts btd_opts;
