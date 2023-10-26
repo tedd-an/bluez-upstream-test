@@ -247,7 +247,8 @@ static gboolean server_cb(GIOChannel *io, GIOCondition cond,
 	GIOChannel *cli_io;
 
 	/* If the user closed the server */
-	if ((cond & G_IO_NVAL) || check_nval(io))
+	if ((cond & (G_IO_NVAL | G_IO_ERR | G_IO_HUP)) ||
+			check_nval(io))
 		return FALSE;
 
 	srv_sock = g_io_channel_unix_get_fd(io);
@@ -1654,6 +1655,7 @@ static gboolean iso_get(int sock, GError **err, BtIOOption opt1, va_list args)
 		return FALSE;
 	}
 
+	len = BASE_MAX_LENGTH;
 	if (getsockopt(sock, SOL_BLUETOOTH, BT_ISO_BASE,
 			&base.base, &len) < 0) {
 		ERROR_FAILED(err, "getsockopt(BT_ISO_BASE)", errno);

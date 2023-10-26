@@ -37,6 +37,7 @@
 #include "src/uuid-helper.h"
 #include "src/log.h"
 #include "src/error.h"
+#include "src/btd.h"
 #include "src/gatt-database.h"
 #include "src/shared/util.h"
 #include "src/shared/queue.h"
@@ -1250,7 +1251,7 @@ static bool endpoint_init_pac(struct media_endpoint *endpoint, uint8_t type,
 
 	endpoint->pac = bt_bap_add_vendor_pac(db, name, type, endpoint->codec,
 				endpoint->cid, endpoint->vid, &endpoint->qos,
-				&data, metadata);
+				&data, metadata, btd_opts.bcast.nb_bises);
 	if (!endpoint->pac) {
 		error("Unable to create PAC");
 		free(metadata);
