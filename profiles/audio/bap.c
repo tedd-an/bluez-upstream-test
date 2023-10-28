@@ -725,23 +725,17 @@ fail:
 	return -EINVAL;
 }
 
-static void qos_cb(struct bt_bap_stream *stream, uint8_t code, uint8_t reason,
-					void *user_data)
+static void ep_reply_msg(struct bap_ep *ep, const char *error)
 {
-	struct bap_ep *ep = user_data;
 	DBusMessage *reply;
-
-	DBG("stream %p code 0x%02x reason 0x%02x", stream, code, reason);
-
-	ep->id = 0;
 
 	if (!ep->msg)
 		return;
 
-	if (!code)
+	if (!error)
 		reply = dbus_message_new_method_return(ep->msg);
 	else
-		reply = btd_error_failed(ep->msg, "Unable to configure");
+		reply = btd_error_failed(ep->msg, error);
 
 	g_dbus_send_message(btd_get_dbus_connection(), reply);
 
@@ -749,28 +743,30 @@ static void qos_cb(struct bt_bap_stream *stream, uint8_t code, uint8_t reason,
 	ep->msg = NULL;
 }
 
-static void config_cb(struct bt_bap_stream *stream,
-					uint8_t code, uint8_t reason,
+static void qos_cb(struct bt_bap_stream *stream, uint8_t code, uint8_t reason,
 					void *user_data)
 {
 	struct bap_ep *ep = user_data;
-	DBusMessage *reply;
 
 	DBG("stream %p code 0x%02x reason 0x%02x", stream, code, reason);
 
 	ep->id = 0;
 
-	if (!code)
-		return;
+	ep_reply_msg(ep, code ? "Unable to configure" : NULL);
+}
 
-	if (!ep->msg)
-		return;
+static void config_cb(struct bt_bap_stream *stream,
+					uint8_t code, uint8_t reason,
+					void *user_data)
+{
+	struct bap_ep *ep = user_data;
 
-	reply = btd_error_failed(ep->msg, "Unable to configure");
-	g_dbus_send_message(btd_get_dbus_connection(), reply);
+	DBG("stream %p code 0x%02x reason 0x%02x", stream, code, reason);
 
-	dbus_message_unref(ep->msg);
-	ep->msg = NULL;
+	ep->id = 0;
+
+	if (code)
+		ep_reply_msg(ep, "Unable to configure");
 }
 
 static void bap_io_close(struct bap_ep *ep)
@@ -1202,7 +1198,7 @@ static void bap_config(void *data, void *user_data)
 	bt_bap_stream_set_user_data(ep->stream, ep->path);
 }
 
-static void select_cb(struct bt_bap_pac *pac, int err, struct iovec *caps,
+static void select_codec_cb(struct bt_bap_pac *pac, int err, struct iovec *caps,
 				struct iovec *metadata, struct bt_bap_qos *qos,
 				void *user_data)
 {
@@ -1252,7 +1248,7 @@ static bool pac_found(struct bt_bap_pac *lpac, struct bt_bap_pac *rpac,
 
 	/* TODO: Cache LRU? */
 	if (btd_service_is_initiator(service)) {
-		if (!bt_bap_select(lpac, rpac, select_cb, ep))
+		if (!bt_bap_select_codec(lpac, rpac, select_codec_cb, ep))
 			ep->data->selecting++;
 	}
 
@@ -1877,6 +1873,36 @@ static void bap_create_io(struct bap_data *data, struct bap_ep *ep,
 	}
 }
 
+static void select_qos_cb(struct bt_bap_stream *stream, int err,
+					struct bt_bap_qos *qos, void *user_data)
+{
+	struct bap_ep *ep = user_data;
+
+	DBG("stream %p err %d qos %p", stream, err, qos);
+
+	if (err || ep->id)
+		goto fail;
+
+	if (qos)
+		ep->qos = *qos;
+
+	bap_create_io(ep->data, ep, stream, true);
+	if (!ep->io) {
+		error("Unable to create io");
+		goto fail;
+	}
+
+	ep->id = bt_bap_stream_qos(stream, &ep->qos, qos_cb, ep);
+	if (!ep->id)
+		goto fail;
+
+	return;
+
+fail:
+	error("Failed to Configure QoS");
+	ep_reply_msg(ep, "Unable to configure");
+}
+
 static void bap_state(struct bt_bap_stream *stream, uint8_t old_state,
 				uint8_t new_state, void *user_data)
 {
@@ -1902,25 +1928,27 @@ static void bap_state(struct bt_bap_stream *stream, uint8_t old_state,
 			queue_remove(data->streams, stream);
 		break;
 	case BT_BAP_STREAM_STATE_CONFIG:
-		if (ep && !ep->id) {
+		if (!ep || ep->id)
+			break;
+
+		switch (bt_bap_stream_get_type(stream)) {
+		case BT_BAP_STREAM_TYPE_UCAST:
+			if (bt_bap_stream_select_qos(stream,
+							select_qos_cb, ep)) {
+				error("Failed to Configure QoS");
+				bt_bap_stream_release(stream,
+						NULL, NULL);
+				return;
+			}
+			break;
+		case BT_BAP_STREAM_TYPE_BCAST:
 			bap_create_io(data, ep, stream, true);
 			if (!ep->io) {
 				error("Unable to create io");
 				bt_bap_stream_release(stream, NULL, NULL);
 				return;
 			}
-
-			if (bt_bap_stream_get_type(stream) ==
-					BT_BAP_STREAM_TYPE_UCAST) {
-				/* Wait QoS response to respond */
-				ep->id = bt_bap_stream_qos(stream, &ep->qos,
-								qos_cb,	ep);
-				if (!ep->id) {
-					error("Failed to Configure QoS");
-					bt_bap_stream_release(stream,
-								NULL, NULL);
-				}
-			}
+			break;
 		}
 		break;
 	case BT_BAP_STREAM_STATE_QOS:
