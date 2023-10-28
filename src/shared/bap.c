@@ -4617,17 +4617,34 @@ static bool match_pac(struct bt_bap_pac *lpac, struct bt_bap_pac *rpac,
 	return false;
 }
 
-int bt_bap_select(struct bt_bap_pac *lpac, struct bt_bap_pac *rpac,
-			bt_bap_pac_select_t func, void *user_data)
+int bt_bap_select_codec(struct bt_bap_pac *lpac, struct bt_bap_pac *rpac,
+			bt_bap_pac_select_codec_t func, void *user_data)
 {
 	if (!lpac || !rpac || !func)
 		return -EINVAL;
 
-	if (!lpac->ops || !lpac->ops->select)
+	if (!lpac->ops || !lpac->ops->select_codec)
 		return -EOPNOTSUPP;
 
-	lpac->ops->select(lpac, rpac, &rpac->qos,
-					func, user_data, lpac->user_data);
+	lpac->ops->select_codec(lpac, rpac, func, user_data, lpac->user_data);
+
+	return 0;
+}
+
+int bt_bap_stream_select_qos(struct bt_bap_stream *stream,
+				bt_bap_pac_select_qos_t func, void *user_data)
+{
+	struct bt_bap_pac *lpac = stream->lpac;
+	struct bt_bap_pac *rpac = stream->rpac;
+
+	if (!lpac || !rpac || !func)
+		return -EINVAL;
+
+	if (!lpac->ops || !lpac->ops->select_qos)
+		return -EOPNOTSUPP;
+
+	lpac->ops->select_qos(stream, &rpac->qos, func, user_data,
+							lpac->user_data);
 
 	return 0;
 }
@@ -5122,6 +5139,16 @@ uint32_t bt_bap_stream_get_location(struct bt_bap_stream *stream)
 		 * for brodcast source and sink
 		 */
 		return stream->bap->ldb->pacs->source_loc_value;
+}
+
+struct bt_bap_pac *bt_bap_stream_get_lpac(struct bt_bap_stream *stream)
+{
+	return stream->lpac;
+}
+
+struct bt_bap_pac *bt_bap_stream_get_rpac(struct bt_bap_stream *stream)
+{
+	return stream->rpac;
 }
 
 struct iovec *bt_bap_stream_get_config(struct bt_bap_stream *stream)
