@@ -14,13 +14,9 @@
 #include <stdbool.h>
 #include <unistd.h>
 #include <errno.h>
-#include <poll.h>
 
 #include "lib/bluetooth.h"
 #include "lib/uuid.h"
-#include "lib/iso.h"
-
-#include "btio/btio.h"
 
 #include "src/shared/queue.h"
 #include "src/shared/util.h"
@@ -28,8 +24,6 @@
 #include "src/shared/gatt-db.h"
 #include "src/shared/gatt-client.h"
 #include "src/shared/bass.h"
-
-#define MAX_BIS_BITMASK_IDX		31
 
 #define DBG(_bass, fmt, arg...) \
 	bass_debug(_bass, "%s:%s() " fmt, __FILE__, __func__, ## arg)
@@ -41,6 +35,13 @@ struct bt_bass_cb {
 	bt_bass_func_t attached;
 	bt_bass_func_t detached;
 	void *user_data;
+};
+
+struct bt_bass_io_cb {
+	unsigned int id;
+	bt_bass_listen_func_t listen;
+	bt_bass_accept_func_t accept;
+	bt_bass_io_destroy_func_t io_destroy;
 };
 
 struct bt_bcast_recv_state {
@@ -64,12 +65,15 @@ struct bt_bass {
 	struct bt_bass_db *rdb;
 	struct bt_gatt_client *client;
 	struct bt_att *att;
+	unsigned int disconn_id;
 
 	struct queue *notify;
 
 	bt_bass_debug_func_t debug_func;
 	bt_bass_destroy_func_t debug_destroy;
 	void *debug_data;
+
+	struct queue *io_cbs;
 
 	void *user_data;
 };
@@ -88,35 +92,6 @@ struct bt_bass_notify {
 static struct queue *bass_db;
 static struct queue *bass_cbs;
 static struct queue *sessions;
-
-#define DEFAULT_IO_QOS \
-{ \
-	.interval	= 10000, \
-	.latency	= 10, \
-	.sdu		= 40, \
-	.phy		= 0x02, \
-	.rtn		= 2, \
-}
-
-static struct bt_iso_qos default_qos = {
-	.bcast = {
-		.big			= BT_ISO_QOS_BIG_UNSET,
-		.bis			= BT_ISO_QOS_BIS_UNSET,
-		.sync_factor		= 0x07,
-		.packing		= 0x00,
-		.framing		= 0x00,
-		.in			= DEFAULT_IO_QOS,
-		.out			= DEFAULT_IO_QOS,
-		.encryption		= 0x00,
-		.bcode			= {0x00},
-		.options		= 0x00,
-		.skip			= 0x0000,
-		.sync_timeout		= 0x4000,
-		.sync_cte_type		= 0x00,
-		.mse			= 0x00,
-		.timeout		= 0x4000,
-	}
-};
 
 static void bass_bcast_src_free(void *data);
 
@@ -580,102 +555,11 @@ static bool bass_src_attr_match(const void *data, const void *match_data)
 	return (bcast_src->attr == attr);
 }
 
-static gboolean check_io_err(GIOChannel *io)
-{
-	struct pollfd fds;
-
-	memset(&fds, 0, sizeof(fds));
-	fds.fd = g_io_channel_unix_get_fd(io);
-	fds.events = POLLERR;
-
-	if (poll(&fds, 1, 0) > 0 && (fds.revents & POLLERR))
-		return TRUE;
-
-	return FALSE;
-}
-
-static void bass_bis_unref(void *data)
-{
-	GIOChannel *io = data;
-
-	g_io_channel_unref(io);
-}
-
-static void connect_cb(GIOChannel *io, GError *gerr,
-				gpointer user_data)
+static void connect_cb(void *user_data)
 {
 	struct bt_bcast_src *bcast_src = user_data;
 	uint8_t *notify_data;
 	size_t notify_data_len;
-	int bis_idx;
-	int i;
-
-	/* Keep io reference */
-	g_io_channel_ref(io);
-	queue_push_tail(bcast_src->bises, io);
-
-	for (i = 0; i < bcast_src->num_subgroups; i++) {
-		struct bt_bass_subgroup_data *data =
-				&bcast_src->subgroup_data[i];
-
-		for (bis_idx = 0; bis_idx < MAX_BIS_BITMASK_IDX; bis_idx++) {
-			if (data->pending_bis_sync & (1 << bis_idx)) {
-				data->bis_sync |= (1 << bis_idx);
-				data->pending_bis_sync &= ~(1 << bis_idx);
-				break;
-			}
-		}
-
-		if (bis_idx < MAX_BIS_BITMASK_IDX)
-			break;
-	}
-
-	for (i = 0; i < bcast_src->num_subgroups; i++) {
-		if (bcast_src->subgroup_data[i].pending_bis_sync)
-			break;
-	}
-
-	/* If there are still pending bises, wait for their
-	 * notifications also before sending notification to
-	 * client
-	 */
-	if (i != bcast_src->num_subgroups)
-		return;
-
-	/* All connections have been notified */
-	if (check_io_err(io)) {
-		DBG(bcast_src->bass, "BIG sync failed");
-
-		/* Close all connected bises */
-		queue_destroy(bcast_src->bises, bass_bis_unref);
-		bcast_src->bises = NULL;
-
-		/* Close listen io */
-		g_io_channel_shutdown(bcast_src->listen_io, TRUE, NULL);
-		g_io_channel_unref(bcast_src->listen_io);
-		bcast_src->listen_io = NULL;
-
-		/* Close pa sync io */
-		if (bcast_src->pa_sync_io) {
-			g_io_channel_shutdown(bcast_src->pa_sync_io,
-					TRUE, NULL);
-			g_io_channel_unref(bcast_src->pa_sync_io);
-			bcast_src->pa_sync_io = NULL;
-		}
-
-		for (i = 0; i < bcast_src->num_subgroups; i++)
-			bcast_src->subgroup_data[i].bis_sync =
-				BT_BASS_BIG_SYNC_FAILED_BITMASK;
-
-		/* If BIG sync failed because of an incorrect broadcast code,
-		 * inform client
-		 */
-		if (bcast_src->enc == BT_BASS_BIG_ENC_STATE_BCODE_REQ)
-			bcast_src->enc = BT_BASS_BIG_ENC_STATE_BAD_CODE;
-	} else {
-		if (bcast_src->enc == BT_BASS_BIG_ENC_STATE_BCODE_REQ)
-			bcast_src->enc = BT_BASS_BIG_ENC_STATE_DEC;
-	}
 
 	/* Send notification to client */
 	notify_data = bass_build_notif_from_bcast_src(bcast_src,
@@ -703,62 +587,25 @@ static bool bass_trigger_big_sync(struct bt_bcast_src *bcast_src)
 	return false;
 }
 
-
-static void confirm_cb(GIOChannel *io, gpointer user_data)
+static void confirm_cb(void *user_data)
 {
 	struct bt_bcast_src *bcast_src = user_data;
-	int sk, err;
-	socklen_t len;
-	struct bt_iso_qos qos;
 	uint8_t *notify_data;
 	size_t notify_data_len;
-	GError *gerr = NULL;
+	const struct queue_entry *entry;
 
-	if (check_io_err(io)) {
-		DBG(bcast_src->bass, "PA sync failed");
+	if (bcast_src->enc == BT_BASS_BIG_ENC_STATE_NO_ENC &&
+		bass_trigger_big_sync(bcast_src)) {
+		for (entry = queue_get_entries(bcast_src->bass->io_cbs);
+						entry; entry = entry->next) {
+			struct bt_bass_io_cb *cb = entry->data;
 
-		/* Mark PA sync as failed and notify client */
-		bcast_src->sync_state = BT_BASS_FAILED_TO_SYNCHRONIZE_TO_PA;
-		goto notify;
-	}
-
-	bcast_src->sync_state = BT_BASS_SYNCHRONIZED_TO_PA;
-	bcast_src->pa_sync_io = io;
-	g_io_channel_ref(bcast_src->pa_sync_io);
-
-	len = sizeof(qos);
-	memset(&qos, 0, len);
-
-	sk = g_io_channel_unix_get_fd(io);
-
-	err = getsockopt(sk, SOL_BLUETOOTH, BT_ISO_QOS, &qos, &len);
-	if (err < 0) {
-		DBG(bcast_src->bass, "Failed to get iso qos");
+			if (cb->accept && (cb->accept(bcast_src) < 0))
+				DBG(bcast_src->bass, "Unable to accept");
+		}
 		return;
 	}
 
-	if (!qos.bcast.encryption) {
-		/* BIG is not encrypted. Try to synchronize */
-		bcast_src->enc = BT_BASS_BIG_ENC_STATE_NO_ENC;
-
-		if (bass_trigger_big_sync(bcast_src)) {
-			if (!bt_io_bcast_accept(bcast_src->pa_sync_io,
-				connect_cb, bcast_src, NULL, &gerr,
-				BT_IO_OPT_INVALID)) {
-				DBG(bcast_src->bass, "bt_io_bcast_accept: %s",
-				gerr->message);
-				g_error_free(gerr);
-			}
-			return;
-		}
-
-		goto notify;
-	}
-
-	/* BIG is encrypted. Wait for Client to provide the Broadcast_Code */
-	bcast_src->enc = BT_BASS_BIG_ENC_STATE_BCODE_REQ;
-
-notify:
 	notify_data = bass_build_notif_from_bcast_src(bcast_src,
 						&notify_data_len);
 
@@ -856,14 +703,9 @@ static void bass_handle_add_src_op(struct bt_bass *bass,
 	uint8_t src_id = 0;
 	struct gatt_db_attribute *attr;
 	uint8_t *pa_sync;
-	GIOChannel *io;
-	GError *err = NULL;
-	struct bt_iso_qos iso_qos = default_qos;
-	uint8_t num_bis = 0;
-	uint8_t bis[ISO_MAX_NUM_BIS];
 	uint8_t *notify_data;
 	size_t notify_data_len;
-	uint8_t addr_type;
+	const struct queue_entry *entry;
 
 	gatt_db_attribute_write_result(attrib, id, 0x00);
 
@@ -881,7 +723,6 @@ static void bass_handle_add_src_op(struct bt_bass *bass,
 	queue_push_tail(bass->ldb->bcast_srcs, bcast_src);
 
 	memset(bcast_src, 0, sizeof(*bcast_src));
-	memset(bis, 0, ISO_MAX_NUM_BIS);
 
 	bcast_src->bass = bass;
 
@@ -968,18 +809,6 @@ static void bass_handle_add_src_op(struct bt_bass *bass,
 
 		util_iov_pull_le32(iov, &data->pending_bis_sync);
 
-		if (data->pending_bis_sync != BIS_SYNC_NO_PREF)
-			/* Iterate through the bis sync bitmask written
-			 * by the client and store the bis indexes that
-			 * the BASS server will try to synchronize to
-			 */
-			for (int bis_idx = 0; bis_idx < 31; bis_idx++) {
-				if (data->pending_bis_sync & (1 << bis_idx)) {
-					bis[num_bis] = bis_idx + 1;
-					num_bis++;
-				}
-			}
-
 		data->meta_len = *(uint8_t *)util_iov_pull_mem(iov,
 						sizeof(data->meta_len));
 		if (!data->meta_len)
@@ -993,39 +822,20 @@ static void bass_handle_add_src_op(struct bt_bass *bass,
 					data->meta_len), data->meta_len);
 	}
 
-	if (pa_sync != PA_SYNC_NO_SYNC) {
-		/* Convert to three-value type */
-		if (bcast_src->addr_type)
-			addr_type = BDADDR_LE_RANDOM;
-		else
-			addr_type = BDADDR_LE_PUBLIC;
+	bcast_src->confirm_cb = confirm_cb;
+	bcast_src->connect_cb = connect_cb;
 
-		/* If requested by client, try to synchronize to the source */
-		io = bt_io_listen(NULL, confirm_cb, bcast_src, NULL, &err,
-					BT_IO_OPT_SOURCE_BDADDR,
-					&bass->ldb->adapter_bdaddr,
-					BT_IO_OPT_DEST_BDADDR,
-					&bcast_src->addr,
-					BT_IO_OPT_DEST_TYPE,
-					addr_type,
-					BT_IO_OPT_MODE, BT_IO_MODE_ISO,
-					BT_IO_OPT_QOS, &iso_qos,
-					BT_IO_OPT_ISO_BC_SID, bcast_src->sid,
-					BT_IO_OPT_ISO_BC_NUM_BIS, num_bis,
-					BT_IO_OPT_ISO_BC_BIS, bis,
-					BT_IO_OPT_INVALID);
+	if (*pa_sync != PA_SYNC_NO_SYNC) {
+		for (entry = queue_get_entries(bass->io_cbs); entry;
+						entry = entry->next) {
+			struct bt_bass_io_cb *cb = entry->data;
 
-		if (!io) {
-			DBG(bass, "%s", err->message);
-			g_error_free(err);
-			goto err;
+			if (cb->listen && (cb->listen(bcast_src,
+				&bass->ldb->adapter_bdaddr) < 0)) {
+				DBG(bass, "Unable to listen for source");
+				goto err;
+			}
 		}
-
-		bcast_src->listen_io = io;
-		g_io_channel_ref(bcast_src->listen_io);
-
-		if (num_bis > 0 && !bcast_src->bises)
-			bcast_src->bises = queue_new();
 	} else {
 		for (int i = 0; i < bcast_src->num_subgroups; i++)
 			bcast_src->subgroup_data[i].bis_sync =
@@ -1064,12 +874,9 @@ static void bass_handle_set_bcast_code_op(struct bt_bass *bass,
 {
 	struct bt_bass_set_bcast_code_params *params;
 	struct bt_bcast_src *bcast_src;
-	int sk, err;
-	socklen_t len;
-	struct bt_iso_qos qos;
-	GError *gerr = NULL;
 	uint8_t *notify_data;
 	size_t notify_data_len;
+	const struct queue_entry *entry;
 
 	/* Get Set Broadcast Code command parameters */
 	params = util_iov_pull_mem(iov, sizeof(*params));
@@ -1085,6 +892,9 @@ static void bass_handle_set_bcast_code_op(struct bt_bass *bass,
 
 		return;
 	}
+
+	if (!bcast_src->bass)
+		return;
 
 	gatt_db_attribute_write_result(attrib, id, 0x00);
 
@@ -1103,36 +913,15 @@ static void bass_handle_set_bcast_code_op(struct bt_bass *bass,
 		return;
 	}
 
-	/* Try to sync to the source using the
-	 * received broadcast code
-	 */
-	len = sizeof(qos);
-	memset(&qos, 0, len);
+	/* Set Broadcast Code */
+	memcpy(bcast_src->bcode, params->bcast_code, BT_BASS_BCAST_CODE_SIZE);
 
-	if (!bcast_src->pa_sync_io)
-		return;
+	for (entry = queue_get_entries(bcast_src->bass->io_cbs); entry;
+							entry = entry->next) {
+		struct bt_bass_io_cb *cb = entry->data;
 
-	sk = g_io_channel_unix_get_fd(bcast_src->pa_sync_io);
-
-	err = getsockopt(sk, SOL_BLUETOOTH, BT_ISO_QOS, &qos, &len);
-	if (err < 0) {
-		DBG(bcast_src->bass, "Failed to get iso qos");
-		return;
-	}
-
-	/* Update socket QoS with Broadcast Code */
-	memcpy(qos.bcast.bcode, params->bcast_code, BT_BASS_BCAST_CODE_SIZE);
-
-	if (setsockopt(sk, SOL_BLUETOOTH, BT_ISO_QOS, &qos,
-				sizeof(qos)) < 0) {
-		DBG(bcast_src->bass, "Failed to set iso qos");
-		return;
-	}
-
-	if (!bt_io_bcast_accept(bcast_src->pa_sync_io, connect_cb,
-		bcast_src, NULL, &gerr,  BT_IO_OPT_INVALID)) {
-		DBG(bcast_src->bass, "bt_io_bcast_accept: %s", gerr->message);
-		g_error_free(gerr);
+		if (cb->accept && (cb->accept(bcast_src) < 0))
+			DBG(bass, "Unable to accept");
 	}
 }
 
@@ -1308,23 +1097,24 @@ static void bass_new(struct bt_bass_db *bdb)
 static void bass_bcast_src_free(void *data)
 {
 	struct bt_bcast_src *bcast_src = data;
+	const struct queue_entry *entry;
+
+	if (!bcast_src)
+		return;
 
 	for (int i = 0; i < bcast_src->num_subgroups; i++)
 		free(bcast_src->subgroup_data[i].meta);
 
 	free(bcast_src->subgroup_data);
 
-	if (bcast_src->listen_io) {
-		g_io_channel_shutdown(bcast_src->listen_io, TRUE, NULL);
-		g_io_channel_unref(bcast_src->listen_io);
-	}
+	if (bcast_src->bass)
+		for (entry = queue_get_entries(bcast_src->bass->io_cbs);
+						entry; entry = entry->next) {
+			struct bt_bass_io_cb *cb = entry->data;
 
-	if (bcast_src->pa_sync_io) {
-		g_io_channel_shutdown(bcast_src->pa_sync_io, TRUE, NULL);
-		g_io_channel_unref(bcast_src->pa_sync_io);
-	}
-
-	queue_destroy(bcast_src->bises, bass_bis_unref);
+			if (cb->io_destroy)
+				cb->io_destroy(bcast_src);
+		}
 
 	free(bcast_src);
 }
@@ -1334,6 +1124,9 @@ static void read_bcast_recv_state(bool success, uint8_t att_ecode,
 				void *user_data)
 {
 	struct bt_bcast_src *bcast_src = user_data;
+
+	if (!bcast_src || !bcast_src->bass)
+		return;
 
 	if (!success) {
 		DBG(bcast_src->bass, "Unable to read "
@@ -1522,6 +1315,30 @@ static void bass_attached(void *data, void *user_data)
 	cb->attached(bass, cb->user_data);
 }
 
+static void bass_disconnected(int err, void *user_data)
+{
+	struct bt_bass *bass = user_data;
+
+	bass->disconn_id = 0;
+
+	DBG(bass, "bass %p disconnected err %d", bass, err);
+
+	bt_bass_detach(bass);
+}
+
+static void bass_attach_att(struct bt_bass *bass, struct bt_att *att)
+{
+	if (bass->disconn_id) {
+		if (att == bt_bass_get_att(bass))
+			return;
+		bt_att_unregister_disconnect(att, bass->disconn_id);
+	}
+
+	bass->disconn_id = bt_att_register_disconnect(att,
+							bass_disconnected,
+							bass, NULL);
+}
+
 bool bt_bass_attach(struct bt_bass *bass, struct bt_gatt_client *client)
 {
 	bt_uuid_t uuid;
@@ -1533,8 +1350,10 @@ bool bt_bass_attach(struct bt_bass *bass, struct bt_gatt_client *client)
 
 	queue_foreach(bass_cbs, bass_attached, bass);
 
-	if (!client)
+	if (!client) {
+		bass_attach_att(bass, bass->att);
 		return true;
+	}
 
 	if (bass->client)
 		return false;
@@ -1542,6 +1361,8 @@ bool bt_bass_attach(struct bt_bass *bass, struct bt_gatt_client *client)
 	bass->client = bt_gatt_client_clone(client);
 	if (!bass->client)
 		return false;
+
+	bass_attach_att(bass, bt_gatt_client_get_att(client));
 
 	bt_uuid16_create(&uuid, BASS_UUID);
 	gatt_db_foreach_service(bass->rdb->db, &uuid, foreach_bass_service,
@@ -1572,8 +1393,16 @@ void bt_bass_detach(struct bt_bass *bass)
 	if (!queue_remove(sessions, bass))
 		return;
 
-	bt_gatt_client_unref(bass->client);
-	bass->client = NULL;
+	if (bass->client) {
+		bt_att_unregister_disconnect(
+				bt_gatt_client_get_att(bass->client),
+				bass->disconn_id);
+		bt_gatt_client_unref(bass->client);
+		bass->client = NULL;
+	} else {
+		bt_att_unregister_disconnect(bass->att, bass->disconn_id);
+		bass->att = NULL;
+	}
 
 	queue_foreach(bass_cbs, bass_detached, bass);
 }
@@ -1591,13 +1420,32 @@ static void bass_db_free(void *data)
 	free(bdb);
 }
 
+static void bass_io_cb_free(void *data)
+{
+	struct bt_bass_io_cb *cb = data;
+
+	free(cb);
+}
+
 static void bass_free(void *data)
 {
 	struct bt_bass *bass = data;
+	const struct queue_entry *entry;
 
 	bt_bass_detach(bass);
 	bass_db_free(bass->rdb);
+
+	if (bass->ldb)
+		for (entry = queue_get_entries(bass->ldb->bcast_srcs);
+						entry; entry = entry->next) {
+			struct bt_bcast_src *bcast_src = entry->data;
+
+			if (bcast_src && bcast_src->bass == bass)
+				bcast_src->bass = NULL;
+		}
+
 	queue_destroy(bass->notify, NULL);
+	queue_destroy(bass->io_cbs, bass_io_cb_free);
 
 	free(bass);
 }
@@ -1692,6 +1540,7 @@ struct bt_bass *bt_bass_new(struct gatt_db *ldb, struct gatt_db *rdb,
 	bass = new0(struct bt_bass, 1);
 	bass->ldb = db;
 	bass->notify = queue_new();
+	bass->io_cbs = queue_new();
 
 	if (!rdb)
 		goto done;
@@ -1781,4 +1630,52 @@ bool bt_bass_unregister(unsigned int id)
 void bt_bass_add_db(struct gatt_db *db, const bdaddr_t *adapter_bdaddr)
 {
 	bass_db_new(db, adapter_bdaddr);
+}
+
+unsigned int bt_bass_io_cb_register(struct bt_bass *bass,
+				bt_bass_listen_func_t listen,
+				bt_bass_accept_func_t accept,
+				bt_bass_io_destroy_func_t io_destroy)
+{
+	struct bt_bass_io_cb *cb;
+	static unsigned int id;
+
+	if (!bass)
+		return 0;
+
+	cb = new0(struct bt_bass_io_cb, 1);
+	cb->id = ++id ? id : ++id;
+	cb->listen = listen;
+	cb->accept = accept;
+	cb->io_destroy = io_destroy;
+
+	queue_push_tail(bass->io_cbs, cb);
+
+	return cb->id;
+}
+
+static bool match_cb_id(const void *data, const void *match_data)
+{
+	const struct bt_bass_io_cb *cb = data;
+	unsigned int id = PTR_TO_UINT(match_data);
+
+	return (cb->id == id);
+}
+
+bool bt_bass_io_cb_unregister(struct bt_bass *bass,
+				unsigned int id)
+{
+	struct bt_bass_io_cb *cb;
+
+	if (!bass)
+		return false;
+
+	cb = queue_remove_if(bass->io_cbs, match_cb_id,
+						UINT_TO_PTR(id));
+	if (!cb)
+		return false;
+
+	free(cb);
+
+	return true;
 }

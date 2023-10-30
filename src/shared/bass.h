@@ -8,6 +8,7 @@
  */
 
 struct bt_bass;
+struct bt_bass_io;
 
 #define NUM_BCAST_RECV_STATES				2
 #define BT_BASS_BCAST_CODE_SIZE				16
@@ -32,6 +33,9 @@ struct bt_bass;
 #define BT_BASS_BIG_ENC_STATE_DEC			0x02
 #define BT_BASS_BIG_ENC_STATE_BAD_CODE			0x03
 
+typedef void (*bt_bass_confirm_func_t)(void *user_data);
+typedef void (*bt_bass_connect_func_t)(void *user_data);
+
 /* BASS subgroup field of the Broadcast
  * Receive State characteristic
  */
@@ -53,12 +57,13 @@ struct bt_bcast_src {
 	uint32_t bid;
 	uint8_t sync_state;
 	uint8_t enc;
+	uint8_t bcode[BT_BASS_BCAST_CODE_SIZE];
 	uint8_t bad_code[BT_BASS_BCAST_CODE_SIZE];
 	uint8_t num_subgroups;
 	struct bt_bass_subgroup_data *subgroup_data;
-	GIOChannel *listen_io;
-	GIOChannel *pa_sync_io;
-	struct queue *bises;
+	struct bt_bass_io *io;
+	bt_bass_confirm_func_t confirm_cb;
+	bt_bass_connect_func_t connect_cb;
 };
 
 /* Broadcast Audio Scan Control Point
@@ -120,6 +125,11 @@ typedef void (*bt_bass_func_t)(struct bt_bass *bass, void *user_data);
 typedef void (*bt_bass_destroy_func_t)(void *user_data);
 typedef void (*bt_bass_debug_func_t)(const char *str, void *user_data);
 
+typedef int (*bt_bass_listen_func_t)(struct bt_bcast_src *bcast_src,
+				const bdaddr_t *src);
+typedef int (*bt_bass_accept_func_t)(struct bt_bcast_src *bcast_src);
+typedef void (*bt_bass_io_destroy_func_t)(struct bt_bcast_src *bcast_src);
+
 struct bt_att *bt_bass_get_att(struct bt_bass *bass);
 unsigned int bt_bass_register(bt_bass_func_t attached, bt_bass_func_t detached,
 							void *user_data);
@@ -134,3 +144,10 @@ bool bt_bass_attach(struct bt_bass *bass, struct bt_gatt_client *client);
 bool bt_bass_set_att(struct bt_bass *bass, struct bt_att *att);
 void bt_bass_detach(struct bt_bass *bass);
 void bt_bass_add_db(struct gatt_db *db, const bdaddr_t *adapter_bdaddr);
+
+unsigned int bt_bass_io_cb_register(struct bt_bass *bass,
+				bt_bass_listen_func_t listen,
+				bt_bass_accept_func_t accept,
+				bt_bass_io_destroy_func_t io_destroy);
+bool bt_bass_io_cb_unregister(struct bt_bass *bass,
+				unsigned int id);
