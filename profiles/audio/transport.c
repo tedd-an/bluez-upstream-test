@@ -163,7 +163,9 @@ find_transport_by_bap_stream(const struct bt_bap_stream *stream)
 		struct bap_transport *bap;
 
 		if (strcasecmp(uuid, PAC_SINK_UUID) &&
-				strcasecmp(uuid, PAC_SOURCE_UUID))
+				strcasecmp(uuid, PAC_SOURCE_UUID) &&
+				strcasecmp(uuid, BCAA_SERVICE_UUID) &&
+				strcasecmp(uuid, BAA_SERVICE_UUID))
 			continue;
 
 		bap = transport->data;
@@ -312,9 +314,11 @@ static void media_transport_remove_owner(struct media_transport *transport)
 		media_request_reply(owner->pending, EIO);
 
 	transport->owner = NULL;
-	if (bap->linked)
-		queue_foreach(bt_bap_stream_io_get_links(bap->stream),
-				linked_transport_remove_owner, owner);
+	if (bt_bap_stream_get_type(bap->stream) ==
+					BT_BAP_STREAM_TYPE_UCAST)
+		if (bap->linked)
+			queue_foreach(bt_bap_stream_io_get_links(bap->stream),
+					linked_transport_remove_owner, owner);
 
 	if (owner->watch)
 		g_dbus_remove_watch(btd_get_dbus_connection(), owner->watch);
@@ -496,9 +500,11 @@ static void media_transport_set_owner(struct media_transport *transport,
 	DBG("Transport %s Owner %s", transport->path, owner->name);
 	transport->owner = owner;
 
-	if (bap->linked)
-		queue_foreach(bt_bap_stream_io_get_links(bap->stream),
-				linked_transport_set_owner, owner);
+	if (bt_bap_stream_get_type(bap->stream) ==
+					BT_BAP_STREAM_TYPE_UCAST)
+		if (bap->linked)
+			queue_foreach(bt_bap_stream_io_get_links(bap->stream),
+					linked_transport_set_owner, owner);
 
 	owner->transport = transport;
 	owner->watch = g_dbus_add_disconnect_watch(btd_get_dbus_connection(),
@@ -641,6 +647,7 @@ static DBusMessage *release(DBusConnection *conn, DBusMessage *msg,
 	const char *sender;
 	struct media_request *req;
 	guint id;
+	const char *uuid;
 
 	sender = dbus_message_get_sender(msg);
 
@@ -669,9 +676,12 @@ static DBusMessage *release(DBusConnection *conn, DBusMessage *msg,
 	req = media_request_create(msg, id);
 	media_owner_add(owner, req);
 
-	if (bt_bap_stream_get_type(bap->stream) ==
-			BT_BAP_STREAM_TYPE_BCAST) {
-		bap_disable_complete(bap->stream, 0x00, 0x00, owner);
+	uuid = media_endpoint_get_uuid(transport->endpoint);
+	if (!strcasecmp(uuid, BCAA_SERVICE_UUID) ||
+				!strcasecmp(uuid, BAA_SERVICE_UUID)) {
+		if (bt_bap_stream_get_type(bap->stream) ==
+						BT_BAP_STREAM_TYPE_BCAST)
+			bap_disable_complete(bap->stream, 0x00, 0x00, owner);
 	}
 
 	return NULL;
@@ -686,7 +696,11 @@ static gboolean get_device(const GDBusPropertyTable *property,
 	if (transport->device)
 		path = device_get_path(transport->device);
 	else
-		path = adapter_get_path(transport->adapter);
+		/*
+		 *Use remote endpoint path as fake device path
+		 *for broadcast source transport
+		 */
+		path = transport->remote_endpoint;
 
 	dbus_message_iter_append_basic(iter, DBUS_TYPE_OBJECT_PATH, &path);
 
@@ -1272,7 +1286,9 @@ static bool match_link_transport(const void *data, const void *user_data)
 	if (!transport)
 		return false;
 
-	bap_update_links(transport);
+	if (bt_bap_stream_get_type((struct bt_bap_stream *)stream) ==
+						BT_BAP_STREAM_TYPE_UCAST)
+		bap_update_links(transport);
 
 	return true;
 }
@@ -1378,7 +1394,9 @@ static guint resume_bap(struct media_transport *transport,
 	if (bap->resume_id)
 		return 0;
 
-	bap_update_links(transport);
+	if (bt_bap_stream_get_type(bap->stream) ==
+					BT_BAP_STREAM_TYPE_UCAST)
+		bap_update_links(transport);
 
 	switch (bt_bap_stream_get_state(bap->stream)) {
 	case BT_BAP_STREAM_STATE_ENABLING:
@@ -1416,7 +1434,9 @@ static guint suspend_bap(struct media_transport *transport,
 	else
 		transport_set_state(transport, TRANSPORT_STATE_IDLE);
 
-	bap_update_links(transport);
+	if (bt_bap_stream_get_type(bap->stream) ==
+					BT_BAP_STREAM_TYPE_UCAST)
+		bap_update_links(transport);
 
 	return bt_bap_stream_disable(bap->stream, bap->linked, func, owner);
 }
@@ -1491,9 +1511,10 @@ static void bap_state_changed(struct bt_bap_stream *stream, uint8_t old_state,
 		/* If a request is pending wait it to complete */
 		if (owner && owner->pending)
 			return;
-		bap_update_links(transport);
-		if (!media_endpoint_is_broadcast(transport->endpoint))
+		if (!media_endpoint_is_broadcast(transport->endpoint)) {
+			bap_update_links(transport);
 			bap_update_qos(transport);
+		}
 		else if (bt_bap_stream_io_dir(stream) != BT_BAP_BCAST_SOURCE)
 			bap_update_bcast_qos(transport);
 		transport_update_playing(transport, FALSE);
@@ -1510,7 +1531,7 @@ static void bap_state_changed(struct bt_bap_stream *stream, uint8_t old_state,
 			bap_update_bcast_qos(transport);
 		break;
 	case BT_BAP_STREAM_STATE_RELEASING:
-		if (bt_bap_stream_io_dir(stream) == BT_BAP_BCAST_SINK)
+		if (!bt_bap_stream_io_dir(stream))
 			return;
 		break;
 	}
@@ -1555,7 +1576,9 @@ static void bap_connecting(struct bt_bap_stream *stream, bool state, int fd,
 	if (bap->stream != stream)
 		return;
 
-	bap_update_links(transport);
+	if (bt_bap_stream_get_type(bap->stream) ==
+					BT_BAP_STREAM_TYPE_UCAST)
+		bap_update_links(transport);
 }
 
 static void free_bap(void *data)
