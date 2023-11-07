@@ -2646,10 +2646,14 @@ static bool parse_transport(DBusMessageIter *value,
 static bool parse_duplicate_data(DBusMessageIter *value,
 					struct discovery_filter *filter)
 {
+	dbus_bool_t duplicate = false;
+
 	if (dbus_message_iter_get_arg_type(value) != DBUS_TYPE_BOOLEAN)
 		return false;
 
-	dbus_message_iter_get_basic(value, &filter->duplicate);
+	DBG("Reading 'duplicate' flag from discovery filter...\n");
+	dbus_message_iter_get_basic(value, &duplicate);
+	filter->duplicate = duplicate;
 
 	return true;
 }
@@ -2657,10 +2661,14 @@ static bool parse_duplicate_data(DBusMessageIter *value,
 static bool parse_discoverable(DBusMessageIter *value,
 					struct discovery_filter *filter)
 {
+	dbus_bool_t discoverable = false;
+
 	if (dbus_message_iter_get_arg_type(value) != DBUS_TYPE_BOOLEAN)
 		return false;
 
-	dbus_message_iter_get_basic(value, &filter->discoverable);
+	DBG("Reading 'discoverable' flag from discovery filter...\n");
+	dbus_message_iter_get_basic(value, &discoverable);
+	filter->discoverable = discoverable;
 
 	return true;
 }
