@@ -263,6 +263,8 @@ unsigned int bt_bap_stream_qos(struct bt_bap_stream *stream,
 					bt_bap_stream_func_t func,
 					void *user_data);
 
+int bt_bap_stream_bcast_configured(struct bt_bap_stream *stream);
+
 unsigned int bt_bap_stream_enable(struct bt_bap_stream *stream,
 					bool enable_links,
 					struct iovec *metadata,

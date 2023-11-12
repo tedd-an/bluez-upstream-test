@@ -1522,6 +1522,21 @@ static uint8_t stream_config(struct bt_bap_stream *stream, struct iovec *cc,
 	return 0;
 }
 
+int bt_bap_stream_bcast_configured(struct bt_bap_stream *stream)
+{
+	if (!stream)
+		return -EINVAL;
+	if (!stream->lpac->ops || !stream->lpac->ops->config)
+		return -EINVAL;
+	if (bt_bap_stream_get_type(stream) != BT_BAP_STREAM_TYPE_BCAST)
+		return -EINVAL;
+
+	stream->lpac->ops->config(stream, stream->cc, &stream->qos,
+			ep_config_cb, stream->lpac->user_data);
+
+	return 0;
+}
+
 static uint8_t ep_config(struct bt_bap_endpoint *ep, struct bt_bap *bap,
 				 struct bt_ascs_config *req,
 				 struct iovec *iov, struct iovec *rsp)
@@ -4747,10 +4762,6 @@ bool bt_bap_stream_set_user_data(struct bt_bap_stream *stream, void *user_data)
 		return false;
 
 	stream->user_data = user_data;
-
-	if (bt_bap_stream_get_type(stream) == BT_BAP_STREAM_TYPE_BCAST)
-		stream->lpac->ops->config(stream, stream->cc, &stream->qos,
-					ep_config_cb, stream->lpac->user_data);
 
 	return true;
 }
