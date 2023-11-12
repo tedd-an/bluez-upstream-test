@@ -854,6 +854,7 @@ static DBusMessage *set_configuration(DBusConnection *conn, DBusMessage *msg,
 	}
 
 	bt_bap_stream_set_user_data(ep->stream, ep->path);
+	bt_bap_stream_bcast_configured(ep->stream);
 
 	if (ep->metadata && ep->metadata->iov_len)
 		bt_bap_stream_metadata(ep->stream, ep->metadata, NULL, NULL);
@@ -959,6 +960,7 @@ static void iso_bcast_confirm_cb(GIOChannel *io, GError *err, void *user_data)
 	data->listen_io = io;
 
 	bt_bap_stream_set_user_data(ep->stream, ep->path);
+	bt_bap_stream_bcast_configured(ep->stream);
 
 	fd = g_io_channel_unix_get_fd(io);
 
@@ -1200,6 +1202,7 @@ static void bap_config(void *data, void *user_data)
 	}
 
 	bt_bap_stream_set_user_data(ep->stream, ep->path);
+	bt_bap_stream_bcast_configured(ep->stream);
 }
 
 static void select_cb(struct bt_bap_pac *pac, int err, struct iovec *caps,
