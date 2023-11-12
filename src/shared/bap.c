@@ -4600,6 +4600,24 @@ unsigned int bt_bap_stream_config(struct bt_bap_stream *stream,
 	return 0;
 }
 
+int bt_bap_stream_config_update(struct bt_bap_stream *stream,
+					struct bt_bap_qos *qos)
+{
+	if (!bap_stream_valid(stream))
+		return -EINVAL;
+
+	if (stream->ep->state != BT_BAP_STREAM_STATE_CONFIG)
+		return -EINVAL;
+
+	switch (bt_bap_stream_get_type(stream)) {
+	case BT_BAP_STREAM_TYPE_UCAST:
+		stream->qos = *qos;
+		return 0;
+	}
+
+	return -EINVAL;
+}
+
 static bool match_pac(struct bt_bap_pac *lpac, struct bt_bap_pac *rpac,
 							void *user_data)
 {

@@ -255,6 +255,9 @@ unsigned int bt_bap_stream_config(struct bt_bap_stream *stream,
 					bt_bap_stream_func_t func,
 					void *user_data);
 
+int bt_bap_stream_config_update(struct bt_bap_stream *stream,
+					struct bt_bap_qos *pqos);
+
 unsigned int bt_bap_stream_qos(struct bt_bap_stream *stream,
 					struct bt_bap_qos *qos,
 					bt_bap_stream_func_t func,
