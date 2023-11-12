@@ -99,6 +99,10 @@ struct bap_data {
 
 static struct queue *sessions;
 
+static int ep_bap_config(struct bap_ep *ep);
+static void bap_create_io(struct bap_data *data, struct bap_ep *ep,
+				struct bt_bap_stream *stream, int defer);
+
 static bool bap_data_set_user_data(struct bap_data *data, void *user_data)
 {
 	if (!data)
@@ -837,24 +841,10 @@ static DBusMessage *set_configuration(DBusConnection *conn, DBusMessage *msg,
 		return btd_error_invalid_args(msg);
 	}
 
-	/* TODO: Check if stream capabilities match add support for Latency
-	 * and PHY.
-	 */
-	if (!ep->stream)
-		ep->stream = bt_bap_stream_new(ep->data->bap, ep->lpac,
-						ep->rpac, &ep->qos, ep->caps);
-
-	ep->id = bt_bap_stream_config(ep->stream, &ep->qos, ep->caps,
-						config_cb, ep);
-	if (!ep->id) {
+	if (ep_bap_config(ep) < 0) {
 		DBG("Unable to config stream");
-		free(ep->caps);
-		ep->caps = NULL;
 		return btd_error_invalid_args(msg);
 	}
-
-	bt_bap_stream_set_user_data(ep->stream, ep->path);
-	bt_bap_stream_bcast_configured(ep->stream);
 
 	if (ep->metadata && ep->metadata->iov_len)
 		bt_bap_stream_metadata(ep->stream, ep->metadata, NULL, NULL);
@@ -1175,34 +1165,100 @@ static struct bap_ep *ep_register(struct btd_service *service,
 	return ep;
 }
 
-static void bap_config(void *data, void *user_data)
+static int ep_bap_qos(struct bap_ep *ep)
 {
-	struct bap_ep *ep = data;
+	struct bap_data *data = ep->data;
+	struct bt_bap_stream *stream = ep->stream;
+
+	if (ep->id)
+		return -EBUSY;
+	if (!stream || !ep->caps)
+		return -EINVAL;
+
+	bap_create_io(data, ep, stream, true);
+	if (!ep->io) {
+		error("Unable to create io");
+		goto fail;
+	}
+
+	switch (bt_bap_stream_get_type(stream)) {
+	case BT_BAP_STREAM_TYPE_UCAST:
+		/* Wait QoS response to respond */
+		ep->id = bt_bap_stream_qos(stream, &ep->qos, qos_cb, ep);
+		if (!ep->id) {
+			error("Failed to Configure QoS");
+			goto fail;
+		}
+		break;
+	}
+
+	return 0;
+
+fail:
+	bt_bap_stream_release(stream, NULL, NULL);
+	return -EIO;
+}
+
+static void ep_clear_config(struct bap_ep *ep)
+{
+	util_iov_free(ep->caps, 1);
+	ep->caps = NULL;
+	util_iov_free(ep->metadata, 1);
+	ep->metadata = NULL;
+	memset(&ep->qos, 0, sizeof(ep->qos));
+}
+
+static int ep_bap_config(struct bap_ep *ep)
+{
+	struct iovec *caps;
 
 	DBG("ep %p caps %p metadata %p", ep, ep->caps, ep->metadata);
 
 	if (!ep->caps)
-		return;
+		return -EINVAL;
+	if (ep->id)
+		return -EBUSY;
 
 	/* TODO: Check if stream capabilities match add support for Latency
 	 * and PHY.
 	 */
-	if (!ep->stream)
+	if (!ep->stream) {
 		ep->stream = bt_bap_stream_new(ep->data->bap, ep->lpac,
-						ep->rpac, &ep->qos, ep->caps);
-
-	ep->id = bt_bap_stream_config(ep->stream, &ep->qos, ep->caps,
-						config_cb, ep);
-	if (!ep->id) {
-		DBG("Unable to config stream");
-		util_iov_free(ep->caps, 1);
-		ep->caps = NULL;
-		util_iov_free(ep->metadata, 1);
-		ep->metadata = NULL;
+						ep->rpac, NULL, NULL);
+		if (!ep->stream)
+			goto fail;
 	}
 
 	bt_bap_stream_set_user_data(ep->stream, ep->path);
+
+	/* Skip to QoS if reconfiguration not needed */
+	caps = bt_bap_stream_get_config(ep->stream);
+	if (bt_bap_stream_get_type(ep->stream) == BT_BAP_STREAM_TYPE_UCAST &&
+	    bt_bap_stream_get_state(ep->stream) == BT_BAP_STREAM_STATE_CONFIG &&
+	    util_iov_memcmp(caps, ep->caps) == 0) {
+		DBG("ep %p stream %p no reconfig needed", ep, ep->stream);
+		bt_bap_stream_config_update(ep->stream, &ep->qos);
+		return ep_bap_qos(ep);
+	}
+
+	ep->id = bt_bap_stream_config(ep->stream, &ep->qos, ep->caps,
+						config_cb, ep);
+	if (!ep->id)
+		goto fail;
+
 	bt_bap_stream_bcast_configured(ep->stream);
+
+	return 0;
+
+fail:
+	DBG("Unable to config stream");
+	ep_clear_config(ep);
+	return -EIO;
+}
+
+static void bap_config(void *data, void *user_data)
+{
+	ep_bap_config(data);
 }
 
 static void select_cb(struct bt_bap_pac *pac, int err, struct iovec *caps,
@@ -1512,9 +1568,6 @@ static bool is_cig_busy(struct bap_data *data, uint8_t cig)
 
 	return queue_find(sessions, cig_busy_session, &info);
 }
-
-static void bap_create_io(struct bap_data *data, struct bap_ep *ep,
-				struct bt_bap_stream *stream, int defer);
 
 static gboolean bap_io_recreate(void *user_data)
 {
@@ -1905,26 +1958,8 @@ static void bap_state(struct bt_bap_stream *stream, uint8_t old_state,
 			queue_remove(data->streams, stream);
 		break;
 	case BT_BAP_STREAM_STATE_CONFIG:
-		if (ep && !ep->id) {
-			bap_create_io(data, ep, stream, true);
-			if (!ep->io) {
-				error("Unable to create io");
-				bt_bap_stream_release(stream, NULL, NULL);
-				return;
-			}
-
-			if (bt_bap_stream_get_type(stream) ==
-					BT_BAP_STREAM_TYPE_UCAST) {
-				/* Wait QoS response to respond */
-				ep->id = bt_bap_stream_qos(stream, &ep->qos,
-								qos_cb,	ep);
-				if (!ep->id) {
-					error("Failed to Configure QoS");
-					bt_bap_stream_release(stream,
-								NULL, NULL);
-				}
-			}
-		}
+		if (ep)
+			ep_bap_qos(ep);
 		break;
 	case BT_BAP_STREAM_STATE_QOS:
 		if (bt_bap_stream_get_type(stream) ==
