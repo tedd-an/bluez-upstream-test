@@ -1324,6 +1324,70 @@ struct bt_ad_pattern *bt_ad_pattern_new(uint8_t type, size_t offset, size_t len,
 	return pattern;
 }
 
+static void pattern_manufacturer_data_match(void *data, void *user_data) {
+	struct bt_ad_manufacturer_data *manufacturer_data = data;
+	struct pattern_match_info *info = user_data;
+	struct bt_ad_pattern *pattern;
+	uint8_t all_data[BT_AD_MAX_DATA_LEN];
+
+	if (!manufacturer_data || !info)
+		return;
+
+	if (info->matched_pattern)
+		return;
+
+	pattern = info->current_pattern;
+
+	if (!pattern || pattern->type != BT_AD_MANUFACTURER_DATA)
+		return;
+
+	/* Take the manufacturer ID into account */
+	if (manufacturer_data->len + 2 < pattern->offset + pattern->len)
+		return;
+
+	memcpy(&all_data[0], &manufacturer_data->manufacturer_id, 2);
+	memcpy(&all_data[2], manufacturer_data->data, manufacturer_data->len);
+
+	if (!memcmp(all_data + pattern->offset, pattern->data,
+							pattern->len)) {
+		info->matched_pattern = pattern;
+	}
+}
+
+static void pattern_service_data_match(void *data, void *user_data) {
+  struct bt_ad_service_data *service_data = data;
+  struct pattern_match_info *info = user_data;
+  struct bt_ad_pattern *pattern;
+
+  if (!service_data || !info)
+    return;
+
+  if (info->matched_pattern)
+    return;
+
+  pattern = info->current_pattern;
+
+  if (!pattern)
+    return;
+
+  switch (pattern->type) {
+  case BT_AD_SERVICE_DATA16:
+  case BT_AD_SERVICE_DATA32:
+  case BT_AD_SERVICE_DATA128:
+    break;
+  default:
+    return;
+  }
+
+  if (service_data->len < pattern->offset + pattern->len)
+    return;
+
+  if (!memcmp(service_data->data + pattern->offset, pattern->data,
+              pattern->len)) {
+    info->matched_pattern = pattern;
+  }
+}
+
 static void pattern_ad_data_match(void *data, void *user_data)
 {
 	struct bt_ad_data *ad_data = data;
@@ -1363,7 +1427,19 @@ static void pattern_match(void *data, void *user_data)
 
 	info->current_pattern = pattern;
 
-	bt_ad_foreach_data(info->ad, pattern_ad_data_match, info);
+	switch (pattern->type) {
+	case BT_AD_MANUFACTURER_DATA:
+		queue_foreach(info->ad->manufacturer_data, pattern_manufacturer_data_match, info);
+		break;
+	case BT_AD_SERVICE_DATA16:
+	case BT_AD_SERVICE_DATA32:
+	case BT_AD_SERVICE_DATA128:
+		queue_foreach(info->ad->service_data, pattern_service_data_match, info);
+		break;
+	default:
+		bt_ad_foreach_data(info->ad, pattern_ad_data_match, info);
+		break;
+	}
 }
 
 struct bt_ad_pattern *bt_ad_pattern_match(struct bt_ad *ad,
