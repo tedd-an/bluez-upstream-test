@@ -1780,12 +1780,6 @@ bool bt_hog_attach(struct bt_hog *hog, void *gatt)
 
 	queue_foreach(hog->bas, (void *) bt_bas_attach, gatt);
 
-	for (l = hog->instances; l; l = l->next) {
-		struct bt_hog *instance = l->data;
-
-		bt_hog_attach(instance, gatt);
-	}
-
 	if (!hog->uhid_created) {
 		DBG("HoG discovering characteristics");
 		if (hog->attr)
@@ -1796,6 +1790,12 @@ bool bt_hog_attach(struct bt_hog *hog, void *gatt)
 					hog->primary->range.start,
 					hog->primary->range.end, NULL,
 					char_discovered_cb, hog);
+	}
+
+	for (l = hog->instances; l; l = l->next) {
+		struct bt_hog *instance = l->data;
+
+		bt_hog_attach(instance, gatt);
 	}
 
 	if (!hog->uhid_created)
