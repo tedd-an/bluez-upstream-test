@@ -54,6 +54,7 @@ static uint16_t mgmt_index = MGMT_INDEX_NONE;
 
 static bool discovery = false;
 static bool resolve_names = true;
+static const char *dummy_input = "N";
 
 static struct {
 	uint16_t index;
@@ -849,10 +850,28 @@ static void prompt_input(const char *input, void *user_data)
 								&prompt.addr);
 		break;
 	case MGMT_EV_USER_CONFIRM_REQUEST:
-		if (input[0] == 'y' || input[0] == 'Y')
-			mgmt_confirm_reply(prompt.index, &prompt.addr);
+		if(len)
+		{
+			if (input[0] == 'y' || input[0] == 'Y')
+				mgmt_confirm_reply(prompt.index, &prompt.addr);
+			else
+				mgmt_confirm_neg_reply(prompt.index, &prompt.addr);
+		}
 		else
+		{
+			/* After pair command, if the user doesn't provide any input on
+			 * bluetoothctl CLI interface after receiving the prompt(yes/no),
+			 * than subsequent CLI command will trigger a call to DBUS
+			 * library function (dbus_message_get_no_reply) with a NULL
+			 * message pointer which triggers assertion in DBUS library
+			 * causing the bluetoothctl process to crash. The change below
+			 * will ensure in case if no input is given by the user, a
+			 * conditional check is added to handle this scenario and a
+			 * default character ('N') will be passed so as to avoid the
+			 * assertion.*/
+			input = dummy_input;
 			mgmt_confirm_neg_reply(prompt.index, &prompt.addr);
+		}
 		break;
 	}
 }
