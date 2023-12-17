@@ -4347,7 +4347,17 @@ static void load_link_keys(struct btd_adapter *adapter, GSList *keys,
 		struct link_key_info *info = l->data;
 
 		bacpy(&key->addr.bdaddr, &info->bdaddr);
-		key->addr.type = info->bdaddr_type;
+
+		/*
+		 * According to the Bluetooth specification, the address
+		 * type of the link key is not fixed. However, the
+		 * load_link_keys function in the old kernel code requires
+		 * that the address type must be BREDR. Since the address
+		 * type is not actually used by the link key, to maintain
+		 * compatibility with older kernel versions, the addr.type
+		 * of the link key is set to BDADDR_BREDR.
+		 */
+		key->addr.type = BDADDR_BREDR;
 		key->type = info->type;
 		memcpy(key->val, info->key, 16);
 		key->pin_len = info->pin_len;
