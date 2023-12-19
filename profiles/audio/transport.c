@@ -643,7 +643,6 @@ static DBusMessage *release(DBusConnection *conn, DBusMessage *msg,
 {
 	struct media_transport *transport = data;
 	struct media_owner *owner = transport->owner;
-	struct bap_transport *bap = transport->data;
 	const char *sender;
 	struct media_request *req;
 	guint id;
@@ -675,9 +674,17 @@ static DBusMessage *release(DBusConnection *conn, DBusMessage *msg,
 	req = media_request_create(msg, id);
 	media_owner_add(owner, req);
 
-	if (bt_bap_stream_get_type(bap->stream) ==
-			BT_BAP_STREAM_TYPE_BCAST) {
-		bap_disable_complete(bap->stream, 0x00, 0x00, owner);
+	if (!strcmp(media_endpoint_get_uuid(transport->endpoint),
+					BAA_SERVICE_UUID)
+		|| !strcmp(media_endpoint_get_uuid(transport->endpoint),
+						BCAA_SERVICE_UUID)) {
+
+		struct bap_transport *bap = transport->data;
+
+		if (bt_bap_stream_get_type(bap->stream) ==
+				BT_BAP_STREAM_TYPE_BCAST) {
+			bap_disable_complete(bap->stream, 0x00, 0x00, owner);
+		}
 	}
 
 	return NULL;
