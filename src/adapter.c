@@ -168,6 +168,9 @@ static GSList *adapter_drivers = NULL;
 static GSList *disconnect_list = NULL;
 static GSList *conn_fail_list = NULL;
 
+static GSList *link_keys = NULL;
+static bool link_keys_brder = false;
+
 struct link_key_info {
 	bdaddr_t bdaddr;
 	uint8_t bdaddr_type;
@@ -4284,23 +4287,45 @@ static int set_privacy(struct btd_adapter *adapter, uint8_t privacy)
 	return -1;
 }
 
+static void load_link_keys(struct btd_adapter *adapter, GSList *keys,
+			   bool debug_keys, bool link_key_bredr);
+
 static void load_link_keys_complete(uint8_t status, uint16_t length,
 					const void *param, void *user_data)
 {
 	struct btd_adapter *adapter = user_data;
 
 	if (status != MGMT_STATUS_SUCCESS) {
+		/*
+		 * According to the Bluetooth specification, the address
+		 * type of the link key is not fixed. However, the
+		 * load_link_keys function in the old kernel code requires
+		 * that the address type must be BDADDR_BREDR, so attempt it.
+		 */
+		if (link_keys_brder == false && status == 0x0d) {
+			link_keys_brder = true;
+			load_link_keys(adapter, link_keys, btd_opts.debug_keys,
+				       link_keys_brder);
+			return;
+		}
+
 		btd_error(adapter->dev_id,
 			"Failed to load link keys for hci%u: %s (0x%02x)",
 				adapter->dev_id, mgmt_errstr(status), status);
-		return;
+
+		goto free;
 	}
 
 	DBG("link keys loaded for hci%u", adapter->dev_id);
+
+free:
+	g_slist_free_full(link_keys, g_free);
+	link_keys = NULL;
+	link_keys_brder = false;
 }
 
 static void load_link_keys(struct btd_adapter *adapter, GSList *keys,
-							bool debug_keys)
+			   bool debug_keys, bool link_key_bredr)
 {
 	struct mgmt_cp_load_link_keys *cp;
 	struct mgmt_link_key_info *key;
@@ -4320,8 +4345,8 @@ static void load_link_keys(struct btd_adapter *adapter, GSList *keys,
 
 	key_count = g_slist_length(keys);
 
-	DBG("hci%u keys %zu debug_keys %d", adapter->dev_id, key_count,
-								debug_keys);
+	DBG("hci%u keys %zu debug_keys %d (%s)", adapter->dev_id, key_count,
+			debug_keys, link_key_bredr ? "force bredr" : "normal");
 
 	cp_size = sizeof(*cp) + (key_count * sizeof(*key));
 
@@ -4347,7 +4372,10 @@ static void load_link_keys(struct btd_adapter *adapter, GSList *keys,
 		struct link_key_info *info = l->data;
 
 		bacpy(&key->addr.bdaddr, &info->bdaddr);
-		key->addr.type = info->bdaddr_type;
+		if (link_key_bredr)
+			key->addr.type = BDADDR_BREDR;
+		else
+			key->addr.type = info->bdaddr_type;
 		key->type = info->type;
 		memcpy(key->val, info->key, 16);
 		key->pin_len = info->pin_len;
@@ -4873,7 +4901,6 @@ done:
 static void load_devices(struct btd_adapter *adapter)
 {
 	char dirname[PATH_MAX];
-	GSList *keys = NULL;
 	GSList *ltks = NULL;
 	GSList *irks = NULL;
 	GSList *params = NULL;
@@ -4964,7 +4991,7 @@ static void load_devices(struct btd_adapter *adapter)
 		}
 
 		if (key_info)
-			keys = g_slist_append(keys, key_info);
+			link_keys = g_slist_append(link_keys, key_info);
 
 		if (ltk_info)
 			ltks = g_slist_append(ltks, ltk_info);
@@ -5013,8 +5040,8 @@ free:
 
 	closedir(dir);
 
-	load_link_keys(adapter, keys, btd_opts.debug_keys);
-	g_slist_free_full(keys, g_free);
+	load_link_keys(adapter, link_keys, btd_opts.debug_keys,
+			link_keys_brder);
 
 	load_ltks(adapter, ltks);
 	g_slist_free_full(ltks, g_free);
