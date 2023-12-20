@@ -1966,6 +1966,11 @@ static void append_bcast_qos(DBusMessageIter *iter, struct endpoint_config *cfg)
 	g_dbus_dict_append_entry(iter, "Framing", DBUS_TYPE_BYTE,
 						&bcast_qos.bcast.framing);
 
+	bt_shell_printf("Encryption 0x%02x\n", bcast_qos.bcast.encryption);
+
+	g_dbus_dict_append_entry(iter, "Encryption", DBUS_TYPE_BYTE,
+						&bcast_qos.bcast.encryption);
+
 	bt_shell_printf("SyncFactor %u\n", bcast_qos.bcast.sync_factor);
 
 	g_dbus_dict_append_entry(iter, "SyncFactor", DBUS_TYPE_BYTE,
@@ -3110,6 +3115,34 @@ static void endpoint_config(const char *input, void *user_data)
 	endpoint_set_config(cfg);
 }
 
+static void set_broadcast_code(const char *input, void *user_data)
+{
+	struct endpoint_config *cfg = user_data;
+	char *endptr;
+
+	/* If input is no, set the encryption flag to 0.*/
+	if (!strcasecmp(input, "n") || !strcasecmp(input, "no"))
+		bcast_qos.bcast.encryption = 0;
+	else
+		bcast_qos.bcast.encryption = 1;
+
+	/* If input is auto, do nothing, default value will be used */
+	if (!(!strcasecmp(input, "a") || !strcasecmp(input, "auto"))) {
+		bcast_qos.bcast.bcode[0] = strtol(input, &endptr, 16);
+
+		for (uint8_t i = 1; i < 16; i++)
+			bcast_qos.bcast.bcode[i] = strtol(endptr, &endptr, 16);
+	}
+	bt_shell_printf("%ld\n", sizeof(bcast_qos.bcast.bcode));
+	iov_append(&cfg->ep->bcode, bcast_qos.bcast.bcode,
+		sizeof(bcast_qos.bcast.bcode));
+	/* Copy capabilities for broadcast*/
+	iov_append(&cfg->caps, base_lc3_16_2_1,
+		sizeof(base_lc3_16_2_1));
+
+	endpoint_set_config(cfg);
+}
+
 static struct endpoint *endpoint_new(const struct capabilities *cap);
 
 static void cmd_config_endpoint(int argc, char *argv[])
@@ -3119,7 +3152,7 @@ static void cmd_config_endpoint(int argc, char *argv[])
 	const struct capabilities *cap;
 	char *uuid;
 	uint8_t codec_id;
-	bool broadcast = false;
+	bool local_ep_not_provided = false;
 
 	cfg = new0(struct endpoint_config, 1);
 
@@ -3142,7 +3175,7 @@ static void cmd_config_endpoint(int argc, char *argv[])
 		codec_id = strtol(argv[3], NULL, 0);
 		cap = find_capabilities(uuid, codec_id);
 		if (cap) {
-			broadcast = true;
+			local_ep_not_provided = true;
 			cfg->ep = endpoint_new(cap);
 			cfg->ep->preset = find_presets_name(uuid, argv[3]);
 			if (!cfg->ep->preset)
@@ -3154,9 +3187,10 @@ static void cmd_config_endpoint(int argc, char *argv[])
 		}
 	}
 
-	if (((broadcast == false) && (argc > 3)) ||
-		((broadcast == true) && (argc > 4))) {
-		char *preset_name = (broadcast == false)?argv[3]:argv[4];
+	if (((local_ep_not_provided == false) && (argc > 3)) ||
+		((local_ep_not_provided == true) && (argc > 4))) {
+		char *preset_name = (local_ep_not_provided == false)
+							? argv[3]:argv[4];
 
 		preset = preset_find_name(cfg->ep->preset, preset_name);
 		if (!preset) {
@@ -3164,23 +3198,32 @@ static void cmd_config_endpoint(int argc, char *argv[])
 			goto fail;
 		}
 
+		/* Set QoS parameters */
+		cfg->qos = &preset->qos;
+
 		if (cfg->ep->broadcast) {
-			iov_append(&cfg->ep->bcode, bcast_qos.bcast.bcode,
-				sizeof(bcast_qos.bcast.bcode));
-			/* Copy capabilities for broadcast*/
-			iov_append(&cfg->caps, base_lc3_16_2_1,
-				sizeof(base_lc3_16_2_1));
+			/* If the endpoint is configured to be a broadcast
+			 * sink or source allow the user to set a custom
+			 * broadcast code or use the default one. Selecting
+			 * 'no' will result in the broadcast not using any
+			 * encryption.
+			 */
+			if (!strcmp(cfg->ep->uuid, BAA_SERVICE_UUID) ||
+				!strcmp(cfg->ep->uuid, BCAA_SERVICE_UUID)) {
+				bt_shell_prompt_input(cfg->ep->path,
+						"Enter the broadcast code (value/auto/no):",
+						set_broadcast_code, cfg);
+				return;
+			}
+
 		} else {
 			/* Copy capabilities */
 			iov_append(&cfg->caps, preset->data.iov_base,
 							preset->data.iov_len);
+
+			endpoint_set_config(cfg);
+			return;
 		}
-
-		/* Set QoS parameters */
-		cfg->qos = &preset->qos;
-
-		endpoint_set_config(cfg);
-		return;
 	}
 
 	bt_shell_prompt_input(cfg->ep->path, "Enter configuration:",
