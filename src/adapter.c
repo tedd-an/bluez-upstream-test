@@ -7066,6 +7066,24 @@ static void adapter_msd_notify(struct btd_adapter *adapter,
 	}
 }
 
+#define APPLE_INC_VENDOR_ID 0x004c
+
+static bool eir_msd_is_apple_inc(GSList *msd_list)
+{
+	GSList *msd_l, *msd_next;
+
+	for (msd_l = msd_list; msd_l != NULL; msd_l = msd_next) {
+		const struct eir_msd *msd = msd_l->data;
+
+		msd_next = g_slist_next(msd_l);
+
+		if (msd->company == APPLE_INC_VENDOR_ID)
+			return true;
+	}
+
+	return false;
+}
+
 static bool is_filter_match(GSList *discovery_filter, struct eir_data *eir_data,
 								int8_t rssi)
 {
@@ -7279,6 +7297,13 @@ void btd_adapter_device_found(struct btd_adapter *adapter,
 		device_set_bredr_support(dev);
 		/* Update last seen for BR/EDR in case its flag is set */
 		device_update_last_seen(dev, BDADDR_BREDR, !not_connectable);
+	}
+
+	if (eir_msd_is_apple_inc(eir_data.msd_list) &&
+					(not_connectable == true) &&
+					(bdaddr_type == BDADDR_LE_PUBLIC)) {
+		device_set_bredr_support(dev);
+		device_update_last_seen(dev, BDADDR_BREDR, true);
 	}
 
 	if (eir_data.name != NULL && eir_data.name_complete)
