@@ -286,6 +286,7 @@ struct in_buf {
 	gboolean active;
 	int no_of_packets;
 	uint8_t transaction;
+	uint8_t async_transaction;
 	uint8_t message_type;
 	uint8_t signal_id;
 	uint8_t buf[1024];
@@ -1462,15 +1463,16 @@ static void setconf_cb(struct avdtp *session, struct avdtp_stream *stream,
 	if (err != NULL) {
 		rej.error = AVDTP_UNSUPPORTED_CONFIGURATION;
 		rej.category = err->err.error_code;
-		avdtp_send(session, session->in.transaction,
-				AVDTP_MSG_TYPE_REJECT, AVDTP_SET_CONFIGURATION,
-				&rej, sizeof(rej));
+		avdtp_send(session, session->in.async_transaction,
+			   AVDTP_MSG_TYPE_REJECT, AVDTP_SET_CONFIGURATION,
+			   &rej, sizeof(rej));
 		stream_free(stream);
 		return;
 	}
 
-	if (!avdtp_send(session, session->in.transaction, AVDTP_MSG_TYPE_ACCEPT,
-					AVDTP_SET_CONFIGURATION, NULL, 0)) {
+	if (!avdtp_send(session, session->in.async_transaction,
+			AVDTP_MSG_TYPE_ACCEPT,
+			AVDTP_SET_CONFIGURATION, NULL, 0)) {
 		stream_free(stream);
 		return;
 	}
@@ -1569,6 +1571,13 @@ static gboolean avdtp_setconf_cmd(struct avdtp *session, uint8_t transaction,
 		session->version = 0x0103;
 
 	if (sep->ind && sep->ind->set_configuration) {
+		/* The setconfig configuration stage is asynchronous;
+		 * high CPU load or other factors can delay dbus message
+		 * responses, potentially altering the transaction value.
+		 * It's essential to record the received transaction value
+		 * for use in the final accept command.
+		 */
+		session->in.async_transaction = transaction;
 		if (!sep->ind->set_configuration(session, sep, stream,
 							stream->caps,
 							setconf_cb,
