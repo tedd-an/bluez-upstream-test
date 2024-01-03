@@ -419,11 +419,11 @@ static int send_request(struct avdtp *session, gboolean priority,
 			void *buffer, size_t size);
 static gboolean avdtp_parse_resp(struct avdtp *session,
 					struct avdtp_stream *stream,
-					uint8_t transaction, uint8_t signal_id,
+					uint8_t signal_id,
 					void *buf, int size);
 static gboolean avdtp_parse_rej(struct avdtp *session,
 					struct avdtp_stream *stream,
-					uint8_t transaction, uint8_t signal_id,
+					uint8_t signal_id,
 					void *buf, int size);
 static int process_queue(struct avdtp *session);
 static void avdtp_sep_set_state(struct avdtp *session,
@@ -2293,7 +2293,6 @@ static gboolean session_cb(GIOChannel *chan, GIOCondition cond,
 	switch (header->message_type) {
 	case AVDTP_MSG_TYPE_ACCEPT:
 		if (!avdtp_parse_resp(session, session->req->stream,
-						session->in.transaction,
 						session->in.signal_id,
 						session->in.buf,
 						session->in.data_size)) {
@@ -2303,7 +2302,6 @@ static gboolean session_cb(GIOChannel *chan, GIOCondition cond,
 		break;
 	case AVDTP_MSG_TYPE_REJECT:
 		if (!avdtp_parse_rej(session, session->req->stream,
-						session->in.transaction,
 						session->in.signal_id,
 						session->in.buf,
 						session->in.data_size)) {
@@ -2941,7 +2939,7 @@ static gboolean avdtp_delay_report_resp(struct avdtp *session,
 
 static gboolean avdtp_parse_resp(struct avdtp *session,
 					struct avdtp_stream *stream,
-					uint8_t transaction, uint8_t signal_id,
+					uint8_t signal_id,
 					void *buf, int size)
 {
 	struct pending_req *next;
@@ -3055,7 +3053,7 @@ static gboolean stream_rej_to_err(struct stream_rej *rej, unsigned int size,
 
 static gboolean avdtp_parse_rej(struct avdtp *session,
 					struct avdtp_stream *stream,
-					uint8_t transaction, uint8_t signal_id,
+					uint8_t signal_id,
 					void *buf, int size)
 {
 	struct avdtp_error err;
