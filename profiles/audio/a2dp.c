@@ -586,6 +586,12 @@ done:
 	return FALSE;
 }
 
+static void reverse_discover(struct avdtp *session, GSList *seps, int err,
+			     void *user_data)
+{
+	DBG("err %d", err);
+}
+
 static void endpoint_setconf_cb(struct a2dp_setup *setup, gboolean ret)
 {
 	if (ret == FALSE) {
@@ -595,6 +601,13 @@ static void endpoint_setconf_cb(struct a2dp_setup *setup, gboolean ret)
 	}
 
 	auto_config(setup);
+
+	/* Attempt to reverse discover if there are no remote
+	 * SEPs.
+	 */
+	if (queue_isempty(setup->chan->seps))
+		a2dp_discover(setup->session, reverse_discover, NULL);
+
 	setup_unref(setup);
 }
 
@@ -632,12 +645,6 @@ static gboolean endpoint_match_codec_ind(struct avdtp *session,
 	DBG("vendor 0x%08x codec 0x%04x", A2DP_GET_VENDOR_ID(*remote_codec),
 					A2DP_GET_CODEC_ID(*remote_codec));
 	return TRUE;
-}
-
-static void reverse_discover(struct avdtp *session, GSList *seps, int err,
-							void *user_data)
-{
-	DBG("err %d", err);
 }
 
 static gboolean endpoint_setconf_ind(struct avdtp *session,
@@ -695,14 +702,8 @@ static gboolean endpoint_setconf_ind(struct avdtp *session,
 						setup_ref(setup),
 						endpoint_setconf_cb,
 						a2dp_sep->user_data);
-		if (ret == 0) {
-			/* Attempt to reverse discover if there are no remote
-			 * SEPs.
-			 */
-			if (queue_isempty(setup->chan->seps))
-				a2dp_discover(session, reverse_discover, NULL);
+		if (ret == 0)
 			return TRUE;
-		}
 
 		setup_unref(setup);
 		setup->err = g_new(struct avdtp_error, 1);
