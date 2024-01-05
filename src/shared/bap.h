@@ -79,7 +79,7 @@ struct bt_bap_bcast_qos {
 	uint8_t  packing;
 	uint8_t  framing;
 	uint8_t  encryption;
-	struct iovec *bcode;
+	uint8_t  bcode[16];
 	uint8_t  options;
 	uint16_t skip;
 	uint16_t sync_timeout;
@@ -87,6 +87,7 @@ struct bt_bap_bcast_qos {
 	uint8_t  mse;
 	uint16_t timeout;
 	uint8_t  pa_sync;
+	uint32_t delay;			/* Presentation Delay */
 	struct bt_bap_io_qos io_qos;
 };
 
@@ -95,6 +96,27 @@ struct bt_bap_qos {
 		struct bt_bap_ucast_qos ucast;
 		struct bt_bap_bcast_qos bcast;
 	};
+};
+
+struct bt_bap_base {
+	uint32_t pres_delay;
+	uint8_t num_subgroups;
+	struct queue *subgroups;
+};
+
+struct bt_bap_base_subgroup {
+	uint8_t subgroup_index;
+	struct bt_bap *bap;
+	uint8_t num_bises;
+	struct bt_bap_codec codec;
+	struct iovec *caps;
+	struct iovec *meta;
+	struct queue *bises;
+};
+
+struct bt_bap_bis {
+	uint8_t bisIndex;
+	struct iovec *caps;
 };
 
 typedef void (*bt_bap_ready_func_t)(struct bt_bap *bap, void *user_data);
@@ -168,6 +190,8 @@ uint8_t bt_bap_pac_get_type(struct bt_bap_pac *pac);
 
 uint32_t bt_bap_pac_get_locations(struct bt_bap_pac *pac);
 
+struct iovec *bt_bap_pac_get_data(struct bt_bap_pac *pac);
+
 uint16_t bt_bap_pac_get_supported_context(struct bt_bap_pac *pac);
 
 uint16_t bt_bap_pac_get_context(struct bt_bap_pac *pac);
@@ -175,6 +199,8 @@ uint16_t bt_bap_pac_get_context(struct bt_bap_pac *pac);
 struct bt_bap_pac_qos *bt_bap_pac_get_qos(struct bt_bap_pac *pac);
 
 uint8_t bt_bap_stream_get_type(struct bt_bap_stream *stream);
+
+struct bt_bap_pac *bt_bap_add_vendor_pac_from_pac(struct bt_bap_pac *pac);
 
 struct bt_bap_stream *bt_bap_pac_get_stream(struct bt_bap_pac *pac);
 
@@ -231,6 +257,7 @@ int bt_bap_pac_get_codec(struct bt_bap_pac *pac, uint8_t *id,
 
 void bt_bap_pac_set_user_data(struct bt_bap_pac *pac, void *user_data);
 void *bt_bap_pac_get_user_data(struct bt_bap_pac *pac);
+char *bt_bap_pac_get_name(struct bt_bap_pac *pac);
 
 /* Stream related functions */
 int bt_bap_select(struct bt_bap_pac *lpac, struct bt_bap_pac *rpac,
@@ -294,6 +321,7 @@ uint32_t bt_bap_stream_get_location(struct bt_bap_stream *stream);
 struct iovec *bt_bap_stream_get_config(struct bt_bap_stream *stream);
 struct bt_bap_qos *bt_bap_stream_get_qos(struct bt_bap_stream *stream);
 struct iovec *bt_bap_stream_get_metadata(struct bt_bap_stream *stream);
+struct bt_bap_pac *bt_bap_stream_get_local_pac(struct bt_bap_stream *stream);
 
 struct io *bt_bap_stream_get_io(struct bt_bap_stream *stream);
 bool bt_bap_match_bcast_sink_stream(const void *data, const void *user_data);
@@ -315,9 +343,9 @@ bool bt_bap_stream_io_is_connecting(struct bt_bap_stream *stream, int *fd);
 
 bool bt_bap_new_bcast_source(struct bt_bap *bap, const char *name);
 void bt_bap_update_bcast_source(struct bt_bap_pac *pac,
-					struct bt_bap_codec *codec,
-					struct iovec *data,
-					struct iovec *metadata);
+				struct bt_bap_base *base);
+void *bt_bap_ltv_merge(struct iovec *data, struct iovec *cont,
+						bool add_delimiter);
 
 bool bt_bap_pac_bcast_is_local(struct bt_bap *bap, struct bt_bap_pac *pac);
 
