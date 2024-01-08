@@ -2882,6 +2882,7 @@ static void config_endpoint_channel_location(const char *input, void *user_data)
 	char *endptr = NULL;
 	int value;
 	uint32_t location;
+	uint8_t channels = 1;
 
 	value = strtol(input, &endptr, 0);
 
@@ -2898,6 +2899,13 @@ static void config_endpoint_channel_location(const char *input, void *user_data)
 		memcpy(&ltv[2], &location, sizeof(location));
 		iov_append(&cfg->caps, ltv, sizeof(ltv));
 	}
+
+	/* Adjust the SDU size based on the number of
+	 * locations/channels that is being requested.
+	 */
+	channels = __builtin_popcount(location);
+	if (channels > 1)
+		cfg->qos.sdu *= channels;
 
 	/* Add metadata */
 	bt_shell_prompt_input(cfg->ep->path, "Enter Metadata (value/no):",
