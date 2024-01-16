@@ -29,7 +29,6 @@
 static GSList *plugins = NULL;
 
 struct bluetooth_plugin {
-	void *handle;
 	gboolean active;
 	struct bluetooth_plugin_desc *desc;
 };
@@ -42,33 +41,30 @@ static int compare_priority(gconstpointer a, gconstpointer b)
 	return plugin2->desc->priority - plugin1->desc->priority;
 }
 
-static gboolean add_plugin(void *handle, struct bluetooth_plugin_desc *desc)
+static void add_plugin(struct bluetooth_plugin_desc *desc)
 {
 	struct bluetooth_plugin *plugin;
 
 	if (desc->init == NULL)
-		return FALSE;
+		return;
 
 	if (g_str_equal(desc->version, VERSION) == FALSE) {
 		error("Version mismatch for %s", desc->name);
-		return FALSE;
+		return;
 	}
 
 	DBG("Loading %s plugin", desc->name);
 
 	plugin = g_try_new0(struct bluetooth_plugin, 1);
 	if (plugin == NULL)
-		return FALSE;
+		return;
 
-	plugin->handle = handle;
 	plugin->active = FALSE;
 	plugin->desc = desc;
 
 	__btd_enable_debug(desc->debug_start, desc->debug_stop);
 
 	plugins = g_slist_insert_sorted(plugins, plugin, compare_priority);
-
-	return TRUE;
 }
 
 static gboolean enable_plugin(const char *name, char **cli_enable,
@@ -99,11 +95,9 @@ static gboolean enable_plugin(const char *name, char **cli_enable,
 
 #include "src/builtin.h"
 
-gboolean plugin_init(const char *enable, const char *disable)
+void plugin_init(const char *enable, const char *disable)
 {
 	GSList *list;
-	GDir *dir;
-	const char *file;
 	char **cli_disabled, **cli_enabled;
 	unsigned int i;
 
@@ -128,58 +122,9 @@ gboolean plugin_init(const char *enable, const char *disable)
 								cli_disabled))
 			continue;
 
-		add_plugin(NULL,  __bluetooth_builtin[i]);
+		add_plugin(__bluetooth_builtin[i]);
 	}
 
-	if (strlen(PLUGINDIR) == 0)
-		goto start;
-
-	DBG("Loading plugins %s", PLUGINDIR);
-
-	dir = g_dir_open(PLUGINDIR, 0, NULL);
-	if (!dir)
-		goto start;
-
-	while ((file = g_dir_read_name(dir)) != NULL) {
-		struct bluetooth_plugin_desc *desc;
-		void *handle;
-		char *filename;
-
-		if (g_str_has_prefix(file, "lib") == TRUE ||
-				g_str_has_suffix(file, ".so") == FALSE)
-			continue;
-
-		filename = g_build_filename(PLUGINDIR, file, NULL);
-
-		handle = dlopen(filename, RTLD_NOW);
-		if (handle == NULL) {
-			error("Can't load plugin %s: %s", filename,
-								dlerror());
-			g_free(filename);
-			continue;
-		}
-
-		g_free(filename);
-
-		desc = dlsym(handle, "bluetooth_plugin_desc");
-		if (desc == NULL) {
-			error("Can't load plugin description: %s", dlerror());
-			dlclose(handle);
-			continue;
-		}
-
-		if (!enable_plugin(desc->name, cli_enabled, cli_disabled)) {
-			dlclose(handle);
-			continue;
-		}
-
-		if (add_plugin(handle, desc) == FALSE)
-			dlclose(handle);
-	}
-
-	g_dir_close(dir);
-
-start:
 	for (list = plugins; list; list = list->next) {
 		struct bluetooth_plugin *plugin = list->data;
 		int err;
@@ -200,8 +145,6 @@ start:
 
 	g_strfreev(cli_enabled);
 	g_strfreev(cli_disabled);
-
-	return TRUE;
 }
 
 void plugin_cleanup(void)
@@ -215,9 +158,6 @@ void plugin_cleanup(void)
 
 		if (plugin->active == TRUE && plugin->desc->exit)
 			plugin->desc->exit();
-
-		if (plugin->handle != NULL)
-			dlclose(plugin->handle);
 
 		g_free(plugin);
 	}

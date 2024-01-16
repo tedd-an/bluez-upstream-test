@@ -51,12 +51,6 @@ EXTRA_DIST += src/bluetooth.service.in src/org.bluez.service
 
 plugindir = $(libdir)/bluetooth/plugins
 
-if MAINTAINER_MODE
-build_plugindir = $(abs_top_srcdir)/plugins/.libs
-else
-build_plugindir = $(plugindir)
-endif
-
 if MANPAGES
 man_MANS =
 endif
@@ -337,9 +331,7 @@ src_bluetoothd_DEPENDENCIES = lib/libbluetooth-internal.la \
 				src/libshared-glib.la \
 				src/bluetooth.service
 
-src_bluetoothd_CPPFLAGS = $(AM_CPPFLAGS) -DBLUETOOTH_PLUGIN_BUILTIN \
-					-DPLUGINDIR=\""$(build_plugindir)"\" \
-					$(BACKTRACE_CFLAGS) $(builtin_cppflags)
+src_bluetoothd_CPPFLAGS = $(AM_CPPFLAGS) $(BACKTRACE_CFLAGS) $(builtin_cppflags)
 src_bluetoothd_SHORTNAME = bluetoothd
 
 builtin_files = src/builtin.h $(builtin_nodist)
