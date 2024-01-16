@@ -37,33 +37,29 @@
 static GSList *plugins = NULL;
 
 struct obex_plugin {
-	void *handle;
 	struct obex_plugin_desc *desc;
 };
 
-static gboolean add_plugin(void *handle, struct obex_plugin_desc *desc)
+static void add_plugin(struct obex_plugin_desc *desc)
 {
 	struct obex_plugin *plugin;
 
 	if (desc->init == NULL)
-		return FALSE;
+		return;
 
 	plugin = g_try_new0(struct obex_plugin, 1);
 	if (plugin == NULL)
-		return FALSE;
+		return;
 
-	plugin->handle = handle;
 	plugin->desc = desc;
 
 	if (desc->init() < 0) {
 		g_free(plugin);
-		return FALSE;
+		return;
 	}
 
 	plugins = g_slist_append(plugins, plugin);
 	DBG("Plugin %s loaded", desc->name);
-
-	return TRUE;
 }
 
 static gboolean check_plugin(struct obex_plugin_desc *desc,
@@ -95,16 +91,11 @@ static gboolean check_plugin(struct obex_plugin_desc *desc,
 
 #include "builtin.h"
 
-gboolean plugin_init(const char *pattern, const char *exclude)
+void plugin_init(const char *pattern, const char *exclude)
 {
 	char **patterns = NULL;
 	char **excludes = NULL;
-	GDir *dir;
-	const char *file;
 	unsigned int i;
-
-	if (strlen(PLUGINDIR) == 0)
-		return FALSE;
 
 	if (pattern)
 		patterns = g_strsplit_set(pattern, ":, ", -1);
@@ -119,60 +110,11 @@ gboolean plugin_init(const char *pattern, const char *exclude)
 					patterns, excludes) == FALSE)
 			continue;
 
-		add_plugin(NULL,  __obex_builtin[i]);
+		add_plugin(__obex_builtin[i]);
 	}
 
-	DBG("Loading plugins %s", PLUGINDIR);
-
-	dir = g_dir_open(PLUGINDIR, 0, NULL);
-	if (!dir) {
-		g_strfreev(patterns);
-		g_strfreev(excludes);
-		return FALSE;
-	}
-
-	while ((file = g_dir_read_name(dir)) != NULL) {
-		struct obex_plugin_desc *desc;
-		void *handle;
-		char *filename;
-
-		if (g_str_has_prefix(file, "lib") == TRUE ||
-				g_str_has_suffix(file, ".so") == FALSE)
-			continue;
-
-		filename = g_build_filename(PLUGINDIR, file, NULL);
-
-		handle = dlopen(filename, PLUGINFLAG);
-		if (handle == NULL) {
-			error("Can't load plugin %s: %s", filename,
-								dlerror());
-			g_free(filename);
-			continue;
-		}
-
-		g_free(filename);
-
-		desc = dlsym(handle, "obex_plugin_desc");
-		if (desc == NULL) {
-			error("Can't load plugin description: %s", dlerror());
-			dlclose(handle);
-			continue;
-		}
-
-		if (check_plugin(desc, patterns, excludes) == FALSE) {
-			dlclose(handle);
-			continue;
-		}
-
-		if (add_plugin(handle, desc) == FALSE)
-			dlclose(handle);
-	}
-
-	g_dir_close(dir);
 	g_strfreev(patterns);
 	g_strfreev(excludes);
-
-	return TRUE;
 }
 
 void plugin_cleanup(void)
@@ -186,9 +128,6 @@ void plugin_cleanup(void)
 
 		if (plugin->desc->exit)
 			plugin->desc->exit();
-
-		if (plugin->handle != NULL)
-			dlclose(plugin->handle);
 
 		g_free(plugin);
 	}

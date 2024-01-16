@@ -11,8 +11,6 @@ EXTRA_DIST += obexd/src/obex.service.in obexd/src/org.bluez.obex.service
 
 if OBEX
 
-obex_plugindir = $(libdir)/obex/plugins
-
 obexd_builtin_modules =
 obexd_builtin_sources =
 obexd_builtin_nodist =
@@ -89,9 +87,7 @@ obexd_src_obexd_LDADD = lib/libbluetooth-internal.la \
 obexd_src_obexd_LDFLAGS = $(AM_LDFLAGS) -Wl,--export-dynamic
 
 obexd_src_obexd_CPPFLAGS = $(AM_CPPFLAGS) $(GLIB_CFLAGS) $(DBUS_CFLAGS) \
-				$(ICAL_CFLAGS) -DOBEX_PLUGIN_BUILTIN \
-				-DPLUGINDIR=\""$(obex_plugindir)"\" \
-				-D_FILE_OFFSET_BITS=64 \
+				$(ICAL_CFLAGS) -D_FILE_OFFSET_BITS=64 \
 				-I$(builddir)/lib -I$(builddir)/obexd/src
 
 obexd_src_obexd_CFLAGS = $(AM_CFLAGS) -fPIC
