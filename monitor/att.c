@@ -2581,7 +2581,7 @@ static void media_state_notify(const struct l2cap_frame *frame)
 	print_media_state(frame);
 }
 
-struct media_cp_opcode {
+static const struct media_cp_opcode {
 	uint8_t opcode;
 	const char *opcode_str;
 } media_cp_opcode_table[] = {
@@ -2739,7 +2739,7 @@ static void content_control_id_read(const struct l2cap_frame *frame)
 
 static const struct pa_sync_state_decoder {
 	uint8_t code;
-	char *value;
+	const char *value;
 } pa_sync_state_decoders[] = {
 	{ 0x00, "Not synchronized to PA" },
 	{ 0x01, "SyncInfo Request" },
@@ -2750,7 +2750,7 @@ static const struct pa_sync_state_decoder {
 
 static const struct cp_pa_sync_state_decoder {
 	uint8_t code;
-	char *value;
+	const char *value;
 } cp_pa_sync_state_decoders[] = {
 	{ 0x00, "Do not synchronize to PA" },
 	{ 0x01, "Synchronize to PA - PAST available" },
@@ -2759,7 +2759,7 @@ static const struct cp_pa_sync_state_decoder {
 
 static const struct big_enc_decoder {
 	uint8_t code;
-	char *value;
+	const char *value;
 } big_enc_decoders[] = {
 	{ 0x00, "Not encrypted" },
 	{ 0x01, "Broadcast_Code required" },
