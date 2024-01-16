@@ -36,8 +36,7 @@ struct btd_debug_desc {
 	unsigned int flags;
 } __attribute__((aligned(8)));
 
-void __btd_enable_debug(struct btd_debug_desc *start,
-					struct btd_debug_desc *stop);
+void __btd_enable_debug(void);
 
 /**
  * DBG:

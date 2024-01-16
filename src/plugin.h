@@ -17,8 +17,6 @@ struct bluetooth_plugin_desc {
 	int priority;
 	int (*init) (void);
 	void (*exit) (void);
-	void *debug_start;
-	void *debug_stop;
 };
 
 #define BLUETOOTH_PLUGIN_DEFINE(name, version, priority, init, exit) \
