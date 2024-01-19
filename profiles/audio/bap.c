@@ -4,7 +4,7 @@
  *  BlueZ - Bluetooth protocol stack for Linux
  *
  *  Copyright (C) 2022  Intel Corporation. All rights reserved.
- *  Copyright 2023 NXP
+ *  Copyright 2023-2024 NXP
  *
  *
  */
@@ -617,15 +617,16 @@ static int parse_bcast_qos(const char *key, int var, DBusMessageIter *iter,
 	return 0;
 }
 
-static int parse_qos(DBusMessageIter *iter, struct bt_bap_qos *qos,
-			struct iovec **base)
+static int parse_qos(DBusMessageIter *iter, uint8_t pac_type,
+				struct bt_bap_qos *qos)
 {
 	DBusMessageIter array;
 	const char *key;
 	int (*parser)(const char *key, int var, DBusMessageIter *iter,
 			struct bt_bap_qos *qos);
 
-	if (*base)
+	if ((pac_type == BT_BAP_BCAST_SOURCE) ||
+		(pac_type == BT_BAP_BCAST_SINK))
 		parser = parse_bcast_qos;
 	else
 		parser = parse_ucast_qos;
@@ -656,9 +657,9 @@ static int parse_qos(DBusMessageIter *iter, struct bt_bap_qos *qos,
 	return 0;
 }
 
-static int parse_configuration(DBusMessageIter *props, struct iovec **caps,
-				struct iovec **metadata, struct iovec **base,
-				struct bt_bap_qos *qos)
+static int parse_configuration(DBusMessageIter *props, uint8_t pac_type,
+				struct iovec **caps, struct iovec **metadata,
+				struct iovec **base, struct bt_bap_qos *qos)
 {
 	const char *key;
 	struct iovec iov;
@@ -686,6 +687,12 @@ static int parse_configuration(DBusMessageIter *props, struct iovec **caps,
 
 			util_iov_free(*caps, 1);
 			*caps = util_iov_dup(&iov, 1);
+
+			/* Currently, the base iovec only duplicates
+			 * setup->caps. TODO: Dynamically generate
+			 * base using received caps.
+			 */
+			*base = util_iov_dup(*caps, 1);
 		} else if (!strcasecmp(key, "Metadata")) {
 			if (var != DBUS_TYPE_ARRAY)
 				goto fail;
@@ -699,22 +706,11 @@ static int parse_configuration(DBusMessageIter *props, struct iovec **caps,
 			if (var != DBUS_TYPE_ARRAY)
 				goto fail;
 
-			if (parse_qos(&value, qos, base))
+			if (parse_qos(&value, pac_type, qos))
 				goto fail;
 		}
 
 		dbus_message_iter_next(props);
-	}
-
-	if (*base) {
-		uint32_t presDelay;
-		uint8_t numSubgroups, numBis;
-		struct bt_bap_codec codec;
-
-		util_iov_memcpy(*base, (*caps)->iov_base, (*caps)->iov_len);
-		parse_base((*caps)->iov_base, (*caps)->iov_len, bap_debug,
-			&presDelay, &numSubgroups, &numBis, &codec,
-			caps, NULL);
 	}
 
 	return 0;
@@ -882,8 +878,9 @@ static DBusMessage *set_configuration(DBusConnection *conn, DBusMessage *msg,
 		setup->qos.ucast.cis_id = BT_ISO_QOS_CIS_UNSET;
 	}
 
-	if (parse_configuration(&props, &setup->caps, &setup->metadata,
-				&setup->base, &setup->qos) < 0) {
+	if (parse_configuration(&props, bt_bap_pac_get_type(ep->lpac),
+				&setup->caps, &setup->metadata, &setup->base,
+				&setup->qos) < 0) {
 		DBG("Unable to parse configuration");
 		setup_free(setup);
 		return btd_error_invalid_args(msg);
