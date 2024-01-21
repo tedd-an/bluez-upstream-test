@@ -161,14 +161,14 @@ extern int capset(struct __user_cap_header_struct *header,
 static void drop_capabilities(void)
 {
 	struct __user_cap_header_struct header;
-	struct __user_cap_data_struct cap;
+	struct __user_cap_data_struct cap[_LINUX_CAPABILITY_U32S_3];
 	unsigned int mask;
 	int err;
 
 	header.version = _LINUX_CAPABILITY_VERSION_3;
 	header.pid = 0;
 
-	err = capget(&header, &cap);
+	err = capget(&header, cap);
 	if (err) {
 		perror("Unable to get current capabilities");
 		return;
@@ -177,11 +177,11 @@ static void drop_capabilities(void)
 	/* not needed anymore since monitor socket is already open */
 	mask = ~CAP_TO_MASK(CAP_NET_RAW);
 
-	cap.effective &= mask;
-	cap.permitted &= mask;
-	cap.inheritable &= mask;
+	cap[0].effective &= mask;
+	cap[0].permitted &= mask;
+	cap[0].inheritable &= mask;
 
-	err = capset(&header, &cap);
+	err = capset(&header, cap);
 	if (err)
 		perror("Failed to set capabilities");
 }
