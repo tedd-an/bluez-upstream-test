@@ -1332,13 +1332,6 @@ static void cmd_set_retry_on_sec_error(struct client *cli, char *cmd_str)
 		printf("Invalid argument: %s\n", argv[0]);
 }
 
-static void search_service_usage(void)
-{
-	printf("Usage: search-service <uuid>\n"
-		"e.g.:\n"
-		"\tsearch-service 1800\n");
-}
-
 static void search_service_cb(bool success, uint8_t att_ecode,
 					struct bt_gatt_result *result,
 					void *user_data)
@@ -1368,6 +1361,27 @@ static void search_service_cb(bool success, uint8_t att_ecode,
 			start_handle, end_handle, uuid_str);
 	}
 	PRLOG("\n");
+}
+
+static void cmd_search_all_primary_services(struct client *cli, char *cmd_str)
+{
+	if (!bt_gatt_client_is_ready(cli->gatt)) {
+		printf("GATT client not initialized\n");
+		return;
+	}
+
+	bt_gatt_discover_all_primary_services(bt_gatt_client_get_att(cli->gatt),
+						NULL,
+						search_service_cb,
+						NULL,
+						NULL);
+}
+
+static void search_service_usage(void)
+{
+	printf("Usage: search-service <uuid>\n"
+		"e.g.:\n"
+		"\tsearch-service 1800\n");
 }
 
 static void cmd_search_service(struct client *cli, char *cmd_str)
@@ -1603,6 +1617,8 @@ static struct {
 				"\tSet signing key for signed write command"},
 	{ "set-retry-on-sec-error", cmd_set_retry_on_sec_error,
 			"\tSet retry on security error by elevating security"},
+	{ "search-all-primary-services", cmd_search_all_primary_services,
+				"\tSearch all primary services"},
 	{ "search-service", cmd_search_service,
 				"\tSearch service"},
 	{ "search-characteristics", cmd_search_characteristics,
