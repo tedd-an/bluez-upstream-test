@@ -1490,6 +1490,83 @@ static void cmd_search_characteristics(struct client *cli, char *cmd_str)
 						NULL);
 }
 
+static void search_descriptors_usage(void)
+{
+	printf("Usage: search-descriptors <start_hanlde> <end_handle>\n"
+		"e.g.:\n"
+		"\tsearch-descriptors 0x0001 0xFFFF\n");
+}
+
+static void search_descriptors_cb(bool success, uint8_t att_ecode,
+					struct bt_gatt_result *result,
+					void *user_data)
+{
+	struct bt_gatt_iter iter;
+	uint16_t handle;
+	uint128_t u128;
+	bt_uuid_t uuid;
+	char uuid_str[MAX_LEN_UUID_STR];
+
+	if (!success) {
+		PRLOG("\nDescriptors discovery failed: %s (0x%02x)\n",
+				ecode_to_string(att_ecode), att_ecode);
+		return;
+	}
+
+	if (!result || !bt_gatt_iter_init(&iter, result))
+		return;
+
+	printf("\n");
+	while (bt_gatt_iter_next_descriptor(&iter, &handle, u128.data)) {
+		bt_uuid128_create(&uuid, u128);
+		bt_uuid_to_string(&uuid, uuid_str, sizeof(uuid_str));
+		printf("Found handle: 0x%04x UUID: %s\n", handle, uuid_str);
+	}
+	PRLOG("\n");
+}
+
+static void cmd_search_descriptors(struct client *cli, char *cmd_str)
+{
+	char *argv[3];
+	int argc = 0;
+	uint16_t start_handle, end_handle;
+	char *endptr = NULL;
+
+	if (!bt_gatt_client_is_ready(cli->gatt)) {
+		printf("GATT client not initialized\n");
+		return;
+	}
+
+	if (!parse_args(cmd_str, 2, argv, &argc)) {
+		printf("Too many arguments\n");
+		search_descriptors_usage();
+		return;
+	}
+
+	if (argc < 1) {
+		search_descriptors_usage();
+		return;
+	}
+
+	start_handle = strtol(argv[0], &endptr, 0);
+	if (!endptr || *endptr != '\0') {
+		printf("Invalid start handle: %s\n", argv[0]);
+		return;
+	}
+
+	end_handle = strtol(argv[1], &endptr, 0);
+	if (!endptr || *endptr != '\0') {
+		printf("Invalid end handle: %s\n", argv[1]);
+		return;
+	}
+
+	bt_gatt_discover_descriptors(bt_gatt_client_get_att(cli->gatt),
+						start_handle, end_handle,
+						search_descriptors_cb,
+						NULL,
+						NULL);
+}
+
 static void cmd_help(struct client *cli, char *cmd_str);
 
 typedef void (*command_func_t)(struct client *cli, char *cmd_str);
@@ -1530,6 +1607,8 @@ static struct {
 				"\tSearch service"},
 	{ "search-characteristics", cmd_search_characteristics,
 				"\tSearch characteristics"},
+	{ "search-descriptors", cmd_search_descriptors,
+				"\tSearch descriptors"},
 	{ }
 };
 
