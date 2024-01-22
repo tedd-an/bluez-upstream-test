@@ -87,6 +87,8 @@ struct bt_att {
 
 	struct sign_info *local_sign;
 	struct sign_info *remote_sign;
+
+	bool retry_on_sec_error;
 };
 
 struct sign_info {
@@ -786,6 +788,9 @@ static bool handle_error_rsp(struct bt_att_chan *chan, uint8_t *pdu,
 
 	*opcode = rsp->opcode;
 
+	if (!att->retry_on_sec_error)
+		return false;
+
 	/* If operation has already been marked as retry don't attempt to change
 	 * the security again.
 	 */
@@ -1262,6 +1267,7 @@ struct bt_att *bt_att_new(int fd, bool ext_signed)
 	att = new0(struct bt_att, 1);
 	att->chans = queue_new();
 	att->mtu = chan->mtu;
+	att->retry_on_sec_error = true;
 
 	/* crypto is optional, if not available leave it NULL */
 	if (!ext_signed)
@@ -2041,4 +2047,12 @@ bool bt_att_has_crypto(struct bt_att *att)
 		return false;
 
 	return att->crypto ? true : false;
+}
+
+void bt_att_set_retry_on_sec_error(struct bt_att *att, bool retry_on_sec_error)
+{
+	if (!att)
+		return;
+
+	att->retry_on_sec_error = retry_on_sec_error;
 }

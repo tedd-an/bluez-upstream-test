@@ -3818,3 +3818,12 @@ bool bt_gatt_client_idle_unregister(struct bt_gatt_client *client,
 
 	return false;
 }
+
+void bt_gatt_client_set_retry_on_sec_error(struct bt_gatt_client *client,
+						bool retry_on_sec_error)
+{
+	if (!client)
+		return;
+
+	bt_att_set_retry_on_sec_error(client->att, retry_on_sec_error);
+}

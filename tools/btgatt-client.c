@@ -1295,6 +1295,42 @@ static void cmd_set_sign_key(struct client *cli, char *cmd_str)
 		set_sign_key_usage();
 }
 
+static void set_retry_on_sec_error_usage(void)
+{
+	printf("Usage: set-retry-on-sec-error <y/n>\n"
+		"e.g.:\n"
+		"\tset-retry-on-sec-error n\n");
+}
+
+static void cmd_set_retry_on_sec_error(struct client *cli, char *cmd_str)
+{
+	char *argv[2];
+	int argc = 0;
+
+	if (!bt_gatt_client_is_ready(cli->gatt)) {
+		printf("GATT client not initialized\n");
+		return;
+	}
+
+	if (!parse_args(cmd_str, 1, argv, &argc)) {
+		printf("Too many arguments\n");
+		set_retry_on_sec_error_usage();
+		return;
+	}
+
+	if (argc < 1) {
+		set_retry_on_sec_error_usage();
+		return;
+	}
+
+	if (argv[0][0] == 'y')
+		bt_gatt_client_set_retry_on_sec_error(cli->gatt, true);
+	else if (argv[0][0] == 'n')
+		bt_gatt_client_set_retry_on_sec_error(cli->gatt, false);
+	else
+		printf("Invalid argument: %s\n", argv[0]);
+}
+
 static void cmd_help(struct client *cli, char *cmd_str);
 
 typedef void (*command_func_t)(struct client *cli, char *cmd_str);
@@ -1329,6 +1365,8 @@ static struct {
 				"\tGet security level on le connection"},
 	{ "set-sign-key", cmd_set_sign_key,
 				"\tSet signing key for signed write command"},
+	{ "set-retry-on-sec-error", cmd_set_retry_on_sec_error,
+			"\tSet retry on security error by elevating security"},
 	{ }
 };
 
