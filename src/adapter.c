@@ -8882,6 +8882,8 @@ static void new_csrk_callback(uint16_t index, uint16_t length,
 		return;
 	}
 
+	device_set_csrk(device, key->val, key->type & 0x01);
+
 	if (!ev->store_hint)
 		return;
 

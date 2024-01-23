@@ -1955,6 +1955,22 @@ bool btd_device_get_ltk(struct btd_device *device, uint8_t key[16],
 	return true;
 }
 
+void device_set_csrk(struct btd_device *device, const uint8_t val[16],
+				bool remote)
+{
+	if (remote) {
+		g_free(device->remote_csrk);
+		device->remote_csrk = g_new0(struct csrk_info, 1);
+		memcpy(device->remote_csrk->key, val,
+		       sizeof(device->remote_csrk->key));
+	} else {
+		g_free(device->local_csrk);
+		device->local_csrk = g_new0(struct csrk_info, 1);
+		memcpy(device->local_csrk->key, val,
+		       sizeof(device->local_csrk->key));
+	}
+}
+
 static bool match_sirk(const void *data, const void *match_data)
 {
 	const struct sirk_info *sirk = data;
