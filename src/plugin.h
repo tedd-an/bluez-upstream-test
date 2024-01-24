@@ -13,14 +13,19 @@
 
 struct bluetooth_plugin_desc {
 	const char *name;
+#if EXTERNAL_PLUGINS
 	const char *version;
+#endif
 	int priority;
 	int (*init) (void);
 	void (*exit) (void);
+#if EXTERNAL_PLUGINS
 	void *debug_start;
 	void *debug_stop;
+#endif
 };
 
+#if EXTERNAL_PLUGINS
 #ifdef BLUETOOTH_PLUGIN_BUILTIN
 #define BLUETOOTH_PLUGIN_DEFINE(name, version, priority, init, exit) \
 		const struct bluetooth_plugin_desc \
@@ -40,4 +45,15 @@ struct bluetooth_plugin_desc {
 			#name, version, priority, init, exit, \
 			__start___debug, __stop___debug \
 		};
+#endif
+#else
+#ifdef BLUETOOTH_PLUGIN_BUILTIN
+#define BLUETOOTH_PLUGIN_DEFINE(name, version, priority, init, exit) \
+		const struct bluetooth_plugin_desc \
+		__bluetooth_builtin_ ## name = { \
+			#name, priority, init, exit \
+		};
+#else
+#error "Requested non built-in plugin, while external plugins is disabled"
+#endif
 #endif
