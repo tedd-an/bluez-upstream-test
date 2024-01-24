@@ -151,6 +151,8 @@ struct btd_opts {
 	struct btd_advmon_opts	advmon;
 
 	struct btd_csis csis;
+
+	uint32_t	phys;
 };
 
 extern struct btd_opts btd_opts;

@@ -128,6 +128,7 @@ static const char *le_options[] = {
 	"AdvMonAllowlistScanDuration",
 	"AdvMonNoFilterScanDuration",
 	"EnableAdvMonInterleaveScan",
+	"SupportedPHYs",
 	NULL
 };
 
@@ -182,8 +183,30 @@ static const struct group_table {
 	{ }
 };
 
+static const char *conf_phys_str[] = {
+	"BR1M1SLOT",
+	"BR1M3SLOT",
+	"BR1M5SLOT",
+	"EDR2M1SLOT",
+	"EDR2M3SLOT",
+	"EDR2M5SLOT",
+	"EDR3M1SLOT",
+	"EDR3M3SLOT",
+	"EDR3M5SLOT",
+	"LE1MTX",
+	"LE1MRX",
+	"LE2MTX",
+	"LE2MRX",
+	"LECODEDTX",
+	"LECODEDRX",
+};
+
 #ifndef MIN
 #define MIN(x, y) ((x) < (y) ? (x) : (y))
+#endif
+
+#ifndef NELEM
+#define NELEM(x) (sizeof(x) / sizeof((x)[0]))
 #endif
 
 static int8_t check_sirk_alpha_numeric(char *str)
@@ -224,6 +247,36 @@ static size_t hex2bin(const char *hexstr, uint8_t *buf, size_t buflen)
 	}
 
 	return len;
+}
+
+static bool str2phy(const char *phy_str, uint32_t *phy_val)
+{
+	unsigned int i;
+
+	for (i = 0; i < NELEM(conf_phys_str); i++) {
+		if (strcasecmp(conf_phys_str[i], phy_str) == 0) {
+			*phy_val = (1 << i);
+			return true;
+		}
+	}
+
+	return false;
+}
+
+static void btd_parse_phy_list(char **list)
+{
+	uint32_t phys = 0;
+
+	for (int i = 0; list[i]; i++) {
+		uint32_t phy_val;
+
+		info("Enabling PHY option: %s", list[i]);
+
+		if (str2phy(list[i], &phy_val))
+			phys |= phy_val;
+	}
+
+	btd_opts.phys = phys;
 }
 
 GKeyFile *btd_get_main_conf(void)
@@ -673,11 +726,24 @@ static void parse_le_config(GKeyFile *config)
 		  0,
 		  1},
 	};
+	char **strlist;
+	GError *err = NULL;
 
 	if (btd_opts.mode == BT_MODE_BREDR)
 		return;
 
 	parse_mode_config(config, "LE", params, ARRAY_SIZE(params));
+
+	strlist = g_key_file_get_string_list(config, "LE", "SupportedPHYs",
+						NULL, &err);
+	if (err) {
+		g_clear_error(&err);
+		strlist = g_new0(char *, 3);
+		strlist[0] = g_strdup("LE1MTX");
+		strlist[1] = g_strdup("LE1MRX");
+	}
+	btd_parse_phy_list(strlist);
+	g_strfreev(strlist);
 }
 
 static bool match_experimental(const void *data, const void *match_data)

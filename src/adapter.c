@@ -86,6 +86,18 @@
 #define DISTANCE_VAL_INVALID	0x7FFF
 #define PATHLOSS_MAX		137
 
+#define LE_PHY_1M 0x01
+#define LE_PHY_2M 0x02
+#define LE_PHY_CODED 0x04
+
+#define PHYVAL_REQUIRED 0x07ff
+#define PHYVAL_1M_TX (1<<9)
+#define PHYVAL_1M_RX (1<<10)
+#define PHYVAL_2M_TX (1<<11)
+#define PHYVAL_2M_RX (1<<12)
+#define PHYVAL_CODED_TX (1<<13)
+#define PHYVAL_CODED_RX (1<<14)
+
 /*
  * These are known security keys that have been compromised.
  * If this grows or there are needs to be platform specific, it is
@@ -845,6 +857,36 @@ static bool set_discoverable(struct btd_adapter *adapter, uint8_t mode,
 							adapter->dev_id);
 
 	return false;
+}
+
+static void set_phy_support_complete(uint8_t status, uint16_t length,
+					const void *param, void *user_data)
+{
+	if (status != 0) {
+		struct btd_adapter *adapter = (struct btd_adapter *)user_data;
+
+		btd_error(adapter->dev_id, "PHY setting rejected for %u: %s",
+								adapter->dev_id, mgmt_errstr(status));
+	}
+}
+
+static bool set_phy_support(struct btd_adapter *adapter, uint32_t phy_mask)
+{
+	struct mgmt_cp_set_phy_confguration cp;
+
+	memset(&cp, 0, sizeof(cp));
+	cp.selected_phys = cpu_to_le32(phy_mask | PHYVAL_REQUIRED);
+
+	if (mgmt_send(adapter->mgmt, MGMT_OP_SET_PHY_CONFIGURATION,
+				adapter->dev_id, sizeof(cp), &cp,
+				set_phy_support_complete, (void*)adapter, NULL) > 0)
+		return true;
+
+	btd_error(adapter->dev_id, "Failed to set PHY for index %u",
+							adapter->dev_id);
+
+	return false;
+
 }
 
 static bool pairable_timeout_handler(gpointer user_data)
@@ -10457,6 +10499,10 @@ static void read_info_complete(uint8_t status, uint16_t length,
 
 	if (btd_adapter_get_powered(adapter))
 		adapter_start(adapter);
+
+	// Some adapters do not want to accept this before being started/powered.
+	if (btd_opts.phys > 0)
+		set_phy_support(adapter, btd_opts.phys);
 
 	return;
 
