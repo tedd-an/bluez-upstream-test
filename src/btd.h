@@ -104,6 +104,10 @@ struct btd_avdtp_opts {
 	uint8_t  stream_mode;
 };
 
+struct btd_a2dp_opts {
+	uint8_t		channels;
+};
+
 struct btd_advmon_opts {
 	uint8_t		rssi_sampling_period;
 };
@@ -147,6 +151,8 @@ struct btd_opts {
 	uint8_t		key_size;
 
 	enum jw_repairing_t jw_repairing;
+
+	struct btd_a2dp_opts	a2dp;
 
 	struct btd_advmon_opts	advmon;
 
