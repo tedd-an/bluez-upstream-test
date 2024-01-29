@@ -2549,6 +2549,14 @@ static void confirm_cb(GIOChannel *io, gpointer data)
 	if (!chan)
 		goto drop;
 
+	if (btd_opts.a2dp.channels &&
+				queue_length(server->channels) > btd_opts.a2dp.channels) {
+		device_request_disconnect(device, NULL);
+		DBG("Reject current connection, A2DP channel limit exceeded: %d",
+						btd_opts.a2dp.channels);
+		goto drop;
+	}
+
 	chan->auth_id = btd_request_authorization(&src, &dst,
 							ADVANCED_AUDIO_UUID,
 							auth_cb, chan);
