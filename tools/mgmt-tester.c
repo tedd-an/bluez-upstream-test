@@ -12781,6 +12781,103 @@ static void test_hci_devcd(const void *test_data)
 	tester_wait(test->dump_data->timeout + 1, verify_devcd, NULL);
 }
 
+static const struct generic_data sequential_connect = {
+	.setup_settings = settings_powered_bondable,
+	.pin = pair_device_pin,
+	.pin_len = sizeof(pair_device_pin),
+	.client_pin = pair_device_pin,
+	.client_pin_len = sizeof(pair_device_pin),
+};
+
+struct pair_devices_data {
+	struct test_data *test_data;
+	unsigned int n_connect_failed_evts;
+	unsigned int n_create_conn_commands;
+};
+
+static void pair_device_command_callback(uint8_t status, uint16_t length,
+					const void *param, void *user_data)
+{
+	struct pair_devices_data *pd_data = user_data;
+
+	if (status != MGMT_STATUS_CONNECT_FAILED) {
+		tester_warn("Unexpected status got %d expected %d",
+			    status, MGMT_STATUS_CONNECT_FAILED);
+		tester_test_failed();
+		free(pd_data);
+		return;
+	}
+
+	tester_print("Connect failed for Pair Device");
+
+	pd_data->n_connect_failed_evts++;
+	if (pd_data->n_connect_failed_evts != pd_data->n_create_conn_commands) {
+		tester_test_failed();
+		free(pd_data);
+		return;
+	}
+
+	if (pd_data->n_connect_failed_evts == 3) {
+		test_condition_complete(pd_data->test_data);
+		free(pd_data);
+	}
+}
+
+static bool connect_multiple_create_conn(const void *data, uint16_t len,
+					void *user_data)
+{
+	struct pair_devices_data *pd_data = user_data;
+	const uint8_t *status = data;
+
+	if (*status == 0) {
+		tester_print("Create connection finished");
+
+		pd_data->n_create_conn_commands++;
+		if (pd_data->n_connect_failed_evts != pd_data->n_create_conn_commands - 1) {
+			tester_test_failed();
+			free(pd_data);
+		}
+	} else {
+		tester_print("Create connection failed: 0x%02x", *status);
+		tester_test_failed();
+		free(pd_data);
+	}
+
+	return true;
+}
+
+static void test_sequential_connect(const void *test_data)
+{
+	struct test_data *data = tester_get_data();
+	struct pair_devices_data *pd_data;
+	static uint8_t param[8] = {
+		0x31, 0xAB, 0xCD, 0x32, 0x34, 0x73, /* random bdaddr so we fail to connect */
+		BDADDR_BREDR,
+		0x03, /* NoInputNoOutput */
+	 };
+
+	pd_data = new0(struct pair_devices_data, 1);
+	pd_data->test_data = data;
+	pd_data->n_connect_failed_evts = 0;
+	pd_data->n_create_conn_commands = 0;
+
+	hciemu_add_hook(data->hciemu, HCIEMU_HOOK_POST_CMD,
+			BT_HCI_CMD_CREATE_CONN,
+			connect_multiple_create_conn, pd_data);
+
+	mgmt_send_nowait(data->mgmt, MGMT_OP_PAIR_DEVICE, data->mgmt_index,
+			 sizeof(param), param,
+			 pair_device_command_callback, pd_data, NULL);
+	param[2] = 0x09; /* change bdaddr a bit */
+	mgmt_send_nowait(data->mgmt, MGMT_OP_PAIR_DEVICE, data->mgmt_index,
+			 sizeof(param), param,
+			 pair_device_command_callback, pd_data, NULL);
+	param[2] = 0x10; /* change bdaddr a bit */
+	mgmt_send_nowait(data->mgmt, MGMT_OP_PAIR_DEVICE, data->mgmt_index,
+			 sizeof(param), param,
+			 pair_device_command_callback, pd_data, NULL);
+}
+
 int main(int argc, char *argv[])
 {
 	tester_init(&argc, &argv);
@@ -14945,6 +15042,15 @@ int main(int argc, char *argv[])
 	 */
 	test_bredrle_full("HCI Devcoredump - Dump Timeout", &dump_timeout, NULL,
 				test_hci_devcd, 3);
+
+	/* Sequential connect
+	 * Setup: Power on
+	 * Run: Try connecting to multiple devices
+	 * Expect: Connects time out sequentially
+	 */
+	test_bredrle_full("Sequential connect",
+				&sequential_connect, NULL,
+				test_sequential_connect, 7);
 
 	return tester_run();
 }
