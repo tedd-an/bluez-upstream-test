@@ -8798,6 +8798,9 @@ static const struct hci_cmd_data multi_ext_adv_add_second_hci_cmds[] = {
 		.len = sizeof(le_set_ext_adv_enable_inst_2),
 		.param = le_set_ext_adv_enable_inst_2,
 	},
+	{
+		.opcode = 0,
+	},
 };
 
 static const struct generic_data multi_ext_advertising_add_second_2 = {
@@ -8845,6 +8848,9 @@ static const struct hci_cmd_data multi_ext_adv_remove_adv_hci_cmds[] = {
 		.len = sizeof(advertising_instance1_param),
 		.param = advertising_instance1_param,
 	},
+	{
+		.opcode = 0,
+	},
 };
 
 static const struct generic_data multi_ext_advertising_remove = {
@@ -8876,6 +8882,9 @@ static const struct hci_cmd_data multi_ext_adv_remove_all_adv_hci_cmds[] = {
 	},
 	{
 		.opcode = BT_HCI_CMD_LE_CLEAR_ADV_SETS,
+	},
+	{
+		.opcode = 0,
 	},
 };
 
@@ -8912,6 +8921,9 @@ static const struct hci_cmd_data multi_ext_adv_add_2_advs_hci_cmds[] = {
 		.opcode = BT_HCI_CMD_LE_SET_EXT_ADV_DATA,
 		.len = sizeof(set_ext_adv_data_test1),
 		.param = set_ext_adv_data_test1,
+	},
+	{
+		.opcode = 0,
 	},
 };
 
@@ -10378,6 +10390,9 @@ static const struct hci_cmd_data ll_privacy_add_device_3_hci_list[] = {
 		.param = set_resolv_on_param,
 		.len = sizeof(set_resolv_on_param),
 	},
+	{
+		.opcode = 0,
+	},
 };
 
 static const struct generic_data ll_privacy_add_device_3 = {
@@ -10494,6 +10509,9 @@ static const struct hci_cmd_data ll_privacy_add_device_9_hci_list[] = {
 		.opcode = BT_HCI_CMD_LE_ADD_TO_RESOLV_LIST,
 		.len = sizeof(le_add_to_resolv_list_param),
 		.param = le_add_to_resolv_list_param
+	},
+	{
+		.opcode = 0,
 	},
 };
 
@@ -10822,6 +10840,9 @@ static const struct hci_cmd_data ll_privacy_set_device_flags_1_hci_list[] = {
 		.opcode = BT_HCI_CMD_LE_SET_RESOLV_ENABLE,
 		.param = set_resolv_on_param,
 		.len = sizeof(set_resolv_on_param),
+	},
+	{
+		.opcode = 0,
 	},
 };
 
