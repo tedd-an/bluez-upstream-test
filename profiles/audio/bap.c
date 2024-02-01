@@ -916,6 +916,10 @@ static void setup_free(void *data)
 	free(setup);
 }
 
+static struct bap_ep *ep_register_bcast(struct bap_data *data,
+					struct bt_bap_pac *lpac,
+					struct bt_bap_pac *rpac);
+
 static DBusMessage *set_configuration(DBusConnection *conn, DBusMessage *msg,
 								void *data)
 {
@@ -972,6 +976,10 @@ static DBusMessage *set_configuration(DBusConnection *conn, DBusMessage *msg,
 		else {
 			setup->base = bt_bap_stream_get_base(setup->stream);
 			setup->id = 0;
+			/* Create a new endpoint for a new BIS */
+			if (!ep_register_bcast(ep->data, ep->lpac, ep->rpac))
+				error("Unable to register endpoint for pac %p",
+						ep->lpac);
 		}
 
 		return g_dbus_create_reply(msg, DBUS_TYPE_INVALID);
@@ -1150,9 +1158,14 @@ static struct bap_ep *ep_register_bcast(struct bap_data *data,
 		return NULL;
 	}
 
-	ep = queue_find(queue, match_ep, &match);
-	if (ep)
-		return ep;
+	/* Broadcast source creates multiple endpoints (multiple BISes)
+	 * for one pac so queue_find will return always true.
+	 */
+	if (bt_bap_pac_get_type(lpac) == BT_BAP_BCAST_SINK) {
+		ep = queue_find(queue, match_ep, &match);
+		if (ep)
+			return ep;
+	}
 
 	ep = new0(struct bap_ep, 1);
 	ep->data = data;
