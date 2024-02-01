@@ -4739,7 +4739,7 @@ struct bt_bap_stream *bt_bap_stream_new(struct bt_bap *bap,
 					struct iovec *data)
 {
 	struct bt_bap_stream *stream;
-	struct bt_bap_endpoint *ep;
+	struct bt_bap_endpoint *ep = NULL;
 	struct match_pac match;
 
 	if (!bap)
@@ -4795,12 +4795,32 @@ struct bt_bap_stream *bt_bap_stream_new(struct bt_bap *bap,
 	match.lpac = lpac;
 	match.rpac = rpac;
 
-	/* Check for existing stream */
-	ep = queue_find(bap->remote_eps, find_ep_pacs, &match);
+	/* Broadcast source supports multiple endpoints (multiple BISes)
+	 * for one pac so allow it to register a new endpoint even if
+	 * others already exist.
+	 */
+	if (lpac->type != BT_BAP_BCAST_SOURCE) {
+		/* Check for existing stream */
+		ep = queue_find(bap->remote_eps, find_ep_pacs, &match);
+	}
+
 	if (!ep) {
 		/* Check for unused ASE */
 		ep = queue_find(bap->remote_eps, find_ep_unused, &match);
-		if (!ep) {
+		if (!ep && lpac->type == BT_BAP_BCAST_SOURCE) {
+			/* Push a new remote endpoint with direction
+			 * broadcast source
+			 */
+			ep = bap_endpoint_new_broadcast(bap->rdb,
+					BT_BAP_BCAST_SOURCE);
+
+			if (ep)
+				queue_push_tail(bap->remote_eps, ep);
+			else {
+				DBG(bap, "Unable to create endpoint");
+				return NULL;
+			}
+		} else if (!ep) {
 			DBG(bap, "Unable to find unused ASE");
 			return NULL;
 		}
