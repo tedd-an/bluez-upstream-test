@@ -5884,3 +5884,29 @@ struct iovec *bt_bap_stream_get_base(struct bt_bap_stream *stream)
 
 	return base_iov;
 }
+
+/*
+ * Check the state of all streams with the same BIG ID.
+ * If all these streams are in the checked state, return true.
+ * Else, return false.
+ */
+bool bt_bap_test_bcast_streams_state(struct bt_bap_stream *stream,
+						uint8_t test_state)
+{
+	const struct queue_entry *entry;
+	struct bt_bap_stream *e_str;
+
+	for (entry = queue_get_entries(stream->bap->streams);
+				entry; entry = entry->next) {
+		e_str = entry->data;
+
+		if ((e_str == stream) ||
+			(e_str->qos.bcast.big != stream->qos.bcast.big))
+			continue;
+
+		if (e_str->ep->state != test_state)
+			return false;
+	}
+
+	return true;
+}
