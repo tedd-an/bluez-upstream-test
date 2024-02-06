@@ -21,6 +21,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <unistd.h>
+#include <aio.h>
 
 #include <glib.h>
 
@@ -12760,6 +12761,149 @@ static void test_hci_devcd(const void *test_data)
 	tester_wait(test->dump_data->timeout + 1, verify_devcd, NULL);
 }
 
+static const uint8_t rfkill_hci_disconnect_device[] = {
+	0x2a, 0x00, /* handle */
+	0x15, /* reason: Power Off */
+};
+
+static const struct generic_data rfkill_disconnect_devices = {
+	.setup_settings = settings_powered_connectable_bondable,
+	.expect_hci_command = BT_HCI_CMD_DISCONNECT,
+	.expect_hci_param = rfkill_hci_disconnect_device,
+	.expect_hci_len = sizeof(rfkill_hci_disconnect_device),
+};
+
+enum rfkill_type {
+	RFKILL_TYPE_ALL = 0,
+	RFKILL_TYPE_WLAN,
+	RFKILL_TYPE_BLUETOOTH,
+	RFKILL_TYPE_UWB,
+	RFKILL_TYPE_WIMAX,
+	RFKILL_TYPE_WWAN,
+};
+
+enum rfkill_operation {
+	RFKILL_OP_ADD = 0,
+	RFKILL_OP_DEL,
+	RFKILL_OP_CHANGE,
+	RFKILL_OP_CHANGE_ALL,
+};
+
+struct rfkill_event {
+	uint32_t idx;
+	uint8_t type;
+	uint8_t op;
+	uint8_t soft;
+	uint8_t hard;
+};
+#define RFKILL_EVENT_SIZE_V1    8
+
+static void trigger_rfkill(void *user_data)
+{
+	struct aiocb *op = user_data;
+	int fd;
+	int latest_rfkill_idx;
+	struct rfkill_event write_event;
+
+	tester_print("Blocking hci device via rfkill");
+
+	fd = open("/dev/rfkill", O_RDWR|O_CLOEXEC|O_NOCTTY|O_NONBLOCK);
+	if (fd < 0) {
+		tester_warn("Failed to open rfkill control device: %s",
+				strerror(errno));
+		tester_test_failed();
+		free(op);
+		return;
+	}
+
+	latest_rfkill_idx = -1;
+	while (1) {
+		struct rfkill_event event = { 0 };
+		ssize_t len;
+
+		len = read(fd, &event, sizeof(event));
+		if (len < RFKILL_EVENT_SIZE_V1)
+			break;
+
+		if (event.type == RFKILL_TYPE_BLUETOOTH)
+			latest_rfkill_idx = event.idx;
+	}
+
+	if (latest_rfkill_idx < 0) {
+		tester_warn("No rfkill device to block found");
+		tester_test_failed();
+		close(fd);
+		free(op);
+		return;
+	}
+
+	write_event.idx = latest_rfkill_idx;
+	write_event.op = RFKILL_OP_CHANGE;
+	write_event.soft = true;
+
+	op->aio_fildes = fd;
+	op->aio_buf = &write_event;
+	op->aio_nbytes = sizeof(write_event);
+
+	if (aio_write(op) != 0) {
+		tester_warn("Failed to write to rfkill control device: %s",
+				strerror(errno));
+		tester_test_failed();
+		close(fd);
+		free(op);
+	}
+}
+
+static void finish_aio_write(void *user_data)
+{
+	struct aiocb *op = user_data;
+	struct test_data *data = tester_get_data();
+	int err;
+	size_t ret;
+
+	err = aio_error(op);
+	ret = aio_return(op);
+	if (err != 0) {
+		tester_warn("aio_error() return error: %s", strerror(err));
+		tester_test_failed();
+	} else if (ret != op->aio_nbytes) {
+		tester_warn("aio_return() returned write failed");
+		tester_test_failed();
+	}
+
+	close(op->aio_fildes);
+	free(op);
+	test_condition_complete(data);
+}
+
+static void test_disconnect_on_rfkill(const void *test_data)
+{
+	struct test_data *data = tester_get_data();
+	struct bthost *bthost;
+	const uint8_t *central_bdaddr;
+	uint8_t addr_type;
+	struct aiocb *op = new0(struct aiocb, 1);
+
+	bthost = hciemu_client_get_host(data->hciemu);
+	central_bdaddr = hciemu_get_central_bdaddr(data->hciemu);
+	if (!central_bdaddr) {
+		tester_warn("No central bdaddr");
+		tester_test_failed();
+		return;
+	}
+
+	addr_type = data->hciemu_type == HCIEMU_TYPE_BREDRLE
+		? BDADDR_BREDR : BDADDR_LE_PUBLIC;
+
+	bthost_hci_connect(bthost, central_bdaddr, addr_type);
+
+	test_command_generic(test_data);
+
+	tester_wait(1, trigger_rfkill, (void *)op);
+	tester_wait(2, finish_aio_write, (void *)op);
+	test_add_condition(data);
+}
+
 int main(int argc, char *argv[])
 {
 	tester_init(&argc, &argv);
@@ -14924,6 +15068,15 @@ int main(int argc, char *argv[])
 	 */
 	test_bredrle_full("HCI Devcoredump - Dump Timeout", &dump_timeout, NULL,
 				test_hci_devcd, 3);
+
+	/* Rfkill
+	 * Setup: Connect to device
+	 * Run: Block hci device via rfkill
+	 * Expect: Disconnect HCI command sent to device
+	 */
+	test_bredrle("Rfkill - disconnect devices",
+			&rfkill_disconnect_devices, NULL,
+			test_disconnect_on_rfkill);
 
 	return tester_run();
 }

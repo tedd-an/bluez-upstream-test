@@ -124,7 +124,7 @@ tools_mgmt_tester_SOURCES = tools/mgmt-tester.c monitor/bt.h \
 				emulator/bthost.h emulator/bthost.c \
 				emulator/smp.c
 tools_mgmt_tester_LDADD = lib/libbluetooth-internal.la \
-				src/libshared-glib.la $(GLIB_LIBS)
+				src/libshared-glib.la $(GLIB_LIBS) -lrt
 
 tools_mesh_tester_SOURCES = tools/mesh-tester.c monitor/bt.h \
 				emulator/hciemu.h emulator/hciemu.c \
