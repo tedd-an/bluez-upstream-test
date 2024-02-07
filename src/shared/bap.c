@@ -255,26 +255,6 @@ struct bt_pacs_context {
 	uint16_t  src;
 } __packed;
 
-struct bt_base {
-	uint8_t big_id;
-	uint32_t pres_delay;
-	uint8_t next_bis_index;
-	struct queue *subgroups;
-};
-
-struct bt_subgroup {
-	uint8_t index;
-	struct bt_bap_codec codec;
-	struct iovec *caps;
-	struct iovec *meta;
-	struct queue *bises;
-};
-
-struct bt_bis {
-	uint8_t index;
-	struct iovec *caps;
-};
-
 /* Contains local bt_bap_db */
 static struct queue *bap_db;
 static struct queue *bap_cbs;
@@ -5536,7 +5516,7 @@ void bt_bap_update_bcast_source(struct bt_bap_pac *pac,
 
 static void destroy_base_bis(void *data)
 {
-	struct bt_bis *bis = data;
+	struct bt_bap_bis *bis = data;
 
 	if (!bis)
 		return;
@@ -5549,7 +5529,7 @@ static void destroy_base_bis(void *data)
 
 static void generate_bis_base(void *data, void *user_data)
 {
-	struct bt_bis *bis = data;
+	struct bt_bap_bis *bis = data;
 	struct iovec *base_iov = user_data;
 	uint8_t cc_length = bis->caps->iov_len;
 
@@ -5566,7 +5546,7 @@ static void generate_bis_base(void *data, void *user_data)
 
 static void generate_subgroup_base(void *data, void *user_data)
 {
-	struct bt_subgroup *sgrp = data;
+	struct bt_bap_subgroup *sgrp = data;
 	struct iovec *base_iov = user_data;
 
 	if (!util_iov_push_u8(base_iov, queue_length(sgrp->bises)))
@@ -5604,7 +5584,7 @@ static void generate_subgroup_base(void *data, void *user_data)
 	queue_foreach(sgrp->bises, generate_bis_base, base_iov);
 }
 
-static struct iovec *generate_base(struct bt_base *base)
+static struct iovec *generate_base(struct bt_bap_base *base)
 {
 	struct iovec *base_iov = new0(struct iovec, 0x1);
 
@@ -5623,10 +5603,10 @@ static struct iovec *generate_base(struct bt_base *base)
 	return base_iov;
 }
 
-static void add_new_bis(struct bt_subgroup *subgroup,
+static void add_new_bis(struct bt_bap_subgroup *subgroup,
 			uint8_t bis_index, struct iovec *caps)
 {
-	struct bt_bis *bis = new0(struct bt_bis, 1);
+	struct bt_bap_bis *bis = new0(struct bt_bap_bis, 1);
 
 	bis->index = bis_index;
 
@@ -5638,12 +5618,12 @@ static void add_new_bis(struct bt_subgroup *subgroup,
 	queue_push_tail(subgroup->bises, bis);
 }
 
-static void add_new_subgroup(struct bt_base *base,
+static void add_new_subgroup(struct bt_bap_base *base,
 			struct bt_bap_stream *stream)
 {
 	struct bt_bap_pac *lpac = stream->lpac;
-	struct bt_subgroup *sgrp = new0(
-				struct bt_subgroup, 1);
+	struct bt_bap_subgroup *sgrp = new0(
+				struct bt_bap_subgroup, 1);
 	uint16_t cid = 0;
 	uint16_t vid = 0;
 
@@ -5784,7 +5764,7 @@ static struct iovec *extract_diff_caps(
 static void set_base_subgroup(void *data, void *user_data)
 {
 	struct bt_bap_stream *stream = data;
-	struct bt_base *base = user_data;
+	struct bt_bap_base *base = user_data;
 	/* BIS specific codec capabilities */
 	struct iovec *bis_caps;
 
@@ -5802,7 +5782,7 @@ static void set_base_subgroup(void *data, void *user_data)
 	} else {
 		/* Verify if a subgroup has the same metadata */
 		const struct queue_entry *entry;
-		struct bt_subgroup *subgroup = NULL;
+		struct bt_bap_subgroup *subgroup = NULL;
 		bool same_meta = false;
 
 		for (entry = queue_get_entries(base->subgroups);
@@ -5836,7 +5816,7 @@ static void set_base_subgroup(void *data, void *user_data)
 
 static void destroy_base_subgroup(void *data)
 {
-	struct bt_subgroup *subgroup = data;
+	struct bt_bap_subgroup *subgroup = data;
 
 	if (!subgroup)
 		return;
@@ -5858,7 +5838,7 @@ static void destroy_base_subgroup(void *data)
  */
 struct iovec *bt_bap_stream_get_base(struct bt_bap_stream *stream)
 {
-	struct bt_base base;
+	struct bt_bap_base base;
 	struct iovec *base_iov;
 
 	base.subgroups = queue_new();
@@ -5876,4 +5856,208 @@ struct iovec *bt_bap_stream_get_base(struct bt_bap_stream *stream)
 	queue_destroy(base.subgroups, destroy_base_subgroup);
 
 	return base_iov;
+}
+
+static void cleanup_bis(void *data)
+{
+	struct bt_bap_bis *bis = data;
+
+	if (bis->caps)
+		util_iov_free(bis->caps, 1);
+}
+
+static void cleanup_subgroup(struct bt_bap_subgroup *subgroup)
+{
+	if (!subgroup)
+		return;
+
+	if (subgroup->meta)
+		util_iov_free(subgroup->meta, 1);
+
+	if (subgroup->caps)
+		util_iov_free(subgroup->caps, 1);
+
+	queue_destroy(subgroup->bises, cleanup_bis);
+
+	if (subgroup)
+		free(subgroup);
+}
+
+bool bt_bap_parse_base(struct bt_bap *bap, void *data, size_t len,
+		util_debug_func_t func, struct bt_bap_base *base)
+{
+	uint8_t num_subgroups;
+	uint8_t num_bis;
+
+	struct iovec iov = {
+		.iov_base = data,
+		.iov_len = len,
+	};
+	util_debug(func, NULL, "BASE len %ld", len);
+	if (!base)
+		return false;
+
+	if (!util_iov_pull_le24(&iov, &base->pres_delay))
+		return false;
+	util_debug(func, NULL, "PresentationDelay %d", base->pres_delay);
+
+	if (!util_iov_pull_u8(&iov, &base->num_subgroups))
+		return false;
+	util_debug(func, NULL, "NumSubgroups %d", base->num_subgroups);
+	num_subgroups = base->num_subgroups;
+
+	for (int sg = 0; sg < num_subgroups; sg++) {
+		struct bt_bap_subgroup *sub_group = new0(
+						struct bt_bap_subgroup, 1);
+		uint8_t caps_len, metaLen;
+		uint8_t *hexstream;
+
+		sub_group->subgroup_index = sg;
+
+		util_debug(func, NULL, "Subgroup #%d", sg);
+		sub_group->bap = bap;
+		sub_group->bises = queue_new();
+
+		if (!util_iov_pull_u8(&iov, &num_bis)) {
+			cleanup_subgroup(sub_group);
+			goto fail;
+		}
+		util_debug(func, NULL, "NumBis %d", num_bis);
+		sub_group->num_bises = num_bis;
+
+		memcpy(&sub_group->codec, util_iov_pull_mem(&iov,
+		sizeof(struct bt_bap_codec)), sizeof(struct bt_bap_codec));
+		util_debug(func, NULL, "%s: ID %d CID 0x%2.2x VID 0x%2.2x",
+			"Codec", sub_group->codec.id, sub_group->codec.cid,
+				sub_group->codec.vid);
+		if (!util_iov_pull_u8(&iov, &caps_len)) {
+			cleanup_subgroup(sub_group);
+			goto fail;
+		}
+
+		util_debug(func, NULL, "CC Len %d", caps_len);
+
+		/*
+		 * Copy the Codec Specific configurations from base
+		 */
+		sub_group->caps = new0(struct iovec, 1);
+		util_iov_memcpy(sub_group->caps, iov.iov_base, caps_len);
+		util_debug(func, NULL, "subgroup caps len %ld",
+				sub_group->caps->iov_len);
+
+		for (int i = 0; caps_len > 1; i++) {
+			struct bt_ltv *ltv = util_iov_pull_mem(&iov,
+								sizeof(*ltv));
+			uint8_t *caps;
+
+			if (!ltv) {
+				util_debug(func, NULL, "Unable to parse %s",
+							"Capabilities");
+				cleanup_subgroup(sub_group);
+				goto fail;
+			}
+
+			util_debug(func, NULL, "%s #%u: len %u type %u",
+						"CC", i, ltv->len, ltv->type);
+
+			caps = util_iov_pull_mem(&iov, ltv->len - 1);
+			if (!caps) {
+				util_debug(func, NULL, "Unable to parse %s",
+									"CC");
+				cleanup_subgroup(sub_group);
+				goto fail;
+			}
+			util_hexdump(' ', caps, ltv->len - 1, func, NULL);
+
+			caps_len -= (ltv->len + 1);
+		}
+
+		if (!util_iov_pull_u8(&iov, &metaLen)) {
+			cleanup_subgroup(sub_group);
+			goto fail;
+		}
+		util_debug(func, NULL, "Metadata Len %d", metaLen);
+
+		sub_group->meta = new0(struct iovec, 1);
+		sub_group->meta->iov_len = metaLen;
+		sub_group->meta->iov_base = iov.iov_base;
+
+		hexstream = util_iov_pull_mem(&iov, metaLen);
+		if (!hexstream) {
+			cleanup_subgroup(sub_group);
+			goto fail;
+		}
+		util_hexdump(' ', hexstream, metaLen, func, NULL);
+
+		for (int bis_sg = 0; bis_sg < sub_group->num_bises; bis_sg++) {
+			struct bt_bap_bis *bis;
+			uint8_t caps_len;
+			uint8_t crt_bis;
+
+			if (!util_iov_pull_u8(&iov, &crt_bis)) {
+				cleanup_subgroup(sub_group);
+				goto fail;
+			}
+			util_debug(func, NULL, "BIS #%d", crt_bis);
+
+			bis = new0(struct bt_bap_bis, 1);
+			bis->index = crt_bis;
+
+			if (!util_iov_pull_u8(&iov, &caps_len)) {
+				cleanup_subgroup(sub_group);
+				goto fail;
+			}
+			util_debug(func, NULL, "CC Len %d", caps_len);
+
+			bis->caps = new0(struct iovec, 1);
+			bis->caps->iov_len = caps_len;
+			util_iov_memcpy(bis->caps, iov.iov_base, caps_len);
+			util_debug(func, NULL, "bis caps len %ld",
+					bis->caps->iov_len);
+
+			for (int i = 0; caps_len > 1; i++) {
+				struct bt_ltv *ltv = util_iov_pull_mem(&iov,
+								sizeof(*ltv));
+				uint8_t *caps;
+
+				if (!ltv) {
+					util_debug(func, NULL, "Unable to parse %s",
+								"Capabilities");
+					cleanup_subgroup(sub_group);
+					goto fail;
+				}
+
+				util_debug(func, NULL, "%s #%u: len %u type %u",
+						"CC", i, ltv->len, ltv->type);
+
+				caps = util_iov_pull_mem(&iov, ltv->len - 1);
+				if (!caps) {
+					util_debug(func, NULL,
+						"Unable to parse %s", "CC");
+					cleanup_subgroup(sub_group);
+					goto fail;
+				}
+				util_hexdump(' ', caps, ltv->len - 1, func,
+									NULL);
+
+				caps_len -= (ltv->len + 1);
+			}
+
+			queue_push_tail(sub_group->bises, bis);
+		}
+
+		queue_push_tail(base->subgroups, sub_group);
+	}
+	return true;
+
+fail:
+	while (!queue_isempty(base->subgroups)) {
+		struct bt_bap_subgroup *subGroup =
+				queue_peek_head(base->subgroups);
+		cleanup_subgroup(subGroup);
+		base->num_subgroups--;
+	}
+	util_debug(func, NULL, "Unable to parse %s", "Base");
+
+	return false;
 }
