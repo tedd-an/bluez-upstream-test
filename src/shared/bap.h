@@ -4,7 +4,7 @@
  *  BlueZ - Bluetooth protocol stack for Linux
  *
  *  Copyright (C) 2022  Intel Corporation. All rights reserved.
- *  Copyright 2023 NXP
+ *  Copyright 2023-2024 NXP
  *
  */
 
@@ -101,13 +101,13 @@ struct bt_bap_qos {
 struct bt_bap_base {
 	uint32_t pres_delay;
 	uint8_t big_id;
-	uint8_t num_subgroups;
 	uint8_t next_bis_index;
+	uint8_t num_subgroups;
 	struct queue *subgroups;
 };
 
 struct bt_bap_subgroup {
-	uint8_t subgroup_index;
+	uint8_t index;
 	struct bt_bap *bap;
 	uint8_t num_bises;
 	struct bt_bap_codec codec;
@@ -197,6 +197,10 @@ uint16_t bt_bap_pac_get_supported_context(struct bt_bap_pac *pac);
 uint16_t bt_bap_pac_get_context(struct bt_bap_pac *pac);
 
 struct bt_bap_pac_qos *bt_bap_pac_get_qos(struct bt_bap_pac *pac);
+
+struct iovec *bt_bap_pac_get_data(struct bt_bap_pac *pac);
+
+struct iovec *bt_bap_pac_get_metadata(struct bt_bap_pac *pac);
 
 uint8_t bt_bap_stream_get_type(struct bt_bap_stream *stream);
 
@@ -349,4 +353,5 @@ struct iovec *bt_bap_stream_get_base(struct bt_bap_stream *stream);
 
 bool bt_bap_parse_base(struct bt_bap *bap, void *data, size_t len,
 		util_debug_func_t func, struct bt_bap_base *base);
+void bt_bap_parse_bis(void *data, void *user_data);
 
