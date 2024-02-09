@@ -5,7 +5,7 @@
  *
  *  Copyright (C) 2009-2010  Marcel Holtmann <marcel@holtmann.org>
  *  Copyright (C) 2009-2010  Nokia Corporation
- *  Copyright 2023 NXP
+ *  Copyright 2023-2024 NXP
  *
  *
  */
@@ -1981,7 +1981,9 @@ static GIOChannel *create_io(gboolean server, struct set_opts *opts,
 		if (!sco_set(sock, opts->mtu, opts->voice, err))
 			goto failed;
 		break;
-	case BT_IO_ISO:
+	case BT_IO_ISO: {
+		uint8_t zeroes[sizeof(opts->qos)] = {0};
+
 		sock = socket(PF_BLUETOOTH, SOCK_SEQPACKET, BTPROTO_ISO);
 		if (sock < 0) {
 			ERROR_FAILED(err, "socket(SEQPACKET, ISO)", errno);
@@ -1992,12 +1994,14 @@ static GIOChannel *create_io(gboolean server, struct set_opts *opts,
 				 &opts->dst, opts->dst_type, opts->bc_sid,
 				 opts->bc_num_bis, opts->bc_bis, err) < 0)
 			goto failed;
-		if (!iso_set_qos(sock, &opts->qos, err))
-			goto failed;
+		if (memcmp(&opts->qos, zeroes, sizeof(opts->qos)))
+			if (!iso_set_qos(sock, &opts->qos, err))
+				goto failed;
 		if (opts->base.base_len)
 			if (!iso_set_base(sock, &opts->base, err))
 				goto failed;
 		break;
+	}
 	case BT_IO_INVALID:
 	default:
 		g_set_error(err, BT_IO_ERROR, EINVAL,
