@@ -1677,12 +1677,6 @@ static unsigned int bap_bcast_config(struct bt_bap_stream *stream,
 				     bt_bap_stream_func_t func, void *user_data)
 {
 	stream->qos = *qos;
-	if (stream->lpac->type == BT_BAP_BCAST_SINK) {
-		if (data)
-			stream_config(stream, data, NULL);
-		stream_set_state(stream, BT_BAP_STREAM_STATE_CONFIG);
-	}
-
 	return 1;
 }
 
