@@ -926,6 +926,29 @@ static void setup_free(void *data)
 	free(setup);
 }
 
+static void iterate_setup_update_base(void *data, void *user_data)
+{
+	struct bap_setup *setup = data;
+	struct bap_setup *data_setup = user_data;
+
+	if ((setup->stream != data_setup->stream) &&
+		(setup->qos.bcast.big == data_setup->qos.bcast.big)) {
+
+		if (setup->base)
+			util_iov_free(setup->base, 1);
+
+		setup->base = util_iov_dup(data_setup->base, 1);
+	}
+}
+
+static void iterate_endpoints(void *data, void *user_data)
+{
+	struct bap_ep *ep = data;
+	struct bap_setup *setup = user_data;
+
+	queue_foreach(ep->setups, iterate_setup_update_base, setup);
+}
+
 static struct bap_ep *ep_register_bcast(struct bap_data *data,
 					struct bt_bap_pac *lpac,
 					struct bt_bap_pac *rpac);
@@ -984,7 +1007,6 @@ static DBusMessage *set_configuration(DBusConnection *conn, DBusMessage *msg,
 		if (bt_bap_pac_get_type(ep->lpac) == BT_BAP_BCAST_SINK)
 			setup->msg = dbus_message_ref(msg);
 		else {
-			setup->base = bt_bap_stream_get_base(setup->stream);
 			setup->id = 0;
 			/* Create a new endpoint for a new BIS */
 			if (!ep_register_bcast(ep->data, ep->lpac, ep->rpac))
@@ -1858,7 +1880,7 @@ static void setup_connect_io(struct bap_data *data, struct bap_setup *setup,
 static void setup_connect_io_broadcast(struct bap_data *data,
 					struct bap_setup *setup,
 					struct bt_bap_stream *stream,
-					struct bt_iso_qos *qos)
+					struct bt_iso_qos *qos, int defer)
 {
 	struct btd_adapter *adapter = data->user_data;
 	GIOChannel *io = NULL;
@@ -1895,7 +1917,7 @@ static void setup_connect_io_broadcast(struct bap_data *data,
 			BT_IO_OPT_MODE, BT_IO_MODE_ISO,
 			BT_IO_OPT_QOS, qos,
 			BT_IO_OPT_BASE, &base,
-			BT_IO_OPT_DEFER_TIMEOUT, false,
+			BT_IO_OPT_DEFER_TIMEOUT, defer,
 			BT_IO_OPT_INVALID);
 
 	if (!io) {
@@ -2024,9 +2046,6 @@ static void setup_create_bcast_io(struct bap_data *data,
 
 	memset(&iso_qos, 0, sizeof(iso_qos));
 
-	if (!defer)
-		goto done;
-
 	iso_qos.bcast.big = setup->qos.bcast.big;
 	iso_qos.bcast.bis = setup->qos.bcast.bis;
 	iso_qos.bcast.sync_factor = setup->qos.bcast.sync_factor;
@@ -2043,9 +2062,10 @@ static void setup_create_bcast_io(struct bap_data *data,
 	iso_qos.bcast.timeout = setup->qos.bcast.timeout;
 	memcpy(&iso_qos.bcast.out, &setup->qos.bcast.io_qos,
 				sizeof(struct bt_iso_io_qos));
-done:
+
 	if (bt_bap_pac_get_type(setup->ep->lpac) == BT_BAP_BCAST_SOURCE)
-		setup_connect_io_broadcast(data, setup, stream, &iso_qos);
+		setup_connect_io_broadcast(data, setup, stream, &iso_qos,
+			defer);
 	else
 		setup_listen_io_broadcast(data, setup, stream, &iso_qos);
 }
@@ -2132,12 +2152,60 @@ static void bap_state(struct bt_bap_stream *stream, uint8_t old_state,
 		break;
 	}
 }
+/*
+ * Function receives a list of streams ordered by BIS index
+ * and calls setup_create_io with defer true on all but the
+ * last one.
+ */
+static bool create_io_in_bis_order(struct bap_data *data,
+				struct queue *order_queue)
+{
+	const struct queue_entry *entry;
+	struct bt_bap_stream *stream;
+	struct bap_setup *setup;
+	bool defer = true;
+	uint8_t length = queue_length(order_queue);
+
+	for (entry = queue_get_entries(order_queue);
+				entry; entry = entry->next) {
+		stream = entry->data;
+		setup = bap_find_setup_by_stream(data, stream);
+
+		if (bt_bap_stream_get_qos(stream)->bcast.bis == length)
+			defer = false;
+
+		setup_create_io(data, setup, stream, defer);
+		if (!setup->io) {
+			error("Unable to create io");
+			goto fail;
+		}
+	}
+
+	return true;
+
+fail:
+	/* Clear the io of the created sockets if one
+	 * socket creation fails.
+	 */
+	for (entry = queue_get_entries(order_queue);
+				entry; entry = entry->next) {
+		stream = entry->data;
+		setup = bap_find_setup_by_stream(data, stream);
+
+		if (setup->io)
+			g_io_channel_unref(setup->io);
+	}
+
+	return false;
+}
 
 static void bap_state_bcast(struct bt_bap_stream *stream, uint8_t old_state,
 				uint8_t new_state, void *user_data)
 {
 	struct bap_data *data = user_data;
 	struct bap_setup *setup;
+	bool defer = false;
+	struct queue *order_queue = NULL;
 
 	DBG("stream %p: %s(%u) -> %s(%u)", stream,
 			bt_bap_stream_statestr(old_state), old_state,
@@ -2158,14 +2226,77 @@ static void bap_state_bcast(struct bt_bap_stream *stream, uint8_t old_state,
 			queue_remove(data->streams, stream);
 		break;
 	case BT_BAP_STREAM_STATE_CONFIG:
-		if (setup && !setup->id) {
-			setup_create_io(data, setup, stream, true);
+		if (!setup || setup->id)
+			break;
+		/* If the stream is attached to a
+		 * broadcast sink endpoint.
+		 */
+		if (bt_bap_stream_io_dir(stream) ==
+				BT_BAP_BCAST_SOURCE) {
+			setup_create_io(data, setup, stream, defer);
 			if (!setup->io) {
 				error("Unable to create io");
-				if (old_state != BT_BAP_STREAM_STATE_RELEASING)
-					bt_bap_stream_release(stream, NULL,
-								NULL);
-				return;
+				if (old_state !=
+					BT_BAP_STREAM_STATE_RELEASING)
+					bt_bap_stream_release(stream,
+							NULL, NULL);
+			}
+		} else {
+			/* If the stream attached to a broadcast
+			 * source endpoint generate the base.
+			 */
+			if (setup->base == NULL) {
+				setup->base = bt_bap_stream_get_base(
+						setup->stream);
+				/* Set the generated BASE on all setups
+				 * from the same BIG.
+				 */
+				queue_foreach(data->bcast,
+					iterate_endpoints, setup);
+			}
+			/* If there is only one BIS create the io
+			 * with defer false
+			 */
+			if (setup->qos.bcast.big == 0xFF) {
+				setup_create_io(data, setup,
+					stream, defer);
+				if (!setup->io) {
+					error("Unable to create io");
+					if (old_state !=
+						BT_BAP_STREAM_STATE_RELEASING)
+						bt_bap_stream_release(stream,
+								NULL, NULL);
+				}
+			} else {
+				/* The kernel has 2 requirements when handling
+				 * multiple BIS connections for the same BIG:
+				 * 1 - setup_create_io for all but the last BIS
+				 * must be with defer true so we can inform the
+				 * kernel when to start the BIG.
+				 * 2 - The order in which the setup_create_io
+				 * are called must be in the order of BIS
+				 * indexes in BASE from first to last.
+				 * To address this requirement we will call
+				 * setup_create_io on all BISes only when all
+				 * transport acquire have been received and will
+				 * send it in the order of the BIS index
+				 * from BASE.
+				 */
+				order_queue = bt_bap_get_streams_by_state(
+					setup->stream,
+					BT_BAP_STREAM_STATE_CONFIG);
+				if (!order_queue)
+					break;
+
+				if (!create_io_in_bis_order(data,
+								order_queue)) {
+					if (old_state !=
+						BT_BAP_STREAM_STATE_RELEASING)
+						bt_bap_stream_release(stream,
+							NULL, NULL);
+				}
+
+				queue_destroy(order_queue, NULL);
 			}
 		}
 		break;
