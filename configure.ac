@@ -443,11 +443,11 @@ AC_ARG_WITH([phonebook], AS_HELP_STRING([--with-phonebook=PLUGIN],
 			[plugin_phonebook=${withval}])
 if (test -z "${plugin_phonebook}"); then
 	plugin_phonebook=dummy
-fi
-
-if (test "${plugin_phonebook}" = "ebook"); then
+elif (test "${plugin_phonebook}" = "ebook"); then
 	PKG_CHECK_MODULES(LIBEBOOK, libebook-1.2 >= 3.3)
 	PKG_CHECK_MODULES(LIBEDATESERVER, libedataserver-1.2 >= 3.3)
+else
+	AC_MSG_ERROR([Unsupported phonebook backend ${plugin_phonebook}])
 fi
 AC_SUBST(PLUGIN_PHONEBOOK, [${plugin_phonebook}])
 
