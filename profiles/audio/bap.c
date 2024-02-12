@@ -926,6 +926,10 @@ static void setup_free(void *data)
 	free(setup);
 }
 
+static struct bap_ep *ep_register_bcast(struct bap_data *data,
+					struct bt_bap_pac *lpac,
+					struct bt_bap_pac *rpac);
+
 static DBusMessage *set_configuration(DBusConnection *conn, DBusMessage *msg,
 								void *data)
 {
@@ -982,6 +986,10 @@ static DBusMessage *set_configuration(DBusConnection *conn, DBusMessage *msg,
 		else {
 			setup->base = bt_bap_stream_get_base(setup->stream);
 			setup->id = 0;
+			/* Create a new endpoint for a new BIS */
+			if (!ep_register_bcast(ep->data, ep->lpac, ep->rpac))
+				error("Unable to register endpoint for pac %p",
+						ep->lpac);
 		}
 
 		if (ep->data->service)
@@ -1132,6 +1140,10 @@ static bool match_ep(const void *data, const void *user_data)
 {
 	const struct bap_ep *ep = data;
 	const struct match_ep *match = user_data;
+
+	if ((!ep->lpac) || (!ep->rpac) ||
+		(!match->lpac) || (!match->rpac))
+		return false;
 
 	if (ep->lpac != match->lpac)
 		return false;
