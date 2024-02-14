@@ -34,6 +34,15 @@ statedir = $(localstatedir)/lib/bluetooth
 install-data-hook:
 	install -dm555 $(DESTDIR)$(confdir)
 	install -dm700 $(DESTDIR)$(statedir)
+if OBEX
+if SYSTEMD
+	$(LN_S) -f obex.service $(DESTDIR)$(SYSTEMD_USERUNITDIR)/dbus-org.bluez.obex.service
+
+uninstall-hook:
+	rm -f $(DESTDIR)$(SYSTEMD_USERUNITDIR)/dbus-org.bluez.obex.service
+endif
+endif
+
 
 if DATAFILES
 dbusdir = $(DBUS_CONFDIR)/dbus-1/system.d
