@@ -8,6 +8,8 @@ fi
     ./configure --enable-maintainer-mode \
 		--enable-debug \
 		--prefix=/usr \
+		--exec-prefix=/usr \
+		--libexecdir=/usr/libexec \
 		--mandir=/usr/share/man \
 		--sysconfdir=/etc \
 		--localstatedir=/var \
