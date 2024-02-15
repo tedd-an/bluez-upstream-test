@@ -6115,3 +6115,36 @@ struct iovec *bt_bap_stream_get_base(struct bt_bap_stream *stream)
 
 	return base_iov;
 }
+
+/*
+ * Check the state of all streams with the same BIG ID.
+ * If all the streams are in the checked state, return
+ * number of this streams. Else, return 0.
+ */
+uint8_t bt_bap_get_streams_by_state(struct bt_bap_stream *stream,
+						uint8_t test_state)
+{
+	const struct queue_entry *entry;
+	struct bt_bap_stream *ent_stream;
+	uint8_t nb = 0;
+
+	for (entry = queue_get_entries(stream->bap->streams);
+				entry; entry = entry->next) {
+		ent_stream = entry->data;
+
+		if (ent_stream == stream) {
+			nb++;
+			continue;
+		}
+
+		if (ent_stream->qos.bcast.big != stream->qos.bcast.big)
+			continue;
+
+		if (ent_stream->bcast_state != test_state)
+			return 0;
+
+		nb++;
+	}
+
+	return nb;
+}
