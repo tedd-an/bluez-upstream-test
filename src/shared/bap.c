@@ -5038,6 +5038,10 @@ static bool find_ep_pacs(const void *data, const void *user_data)
 	case BT_BAP_STREAM_STATE_CONFIG:
 	case BT_BAP_STREAM_STATE_QOS:
 		return true;
+	default:
+		if (ep->stream->lpac->type ==
+				BT_BAP_BCAST_SOURCE)
+			return true;
 	}
 
 	return false;
@@ -5159,7 +5163,7 @@ struct bt_bap_stream *bt_bap_stream_new(struct bt_bap *bap,
 					struct bt_bap_qos *pqos,
 					struct iovec *data)
 {
-	struct bt_bap_stream *stream;
+	struct bt_bap_stream *stream = NULL;
 	struct bt_bap_endpoint *ep;
 	struct match_pac match;
 
@@ -5227,7 +5231,8 @@ struct bt_bap_stream *bt_bap_stream_new(struct bt_bap *bap,
 		}
 	}
 
-	stream = ep->stream;
+	if (lpac->type != BT_BAP_BCAST_SOURCE)
+		stream = ep->stream;
 	if (!stream)
 		stream = bap_stream_new(bap, ep, lpac, rpac, data, true);
 
