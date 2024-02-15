@@ -538,7 +538,7 @@ endif
 endif
 
 if CUPS
-cupsdir = $(libdir)/cups/backend
+cupsdir = $(libexecdir)/cups/backend
 
 cups_PROGRAMS = profiles/cups/bluetooth
 
