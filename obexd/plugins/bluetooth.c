@@ -22,7 +22,7 @@
 
 #include <glib.h>
 
-#include "lib/bluetooth.h"
+#include "lib/bluetooth/bluetooth.h"
 #include "lib/uuid.h"
 
 #include "gdbus/gdbus.h"

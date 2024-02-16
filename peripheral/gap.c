@@ -15,7 +15,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "lib/bluetooth.h"
+#include "lib/bluetooth/bluetooth.h"
 #include "lib/mgmt.h"
 #include "src/shared/util.h"
 #include "src/shared/mgmt.h"

@@ -17,8 +17,8 @@
 #include <stdio.h>
 #include <inttypes.h>
 
-#include "lib/bluetooth.h"
-#include "lib/hci.h"
+#include "lib/bluetooth/bluetooth.h"
+#include "lib/bluetooth/hci.h"
 
 #include "src/shared/util.h"
 #include "display.h"

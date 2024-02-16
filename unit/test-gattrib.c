@@ -23,7 +23,7 @@
 #include <glib.h>
 
 #include "src/shared/util.h"
-#include "lib/bluetooth.h"
+#include "lib/bluetooth/bluetooth.h"
 #include "lib/uuid.h"
 #include "attrib/att.h"
 #include "attrib/gattrib.h"

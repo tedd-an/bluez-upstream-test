@@ -11,7 +11,7 @@
 #include "src/shared/util.h"
 #include "src/shared/tester.h"
 #include "src/shared/queue.h"
-#include "lib/bluetooth.h"
+#include "lib/bluetooth/bluetooth.h"
 #include "android/utils.h"
 #include "tester-main.h"
 

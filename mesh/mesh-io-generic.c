@@ -20,7 +20,7 @@
 #include "monitor/bt.h"
 #include "src/shared/hci.h"
 #include "src/shared/mgmt.h"
-#include "lib/bluetooth.h"
+#include "lib/bluetooth/bluetooth.h"
 #include "lib/mgmt.h"
 
 #include "mesh/mesh-defs.h"

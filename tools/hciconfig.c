@@ -27,9 +27,9 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 
-#include "lib/bluetooth.h"
-#include "lib/hci.h"
-#include "lib/hci_lib.h"
+#include "lib/bluetooth/bluetooth.h"
+#include "lib/bluetooth/hci.h"
+#include "lib/bluetooth/hci_lib.h"
 
 #include "src/textfile.h"
 #include "src/shared/util.h"

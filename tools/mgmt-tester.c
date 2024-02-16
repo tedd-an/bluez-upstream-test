@@ -24,11 +24,11 @@
 
 #include <glib.h>
 
-#include "lib/bluetooth.h"
-#include "lib/hci.h"
-#include "lib/hci_lib.h"
+#include "lib/bluetooth/bluetooth.h"
+#include "lib/bluetooth/hci.h"
+#include "lib/bluetooth/hci_lib.h"
 #include "lib/mgmt.h"
-#include "lib/l2cap.h"
+#include "lib/bluetooth/l2cap.h"
 
 #include "monitor/bt.h"
 #include "emulator/vhci.h"

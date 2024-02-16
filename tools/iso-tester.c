@@ -20,7 +20,7 @@
 
 #include <glib.h>
 
-#include "lib/bluetooth.h"
+#include "lib/bluetooth/bluetooth.h"
 #include "lib/iso.h"
 #include "lib/mgmt.h"
 

@@ -18,7 +18,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "lib/bluetooth.h"
+#include "lib/bluetooth/bluetooth.h"
 
 #include "src/shared/util.h"
 #include "bt.h"

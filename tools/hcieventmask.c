@@ -18,9 +18,9 @@
 #include <getopt.h>
 #include <sys/socket.h>
 
-#include "lib/bluetooth.h"
-#include "lib/hci.h"
-#include "lib/hci_lib.h"
+#include "lib/bluetooth/bluetooth.h"
+#include "lib/bluetooth/hci.h"
+#include "lib/bluetooth/hci_lib.h"
 
 static struct option main_options[] = {
 	{ "device",	1, 0, 'i' },

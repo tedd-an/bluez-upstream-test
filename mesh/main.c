@@ -23,7 +23,7 @@
 #include <sys/stat.h>
 #include <ell/ell.h>
 
-#include "lib/bluetooth.h"
+#include "lib/bluetooth/bluetooth.h"
 #include "lib/mgmt.h"
 
 #include "mesh/mesh.h"

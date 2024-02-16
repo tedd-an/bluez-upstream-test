@@ -13,7 +13,7 @@
 #include <sys/wait.h>
 #include <sys/signalfd.h>
 
-#include "lib/bluetooth.h"
+#include "lib/bluetooth/bluetooth.h"
 #include "lib/mgmt.h"
 #include "src/shared/util.h"
 #include "src/shared/tester.h"

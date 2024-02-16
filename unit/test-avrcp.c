@@ -26,7 +26,7 @@
 #include "src/shared/util.h"
 #include "src/shared/tester.h"
 #include "src/log.h"
-#include "lib/bluetooth.h"
+#include "lib/bluetooth/bluetooth.h"
 
 #include "android/avctp.h"
 #include "android/avrcp-lib.h"

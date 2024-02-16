@@ -21,8 +21,8 @@
 
 #include "ipc.h"
 #include "ipc-common.h"
-#include "lib/sdp.h"
-#include "lib/sdp_lib.h"
+#include "lib/bluetooth/sdp.h"
+#include "lib/bluetooth/sdp_lib.h"
 #include "lib/uuid.h"
 #include "bluetooth.h"
 #include "gatt.h"

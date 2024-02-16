@@ -24,13 +24,13 @@
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 
-#include "lib/bluetooth.h"
-#include "lib/hci.h"
-#include "lib/hci_lib.h"
-#include "lib/l2cap.h"
-#include "lib/sdp.h"
-#include "lib/sdp_lib.h"
-#include "lib/cmtp.h"
+#include "lib/bluetooth/bluetooth.h"
+#include "lib/bluetooth/hci.h"
+#include "lib/bluetooth/hci_lib.h"
+#include "lib/bluetooth/l2cap.h"
+#include "lib/bluetooth/sdp.h"
+#include "lib/bluetooth/sdp_lib.h"
+#include "lib/bluetooth/cmtp.h"
 
 static volatile sig_atomic_t __io_canceled = 0;
 

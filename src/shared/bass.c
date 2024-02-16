@@ -16,7 +16,7 @@
 #include <errno.h>
 #include <poll.h>
 
-#include "lib/bluetooth.h"
+#include "lib/bluetooth/bluetooth.h"
 #include "lib/uuid.h"
 #include "lib/iso.h"
 

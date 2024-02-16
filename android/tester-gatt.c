@@ -8,7 +8,7 @@
 #include <stdbool.h>
 
 #include "emulator/bthost.h"
-#include "lib/bluetooth.h"
+#include "lib/bluetooth/bluetooth.h"
 #include "src/shared/util.h"
 #include "src/shared/tester.h"
 #include "src/shared/queue.h"

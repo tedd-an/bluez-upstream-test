@@ -20,8 +20,8 @@
 
 #include <glib.h>
 
-#include "lib/bluetooth.h"
-#include "lib/bnep.h"
+#include "lib/bluetooth/bluetooth.h"
+#include "lib/bluetooth/bnep.h"
 #include "lib/mgmt.h"
 
 #include "monitor/bt.h"

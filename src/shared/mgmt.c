@@ -17,9 +17,9 @@
 #include <string.h>
 #include <errno.h>
 
-#include "lib/bluetooth.h"
+#include "lib/bluetooth/bluetooth.h"
 #include "lib/mgmt.h"
-#include "lib/hci.h"
+#include "lib/bluetooth/hci.h"
 
 #include "src/shared/io.h"
 #include "src/shared/queue.h"

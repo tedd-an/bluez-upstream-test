@@ -21,8 +21,8 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 
-#include "lib/bluetooth.h"
-#include "lib/hci.h"
+#include "lib/bluetooth/bluetooth.h"
+#include "lib/bluetooth/hci.h"
 
 #include "src/shared/util.h"
 #include "src/shared/mainloop.h"

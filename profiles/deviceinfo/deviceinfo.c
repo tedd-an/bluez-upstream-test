@@ -17,8 +17,8 @@
 
 #include <glib.h>
 
-#include "lib/bluetooth.h"
-#include "lib/sdp.h"
+#include "lib/bluetooth/bluetooth.h"
+#include "lib/bluetooth/sdp.h"
 #include "lib/uuid.h"
 
 #include "src/plugin.h"

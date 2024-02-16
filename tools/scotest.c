@@ -25,8 +25,8 @@
 #include <sys/time.h>
 #include <sys/socket.h>
 
-#include "lib/bluetooth.h"
-#include "lib/sco.h"
+#include "lib/bluetooth/bluetooth.h"
+#include "lib/bluetooth/sco.h"
 
 #include "src/shared/util.h"
 

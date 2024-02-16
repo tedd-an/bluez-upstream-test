@@ -28,11 +28,11 @@
 #include <wordexp.h>
 #include <ctype.h>
 
-#include "lib/bluetooth.h"
-#include "lib/hci.h"
-#include "lib/hci_lib.h"
-#include "lib/sdp.h"
-#include "lib/sdp_lib.h"
+#include "lib/bluetooth/bluetooth.h"
+#include "lib/bluetooth/hci.h"
+#include "lib/bluetooth/hci_lib.h"
+#include "lib/bluetooth/sdp.h"
+#include "lib/bluetooth/sdp_lib.h"
 #include "lib/uuid.h"
 
 #include "src/uuid-helper.h"

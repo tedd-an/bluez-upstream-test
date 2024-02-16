@@ -19,8 +19,8 @@
 #include <sys/capability.h>
 #endif
 
-#include "lib/bluetooth.h"
-#include "lib/hci.h"
+#include "lib/bluetooth/bluetooth.h"
+#include "lib/bluetooth/hci.h"
 #include "lib/mgmt.h"
 
 #include "src/shared/mainloop.h"

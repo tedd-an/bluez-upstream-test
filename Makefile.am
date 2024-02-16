@@ -67,16 +67,23 @@ manual_pages =
 plugin_LTLIBRARIES =
 
 lib_sources = lib/bluetooth.c lib/hci.c lib/sdp.c
-lib_headers = lib/bluetooth.h lib/hci.h lib/hci_lib.h \
-		lib/sco.h lib/l2cap.h lib/sdp.h lib/sdp_lib.h \
-		lib/rfcomm.h lib/bnep.h lib/cmtp.h lib/hidp.h
+lib_headers = \
+	lib/bluetooth/bluetooth.h \
+	lib/bluetooth/bnep.h \
+	lib/bluetooth/cmtp.h \
+	lib/bluetooth/hci.h \
+	lib/bluetooth/hci_lib.h \
+	lib/bluetooth/hidp.h \
+	lib/bluetooth/l2cap.h \
+	lib/bluetooth/rfcomm.h \
+	lib/bluetooth/sco.h \
+	lib/bluetooth/sdp.h \
+	lib/bluetooth/sdp_lib.h
 
 extra_headers = lib/mgmt.h lib/uuid.h lib/a2mp.h lib/amp.h lib/iso.h
 extra_sources = lib/uuid.c
 
-local_headers = $(foreach file,$(lib_headers), lib/bluetooth/$(notdir $(file)))
-
-BUILT_SOURCES = $(local_headers) $(ell_built_sources) src/builtin.h
+BUILT_SOURCES = $(ell_built_sources) src/builtin.h
 
 if LIBRARY
 pkginclude_HEADERS += $(lib_headers)
@@ -490,7 +497,7 @@ EXTRA_DIST += doc/btsnoop.txt
 
 EXTRA_DIST += tools/magic.btsnoop
 
-AM_CPPFLAGS += $(DBUS_CFLAGS) $(GLIB_CFLAGS) -I$(builddir)/lib
+AM_CPPFLAGS += $(DBUS_CFLAGS) $(GLIB_CFLAGS)
 
 unit_tests += unit/test-tester
 
@@ -756,12 +763,6 @@ endif
 src/builtin.h: src/genbuiltin $(builtin_sources)
 	$(AM_V_GEN)$(srcdir)/src/genbuiltin $(builtin_modules) > $@
 
-$(lib_libbluetooth_la_OBJECTS): $(local_headers)
-
-lib/bluetooth/%.h: lib/%.h
-	$(AM_V_at)$(MKDIR_P) lib/bluetooth
-	$(AM_V_GEN)$(LN_S) -f $(abspath $<) $@
-
 ell/shared: Makefile
 	$(AM_V_at)$(MKDIR_P) ell
 	$(AM_V_GEN)for f in $(ell_shared) ; do \
@@ -802,4 +803,3 @@ endif
 clean-local: clean-coverage
 	-find $(top_builddir) -name "*.gcno" -delete
 	-find $(top_builddir) -name "*.gcda" -delete
-	$(RM) -r lib/bluetooth

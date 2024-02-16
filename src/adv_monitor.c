@@ -21,7 +21,7 @@
 #include <dbus/dbus.h>
 #include <gdbus/gdbus.h>
 
-#include "lib/bluetooth.h"
+#include "lib/bluetooth/bluetooth.h"
 #include "lib/mgmt.h"
 
 #include "adapter.h"

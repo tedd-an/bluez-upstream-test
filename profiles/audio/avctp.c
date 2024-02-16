@@ -29,9 +29,9 @@
 
 #include <glib.h>
 
-#include "lib/bluetooth.h"
-#include "lib/sdp.h"
-#include "lib/l2cap.h"
+#include "lib/bluetooth/bluetooth.h"
+#include "lib/bluetooth/sdp.h"
+#include "lib/bluetooth/l2cap.h"
 #include "lib/uuid.h"
 
 #include "btio/btio.h"

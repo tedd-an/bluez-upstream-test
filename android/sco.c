@@ -17,7 +17,7 @@
 
 #include <glib.h>
 
-#include "lib/bluetooth.h"
+#include "lib/bluetooth/bluetooth.h"
 #include "btio/btio.h"
 #include "src/log.h"
 #include "src/shared/util.h"

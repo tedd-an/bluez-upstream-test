@@ -30,8 +30,8 @@
 #include "parser/parser.h"
 #include "parser/sdp.h"
 
-#include "lib/hci.h"
-#include "lib/hci_lib.h"
+#include "lib/bluetooth/hci.h"
+#include "lib/bluetooth/hci_lib.h"
 
 #define SNAP_LEN	HCI_MAX_FRAME_SIZE
 

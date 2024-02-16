@@ -23,8 +23,8 @@
 #include <string.h>
 #include <sys/socket.h>
 
-#include "bluetooth.h"
-#include "hci.h"
+#include "bluetooth/bluetooth.h"
+#include "bluetooth/hci.h"
 
 void baswap(bdaddr_t *dst, const bdaddr_t *src)
 {

@@ -20,7 +20,7 @@
 #include <ctype.h>
 #include <inttypes.h>
 
-#include "lib/bluetooth.h"
+#include "lib/bluetooth/bluetooth.h"
 #include "lib/uuid.h"
 
 #include "src/shared/util.h"

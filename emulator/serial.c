@@ -25,8 +25,8 @@
 #include <sys/epoll.h>
 #include <sys/uio.h>
 
-#include "lib/bluetooth.h"
-#include "lib/hci.h"
+#include "lib/bluetooth/bluetooth.h"
+#include "lib/bluetooth/hci.h"
 
 #include "src/shared/mainloop.h"
 #include "btdev.h"

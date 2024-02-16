@@ -16,7 +16,7 @@
 #include <sys/time.h>
 #include <netinet/in.h>
 
-#include "lib/bluetooth.h"
+#include "lib/bluetooth/bluetooth.h"
 #include "src/shared/util.h"
 
 struct frame {

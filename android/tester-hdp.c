@@ -9,7 +9,7 @@
 #include <stdbool.h>
 
 #include "emulator/bthost.h"
-#include "lib/bluetooth.h"
+#include "lib/bluetooth/bluetooth.h"
 #include "android/utils.h"
 #include "src/shared/tester.h"
 #include "src/shared/queue.h"

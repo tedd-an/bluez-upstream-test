@@ -30,10 +30,10 @@
 #include <linux/if_bridge.h>
 
 #include "btio/btio.h"
-#include "lib/bluetooth.h"
-#include "lib/bnep.h"
-#include "lib/sdp.h"
-#include "lib/sdp_lib.h"
+#include "lib/bluetooth/bluetooth.h"
+#include "lib/bluetooth/bnep.h"
+#include "lib/bluetooth/sdp.h"
+#include "lib/bluetooth/sdp_lib.h"
 #include "src/uuid-helper.h"
 #include "profiles/network/bnep.h"
 #include "src/log.h"

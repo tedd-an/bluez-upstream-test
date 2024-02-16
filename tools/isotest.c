@@ -35,9 +35,9 @@
 #include <sys/wait.h>
 #include <poll.h>
 
-#include "lib/bluetooth.h"
-#include "lib/hci.h"
-#include "lib/hci_lib.h"
+#include "lib/bluetooth/bluetooth.h"
+#include "lib/bluetooth/hci.h"
+#include "lib/bluetooth/hci_lib.h"
 #include "lib/mgmt.h"
 #include "lib/iso.h"
 

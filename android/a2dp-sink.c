@@ -15,7 +15,7 @@
 #include <stdbool.h>
 #include <glib.h>
 
-#include "lib/bluetooth.h"
+#include "lib/bluetooth/bluetooth.h"
 #include "src/log.h"
 #include "hal-msg.h"
 #include "ipc.h"

@@ -17,12 +17,12 @@
 #include <stdint.h>
 #include <glib.h>
 
-#include "lib/sdp.h"
-#include "lib/sdp_lib.h"
+#include "lib/bluetooth/sdp.h"
+#include "lib/bluetooth/sdp_lib.h"
 #include "src/sdp-client.h"
 
 #include "ipc.h"
-#include "lib/bluetooth.h"
+#include "lib/bluetooth/bluetooth.h"
 #include "map-client.h"
 #include "src/log.h"
 #include "hal-msg.h"

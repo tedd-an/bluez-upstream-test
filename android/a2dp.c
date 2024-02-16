@@ -21,9 +21,9 @@
 #include <glib.h>
 
 #include "btio/btio.h"
-#include "lib/bluetooth.h"
-#include "lib/sdp.h"
-#include "lib/sdp_lib.h"
+#include "lib/bluetooth/bluetooth.h"
+#include "lib/bluetooth/sdp.h"
+#include "lib/bluetooth/sdp_lib.h"
 #include "profiles/audio/a2dp-codecs.h"
 #include "src/shared/queue.h"
 #include "src/shared/util.h"

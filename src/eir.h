@@ -11,7 +11,7 @@
 
 #include <glib.h>
 
-#include "lib/sdp.h"
+#include "lib/bluetooth/sdp.h"
 #include "lib/uuid.h"
 
 #define EIR_FLAGS                   0x01  /* flags */

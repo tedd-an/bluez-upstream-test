@@ -42,7 +42,7 @@ mesh_sources = mesh/mesh.h mesh/mesh.c \
 pkglibexec_PROGRAMS += mesh/bluetooth-meshd
 
 mesh/mesh.$(OBJEXT): ell/internal
-mesh/main.$(OBJEXT): src/builtin.h lib/bluetooth/bluetooth.h
+mesh/main.$(OBJEXT): src/builtin.h
 
 mesh_bluetooth_meshd_SOURCES = $(mesh_sources) mesh/main.c
 mesh_bluetooth_meshd_LDADD = src/libshared-ell.la $(ell_ldadd) -ljson-c

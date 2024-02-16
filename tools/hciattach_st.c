@@ -22,7 +22,7 @@
 #include <dirent.h>
 #include <sys/param.h>
 
-#include "lib/bluetooth.h"
+#include "lib/bluetooth/bluetooth.h"
 
 #include "hciattach.h"
 

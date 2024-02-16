@@ -17,10 +17,10 @@
 #include <unistd.h>
 #include <errno.h>
 
-#include "lib/bluetooth.h"
+#include "lib/bluetooth/bluetooth.h"
 #include "btio/btio.h"
-#include "lib/sdp.h"
-#include "lib/sdp_lib.h"
+#include "lib/bluetooth/sdp.h"
+#include "lib/bluetooth/sdp_lib.h"
 #include "src/sdp-client.h"
 #include "src/sdpd.h"
 #include "src/log.h"
