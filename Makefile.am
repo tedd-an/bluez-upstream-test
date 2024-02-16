@@ -429,11 +429,9 @@ if HID2HCI
 rulesdir = $(UDEV_DIR)/rules.d
 
 rules_DATA = tools/97-hid2hci.rules
-
-CLEANFILES += $(rules_DATA)
 endif
 
-EXTRA_DIST += tools/hid2hci.rules
+EXTRA_DIST += tools/97-hid2hci.rules
 
 if TEST
 testdir = $(pkglibdir)/test
@@ -757,10 +755,6 @@ endif
 
 src/builtin.h: src/genbuiltin $(builtin_sources)
 	$(AM_V_GEN)$(srcdir)/src/genbuiltin $(builtin_modules) > $@
-
-tools/%.rules:
-	$(AM_V_at)$(MKDIR_P) tools
-	$(AM_V_GEN)cp $(srcdir)/$(subst 97-,,$@) $@
 
 $(lib_libbluetooth_la_OBJECTS): $(local_headers)
 
