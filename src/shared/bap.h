@@ -354,4 +354,8 @@ struct iovec *bt_bap_stream_get_base(struct bt_bap_stream *stream);
 bool bt_bap_parse_base(struct bt_bap *bap, void *data, size_t len,
 		util_debug_func_t func, struct bt_bap_base *base);
 void bt_bap_parse_bis(void *data, void *user_data);
+void bt_bap_bcast_qos_iso_to_bap(struct bt_bap_qos *bap_qos,
+		struct bt_iso_qos *iso_qos);
+void bt_bap_bcast_qos_bap_to_iso(struct bt_iso_qos *iso_qos,
+		struct bt_bap_qos *bap_qos);
 
