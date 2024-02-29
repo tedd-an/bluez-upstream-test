@@ -3582,6 +3582,26 @@ static void cmd_register_endpoint(int argc, char *argv[])
 	}
 }
 
+static void cmd_new_local_endpoint(int argc, char *argv[])
+{
+	struct endpoint *ep;
+	char *endptr = NULL;
+
+	ep = g_new0(struct endpoint, 1);
+	ep->uuid = g_strdup(argv[1]);
+	ep->codec = strtol(argv[2], &endptr, 0);
+	ep->cid = 0x0000;
+	ep->vid = 0x0000;
+	ep->path = g_strdup_printf("%s/ep%u", BLUEZ_MEDIA_ENDPOINT_PATH,
+					g_list_length(local_endpoints));
+	local_endpoints = g_list_append(local_endpoints, ep);
+
+	ep->broadcast = true;
+	ep->auto_accept = true;
+	ep->preset = find_presets_name(ep->uuid, argv[2]);
+	bt_shell_printf("Endpoint %s registered\n", ep->path);
+}
+
 static void unregister_endpoint_setup(DBusMessageIter *iter, void *user_data)
 {
 	struct endpoint *ep = user_data;
@@ -4286,6 +4306,10 @@ static const struct bt_shell_menu endpoint_menu = {
 	{ "presets",      "<UUID> <codec[:company]> [default]",
 						cmd_presets_endpoint,
 						"List available presets",
+						uuid_generator },
+	{ "new_local_ep",  "<UUID> <codec[:company]>",
+						cmd_new_local_endpoint,
+						"Create local endpoint",
 						uuid_generator },
 	{} },
 };
