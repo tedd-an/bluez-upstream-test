@@ -4263,6 +4263,8 @@ done:
 	return bt_shell_noninteractive_quit(EXIT_SUCCESS);
 }
 
+static void cmd_new_local_endpoint(int argc, char *argv[]);
+
 static const struct bt_shell_menu endpoint_menu = {
 	.name = "endpoint",
 	.desc = "Media Endpoint Submenu",
@@ -4286,6 +4288,10 @@ static const struct bt_shell_menu endpoint_menu = {
 	{ "presets",      "<UUID> <codec[:company]> [default]",
 						cmd_presets_endpoint,
 						"List available presets",
+						uuid_generator },
+	{ "new_local_ep",  "<UUID> <codec[:company]>",
+						cmd_new_local_endpoint,
+						"Create local endpoint",
 						uuid_generator },
 	{} },
 };
@@ -4370,6 +4376,27 @@ static void register_endpoints(GDBusProxy *proxy)
 		endpoint_init_defaults(ep);
 		endpoint_register(ep);
 	}
+}
+
+static void cmd_new_local_endpoint(int argc, char *argv[])
+{
+	struct endpoint *ep = NULL;
+	size_t i;
+	char *uuid = g_strdup(argv[1]);
+
+	for (i = 0; i < ARRAY_SIZE(caps); i++) {
+		const struct capabilities *cap = &caps[i];
+
+		if (strcasecmp(cap->uuid, uuid))
+			continue;
+
+		ep = endpoint_new(cap);
+		endpoint_init_defaults(ep);
+		break;
+	}
+
+	if (ep)
+		bt_shell_printf("Endpoint %s registered\n", ep->path);
 }
 
 static void media_added(GDBusProxy *proxy)
