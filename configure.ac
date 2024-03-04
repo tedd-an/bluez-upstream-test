@@ -247,7 +247,9 @@ AC_ARG_ENABLE(cups, AS_HELP_STRING([--disable-cups],
                 [disable CUPS printer support]), [enable_cups=${enableval}])
 AM_CONDITIONAL(CUPS, test "${enable_cups}" != "no")
 if (test "${enable_cups}" != "no"); then
-   AC_SUBST(CUPSDIR, `$PKG_CONFIG cups --variable=cups_serverbin`/backend)
+	AM_CONDITIONAL(CUPSDIR,
+		test `$PKG_CONFIG cups --variable=cups_serverbin` != "")
+	AC_SUBST(CUPSDIR, `$PKG_CONFIG cups --variable=cups_serverbin`)
 fi
 
 AC_ARG_ENABLE(mesh, AS_HELP_STRING([--enable-mesh],
