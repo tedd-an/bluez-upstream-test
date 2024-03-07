@@ -39,6 +39,8 @@
 #include "src/btd.h"
 #include "src/dbus-common.h"
 #include "src/shared/util.h"
+#include "src/shared/io.h"
+#include "src/shared/io-glib.h"
 #include "src/shared/att.h"
 #include "src/shared/queue.h"
 #include "src/shared/gatt-db.h"
@@ -1867,8 +1869,9 @@ static void setup_connect_io(struct bap_data *data, struct bap_setup *setup,
 		return;
 	}
 
-	setup->io_id = g_io_add_watch(io, G_IO_HUP | G_IO_ERR | G_IO_NVAL,
-						setup_io_disconnected, setup);
+	setup->io_id = io_glib_add_err_watch(io,
+					G_IO_HUP | G_IO_ERR | G_IO_NVAL,
+					setup_io_disconnected, setup);
 
 	setup->io = io;
 	setup->cig_active = !defer;
@@ -1925,7 +1928,8 @@ static void setup_connect_io_broadcast(struct bap_data *data,
 		return;
 	}
 
-	setup->io_id = g_io_add_watch(io, G_IO_HUP | G_IO_ERR | G_IO_NVAL,
+	setup->io_id = io_glib_add_err_watch(io,
+					G_IO_HUP | G_IO_ERR | G_IO_NVAL,
 					setup_io_disconnected, setup);
 
 	setup->io = io;
@@ -2558,7 +2562,7 @@ static void bap_connecting(struct bt_bap_stream *stream, bool state, int fd,
 
 	if (!setup->io) {
 		io = g_io_channel_unix_new(fd);
-		setup->io_id = g_io_add_watch(io,
+		setup->io_id = io_glib_add_err_watch(io,
 					      G_IO_HUP | G_IO_ERR | G_IO_NVAL,
 					      setup_io_disconnected, setup);
 		setup->io = io;
@@ -2603,7 +2607,7 @@ static void bap_connecting_bcast(struct bt_bap_stream *stream, bool state,
 
 	if (!setup->io) {
 		io = g_io_channel_unix_new(fd);
-		setup->io_id = g_io_add_watch(io,
+		setup->io_id = io_glib_add_err_watch(io,
 				G_IO_HUP | G_IO_ERR | G_IO_NVAL,
 				setup_io_disconnected, setup);
 		setup->io = io;

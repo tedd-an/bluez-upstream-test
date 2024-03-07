@@ -20,6 +20,7 @@
 #include "lib/uuid.h"
 
 #include "src/shared/io.h"
+#include "src/shared/io-glib.h"
 #include "src/shared/queue.h"
 #include "src/shared/util.h"
 #include "src/shared/timeout.h"
@@ -2129,6 +2130,8 @@ static struct bt_bap_stream_io *stream_io_new(struct bt_bap *bap, int fd)
 		return NULL;
 
 	DBG(bap, "fd %d", fd);
+
+	io_set_use_err_watch(io, true);
 
 	sio = new0(struct bt_bap_stream_io, 1);
 	sio->bap = bap;
