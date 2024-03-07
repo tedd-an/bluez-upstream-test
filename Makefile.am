@@ -48,10 +48,10 @@ endif
 if SYSTEMD
 systemdsystemunitdir = $(SYSTEMD_SYSTEMUNITDIR)
 systemdsystemunit_DATA = src/bluetooth.service
+endif
 
 dbussystembusdir = $(DBUS_SYSTEMBUSDIR)
 dbussystembus_DATA = src/org.bluez.service
-endif
 
 EXTRA_DIST += src/org.bluez.service
 
