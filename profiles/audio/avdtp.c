@@ -31,6 +31,8 @@
 #include "btio/btio.h"
 #include "src/btd.h"
 #include "src/log.h"
+#include "src/shared/io.h"
+#include "src/shared/io-glib.h"
 #include "src/shared/timeout.h"
 #include "src/shared/util.h"
 #include "src/shared/queue.h"
@@ -862,7 +864,8 @@ proceed:
 
 	avdtp_sep_set_state(session, sep, AVDTP_STATE_OPEN);
 
-	stream->io_id = g_io_add_watch(io, G_IO_ERR | G_IO_HUP | G_IO_NVAL,
+	stream->io_id = io_glib_add_err_watch(io,
+					G_IO_ERR | G_IO_HUP | G_IO_NVAL,
 					(GIOFunc) transport_cb, stream);
 
 	/* Release pending IO */
