@@ -3809,6 +3809,48 @@ static void config_endpoint_iso_group(const char *input, void *user_data)
 	}
 }
 
+static void endpoint_set_reconfigure_cfg(const char *input, void *user_data)
+{
+	char *endptr = NULL;
+	int value;
+	struct endpoint_config *cfg = user_data;
+
+	value = strtol(input, &endptr, 0);
+
+	if (!endptr || *endptr != '\0' || value > UINT8_MAX) {
+		bt_shell_printf("Invalid argument: %s\n", input);
+		return bt_shell_noninteractive_quit(EXIT_FAILURE);
+	}
+
+	cfg->ep->iso_stream = value;
+
+	bt_shell_prompt_input(cfg->ep->path,
+		"BIG (auto/value):",
+		config_endpoint_iso_group, cfg);
+}
+
+static void endpoint_is_reconfigure_cfg(const char *input, void *user_data)
+{
+	struct endpoint_config *cfg = user_data;
+
+	if (!strcasecmp(input, "n") || !strcasecmp(input, "no")) {
+		cfg->ep->iso_stream = BT_ISO_QOS_STREAM_UNSET;
+		goto done;
+	} else {
+		bt_shell_printf("The BIS index is assigned  in the order of "
+				"the configuration starting with 1\n");
+		bt_shell_prompt_input(cfg->ep->path,
+		"BIS Index (value):",
+		endpoint_set_reconfigure_cfg, cfg);
+		return;
+	}
+
+done:
+	bt_shell_prompt_input(cfg->ep->path,
+		"BIG (auto/value):",
+		config_endpoint_iso_group, cfg);
+}
+
 static void endpoint_set_config_bcast(struct endpoint_config *cfg)
 {
 	cfg->ep->bcode = g_new0(struct iovec, 1);
@@ -3835,8 +3877,8 @@ static void endpoint_set_config_bcast(struct endpoint_config *cfg)
 	}
 
 	bt_shell_prompt_input(cfg->ep->path,
-		"BIG (auto/value):",
-		config_endpoint_iso_group, cfg);
+		"This is a BIS reconfiguration? (yes/no):",
+		endpoint_is_reconfigure_cfg, cfg);
 }
 
 static void cmd_config_endpoint(int argc, char *argv[])
