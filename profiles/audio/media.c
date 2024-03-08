@@ -1154,7 +1154,8 @@ static int pac_config(struct bt_bap_stream *stream, struct iovec *cfg,
 
 		endpoint->transports = g_slist_append(endpoint->transports,
 								transport);
-	}
+	} else if (bt_bap_stream_get_dir(stream) == BT_BAP_BCAST_SINK)
+		bap_update_bcast_config(transport);
 
 	msg = dbus_message_new_method_call(endpoint->sender, endpoint->path,
 						MEDIA_ENDPOINT_INTERFACE,

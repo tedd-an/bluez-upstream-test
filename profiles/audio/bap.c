@@ -580,6 +580,11 @@ static int setup_parse_bcast_qos(struct bap_setup *setup, const char *key,
 			return -EINVAL;
 
 		dbus_message_iter_get_basic(iter, &qos->bcast.big);
+	} else if (!strcasecmp(key, "BIS")) {
+		if (var != DBUS_TYPE_BYTE)
+			return -EINVAL;
+
+		dbus_message_iter_get_basic(iter, &qos->bcast.bis);
 	} else if (!strcasecmp(key, "Options")) {
 		if (var != DBUS_TYPE_BYTE)
 			return -EINVAL;
@@ -881,6 +886,62 @@ static void setup_free(void *data)
 	free(setup);
 }
 
+static void iterate_setups(struct bap_setup *setup)
+{
+	const struct queue_entry *entry;
+	struct bap_setup *ent_setup;
+	uint8_t bis_cnt = 1;
+
+	for (entry = queue_get_entries(setup->ep->setups);
+				entry; entry = entry->next) {
+		ent_setup = entry->data;
+
+		if (setup->qos.bcast.big != ent_setup->qos.bcast.big)
+			continue;
+
+		util_iov_free(setup->base, 1);
+		setup->base = NULL;
+
+		if (setup->qos.bcast.bis == bis_cnt) {
+			util_iov_free(ent_setup->caps, 1);
+			ent_setup->caps = util_iov_dup(setup->caps, 1);
+			util_iov_free(ent_setup->metadata, 1);
+			ent_setup->metadata = util_iov_dup(setup->metadata, 1);
+			memcpy(&ent_setup->qos, &setup->qos,
+				sizeof(struct bt_bap_bcast_qos));
+			ent_setup->qos.bcast.bcode = util_iov_dup(
+						setup->qos.bcast.bcode, 1);
+
+			bt_bap_stream_config(ent_setup->stream, &setup->qos,
+						setup->caps, NULL, NULL);
+			bt_bap_stream_metadata(ent_setup->stream,
+					setup->metadata, NULL, NULL);
+		}
+
+		bis_cnt++;
+	}
+}
+
+static bool verify_state(struct bap_setup *setup)
+{
+	const struct queue_entry *entry;
+	struct bap_setup *ent_setup;
+
+	for (entry = queue_get_entries(setup->ep->setups);
+				entry; entry = entry->next) {
+		ent_setup = entry->data;
+
+		if (setup->qos.bcast.big != ent_setup->qos.bcast.big)
+			continue;
+
+		if (bt_bap_stream_get_state(ent_setup->stream) ==
+				BT_BAP_STREAM_STATE_STREAMING)
+			return false;
+	}
+
+	return true;
+}
+
 static DBusMessage *set_configuration(DBusConnection *conn, DBusMessage *msg,
 								void *data)
 {
@@ -922,6 +983,30 @@ static DBusMessage *set_configuration(DBusConnection *conn, DBusMessage *msg,
 		util_iov_free(setup->metadata, 1);
 		setup->metadata = util_iov_dup(
 				bt_bap_pac_get_metadata(ep->rpac), 1);
+	} else if (bt_bap_pac_get_type(ep->lpac) == BT_BAP_BCAST_SOURCE) {
+		if (setup->qos.bcast.bis != BT_ISO_QOS_BIS_UNSET) {
+			if ((setup->qos.bcast.bis > queue_length(ep->setups)) ||
+					(setup->qos.bcast.bis == 0)) {
+				setup_free(setup);
+				return btd_error_invalid_args(msg);
+			}
+
+			/* Verify that no BIS in the BIG is in streaming state
+			 */
+			if (!verify_state(setup)) {
+				setup_free(setup);
+				return btd_error_not_permitted(msg,
+						"Broadcast Audio Stream state is invalid");
+			}
+
+			/* Find and updated the BIS specified in
+			 * set_configuration command
+			 */
+			iterate_setups(setup);
+
+			setup_free(setup);
+			return g_dbus_create_reply(msg, DBUS_TYPE_INVALID);
+		}
 	}
 
 	setup->stream = bt_bap_stream_new(ep->data->bap, ep->lpac, ep->rpac,
