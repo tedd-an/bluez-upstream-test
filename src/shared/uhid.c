@@ -31,6 +31,9 @@ struct bt_uhid {
 	struct io *io;
 	unsigned int notify_id;
 	struct queue *notify_list;
+	struct queue *input;
+	bool created;
+	bool started;
 };
 
 struct uhid_notify {
@@ -47,6 +50,9 @@ static void uhid_free(struct bt_uhid *uhid)
 
 	if (uhid->notify_list)
 		queue_destroy(uhid->notify_list, free);
+
+	if (uhid->input)
+		queue_destroy(uhid->input, free);
 
 	free(uhid);
 }
@@ -215,13 +221,10 @@ bool bt_uhid_unregister_all(struct bt_uhid *uhid)
 	return true;
 }
 
-int bt_uhid_send(struct bt_uhid *uhid, const struct uhid_event *ev)
+static int uhid_send(struct bt_uhid *uhid, const struct uhid_event *ev)
 {
 	ssize_t len;
 	struct iovec iov;
-
-	if (!uhid->io)
-		return -ENOTCONN;
 
 	iov.iov_base = (void *) ev;
 	iov.iov_len = sizeof(*ev);
@@ -232,4 +235,127 @@ int bt_uhid_send(struct bt_uhid *uhid, const struct uhid_event *ev)
 
 	/* uHID kernel driver does not handle partial writes */
 	return len != sizeof(*ev) ? -EIO : 0;
+}
+
+int bt_uhid_send(struct bt_uhid *uhid, const struct uhid_event *ev)
+{
+	if (!uhid->io)
+		return -ENOTCONN;
+
+	/* Queue events if uhid has not been created yet */
+	if (!uhid->started) {
+		if (!uhid->input)
+			uhid->input = queue_new();
+
+		queue_push_tail(uhid->input, util_memdup(&ev, sizeof(ev)));
+		return 0;
+	}
+
+	return uhid_send(uhid, ev);
+}
+
+static bool input_dequeue(const void *data, const void *match_data)
+{
+	struct uhid_event *ev = (void *)data;
+	struct bt_uhid *uhid = (void *)match_data;
+
+	return bt_uhid_send(uhid, ev) == 0;
+}
+
+static void uhid_start(struct uhid_event *ev, void *user_data)
+{
+	struct bt_uhid *uhid = user_data;
+
+	uhid->started = true;
+
+	/* dequeue input events send while UHID_CREATE2 was in progress */
+	queue_remove_all(uhid->input, input_dequeue, uhid, free);
+}
+
+int bt_uhid_create(struct bt_uhid *uhid, const char *name, bdaddr_t *src,
+			bdaddr_t *dst, uint32_t vendor, uint32_t product,
+			uint32_t version, uint32_t country, void *rd_data,
+			size_t rd_size)
+{
+	struct uhid_event ev;
+	int err;
+
+	if (!uhid || !name || rd_size > sizeof(ev.u.create2.rd_data))
+		return -EINVAL;
+
+	if (uhid->created)
+		return 0;
+
+	memset(&ev, 0, sizeof(ev));
+	ev.type = UHID_CREATE2;
+	strncpy((char *) ev.u.create2.name, name,
+			sizeof(ev.u.create2.name) - 1);
+	if (src)
+		sprintf((char *)ev.u.create2.phys,
+			"%2.2x:%2.2x:%2.2x:%2.2x:%2.2x:%2.2x",
+			src->b[5], src->b[4], src->b[3], src->b[2], src->b[1],
+			src->b[0]);
+	if (dst)
+		sprintf((char *)ev.u.create2.uniq,
+			"%2.2x:%2.2x:%2.2x:%2.2x:%2.2x:%2.2x",
+			dst->b[5], dst->b[4], dst->b[3], dst->b[2], dst->b[1],
+			dst->b[0]);
+	ev.u.create2.vendor = vendor;
+	ev.u.create2.product = product;
+	ev.u.create2.version = version;
+	ev.u.create2.country = country;
+	ev.u.create2.bus = BUS_BLUETOOTH;
+	if (rd_size)
+		memcpy(ev.u.create2.rd_data, rd_data, rd_size);
+	ev.u.create2.rd_size = rd_size;
+
+	err = uhid_send(uhid, &ev);
+	if (err)
+		return err;
+
+	bt_uhid_register(uhid, UHID_START, uhid_start, uhid);
+
+	uhid->created = true;
+	uhid->started = false;
+
+	return 0;
+}
+
+bool bt_uhid_created(struct bt_uhid *uhid)
+{
+	if (!uhid)
+		return false;
+
+	return uhid->created;
+}
+
+bool bt_uhid_started(struct bt_uhid *uhid)
+{
+	if (!uhid)
+		return false;
+
+	return uhid->started;
+}
+
+int bt_uhid_destroy(struct bt_uhid *uhid)
+{
+	struct uhid_event ev;
+	int err;
+
+	if (!uhid)
+		return -EINVAL;
+
+	if (!uhid->created)
+		return 0;
+
+	memset(&ev, 0, sizeof(ev));
+	ev.type = UHID_DESTROY;
+
+	err = bt_uhid_send(uhid, &ev);
+	if (err < 0)
+		return err;
+
+	uhid->created = false;
+
+	return err;
 }
