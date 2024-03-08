@@ -228,19 +228,31 @@ static const struct uhid_event ev_feature = {
 static void test_client(gconstpointer data)
 {
 	struct context *context = create_context(data);
+	int err;
 
-	if (g_str_equal(context->data->test_name, "/uhid/command/create"))
-		bt_uhid_send(context->uhid, &ev_create);
+	err = bt_uhid_create(context->uhid, "", NULL, NULL, 0, 0, 0, 0, NULL,
+				0);
+	if (err < 0)
+		tester_test_failed();
 
-	if (g_str_equal(context->data->test_name, "/uhid/command/destroy"))
-		bt_uhid_send(context->uhid, &ev_destroy);
+	if (g_str_equal(context->data->test_name, "/uhid/command/destroy")) {
+		err = bt_uhid_destroy(context->uhid);
+		if (err < 0)
+			tester_test_failed();
+	}
 
 	if (g_str_equal(context->data->test_name,
-						"/uhid/command/feature_answer"))
-		bt_uhid_send(context->uhid, &ev_feature_answer);
+				"/uhid/command/feature_answer")) {
+		err = bt_uhid_send(context->uhid, &ev_feature_answer);
+		if (err < 0)
+			tester_test_failed();
+	}
 
-	if (g_str_equal(context->data->test_name, "/uhid/command/input"))
-		bt_uhid_send(context->uhid, &ev_input);
+	if (g_str_equal(context->data->test_name, "/uhid/command/input")) {
+		err = bt_uhid_send(context->uhid, &ev_input);
+		if (err < 0)
+			tester_test_failed();
+	}
 
 	context_quit(context);
 }
