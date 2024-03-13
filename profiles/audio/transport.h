@@ -16,6 +16,7 @@ struct media_transport *media_transport_create(struct btd_device *device,
 						uint8_t *configuration,
 						size_t size, void *data,
 						void *stream);
+void bap_update_bcast_config(struct media_transport *transport);
 
 void media_transport_destroy(struct media_transport *transport);
 const char *media_transport_get_path(struct media_transport *transport);
