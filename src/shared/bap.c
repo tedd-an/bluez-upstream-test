@@ -1701,7 +1701,16 @@ static unsigned int bap_bcast_config(struct bt_bap_stream *stream,
 				     struct bt_bap_qos *qos, struct iovec *data,
 				     bt_bap_stream_func_t func, void *user_data)
 {
-	stream->qos = *qos;
+	if (qos) {
+		stream->qos = *qos;
+		stream->qos.bcast.bcode = util_iov_dup(qos->bcast.bcode, 1);
+	}
+
+	if (data) {
+		util_iov_free(stream->cc, 1);
+		stream->cc = util_iov_dup(data, 1);
+	}
+
 	stream->lpac->ops->config(stream, stream->cc, &stream->qos,
 			ep_config_cb, stream->lpac->user_data);
 
