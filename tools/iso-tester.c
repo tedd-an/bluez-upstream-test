@@ -467,7 +467,7 @@ struct test_data {
 	uint16_t handle;
 	uint16_t acl_handle;
 	struct queue *io_queue;
-	unsigned int io_id[3];
+	unsigned int io_id[4];
 	uint8_t client_num;
 	int step;
 	bool reconnect;
@@ -497,6 +497,7 @@ struct iso_client_data {
 	bool msg_timestamping;
 	unsigned int send_extra;
 	unsigned int send_extra_pre_ts;
+	bool no_errqueue_poll;
 };
 
 static void mgmt_debug(const char *str, void *user_data)
@@ -1024,6 +1025,16 @@ static const struct iso_client_data connect_send_tx_msg_timestamping = {
 					SOF_TIMESTAMPING_TX_SOFTWARE),
 	.send_extra = 1,
 	.msg_timestamping = true,
+};
+
+static const struct iso_client_data connect_send_tx_no_poll_timestamping = {
+	.qos = QOS_16_2_1,
+	.expect_err = 0,
+	.send = &send_16_2_1,
+	.so_timestamping = (SOF_TIMESTAMPING_SOFTWARE |
+					SOF_TIMESTAMPING_TX_SOFTWARE),
+	.send_extra = 1,
+	.no_errqueue_poll = true,
 };
 
 static const struct iso_client_data listen_16_2_1_recv = {
@@ -2122,6 +2133,37 @@ static gboolean iso_recv_errqueue(GIOChannel *io, GIOCondition cond,
 	return FALSE;
 }
 
+static gboolean iso_fail_errqueue(GIOChannel *io, GIOCondition cond,
+							gpointer user_data)
+{
+	struct test_data *data = user_data;
+
+	tester_warn("Unexpected POLLERR");
+	tester_test_failed();
+
+	data->io_id[3] = 0;
+	return FALSE;
+}
+
+static gboolean iso_timer_errqueue(gpointer user_data)
+{
+	struct test_data *data = user_data;
+	GIOChannel *io;
+	gboolean ret;
+
+	io = queue_peek_head(data->io_queue);
+	g_assert(io);
+
+	ret = iso_recv_errqueue(io, G_IO_IN, data);
+	if (!ret) {
+		if (data->io_id[3])
+			g_source_remove(data->io_id[3]);
+		data->io_id[3] = 0;
+	}
+
+	return ret;
+}
+
 static void iso_tx_timestamping(struct test_data *data, GIOChannel *io)
 {
 	const struct iso_client_data *isodata = data->test_data;
@@ -2144,7 +2186,29 @@ static void iso_tx_timestamping(struct test_data *data, GIOChannel *io)
 
 	sk = g_io_channel_unix_get_fd(io);
 
-	data->io_id[2] = g_io_add_watch(io, G_IO_ERR, iso_recv_errqueue, data);
+	if (isodata->no_errqueue_poll) {
+		uint32_t flag = 1;
+
+		err = setsockopt(sk, SOL_BLUETOOTH, BT_NO_ERRQUEUE_POLL,
+							&flag, sizeof(flag));
+		if (err < 0) {
+			tester_warn("setsockopt BT_NO_ERRQUEUE_POLL: %s (%d)",
+						strerror(errno), errno);
+			tester_test_failed();
+			return;
+		}
+
+		if (!data->io_queue)
+			data->io_queue = queue_new();
+		queue_push_head(data->io_queue, g_io_channel_ref(io));
+
+		data->io_id[2] = g_timeout_add(100, iso_timer_errqueue, data);
+		data->io_id[3] = g_io_add_watch(io, G_IO_ERR, iso_fail_errqueue,
+									data);
+	} else {
+		data->io_id[2] = g_io_add_watch(io, G_IO_ERR, iso_recv_errqueue,
+									data);
+	}
 
 	if (isodata->msg_timestamping)
 		so.flags &= ~SOF_TIMESTAMPING_TX_RECORD_MASK;
@@ -3319,6 +3383,10 @@ int main(int argc, char *argv[])
 
 	test_iso("ISO Send - TX Msg Timestamping",
 			&connect_send_tx_msg_timestamping, setup_powered,
+			test_connect);
+
+	test_iso("ISO Send - TX No Poll Timestamping",
+			&connect_send_tx_no_poll_timestamping, setup_powered,
 			test_connect);
 
 	test_iso("ISO Receive - Success", &listen_16_2_1_recv, setup_powered,
