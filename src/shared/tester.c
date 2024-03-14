@@ -112,6 +112,7 @@ static gboolean option_monitor = FALSE;
 static gboolean option_list = FALSE;
 static const char *option_prefix = NULL;
 static const char *option_string = NULL;
+static const char *option_name = NULL;
 
 struct monitor_hdr {
 	uint16_t opcode;
@@ -284,6 +285,12 @@ void tester_add_full(const char *name, const void *test_data,
 
 	if (!test_func)
 		return;
+
+	if (option_name && strcmp(name, option_name)) {
+		if (destroy)
+			destroy(user_data);
+		return;
+	}
 
 	if (option_prefix && !g_str_has_prefix(name, option_prefix)) {
 		if (destroy)
@@ -829,6 +836,8 @@ static GOptionEntry options[] = {
 				"Enable monitor output" },
 	{ "list", 'l', 0, G_OPTION_ARG_NONE, &option_list,
 				"Only list the tests to be run" },
+	{ "name", 'n', 0, G_OPTION_ARG_STRING, &option_name,
+				"Run test with given name" },
 	{ "prefix", 'p', 0, G_OPTION_ARG_STRING, &option_prefix,
 				"Run tests matching provided prefix" },
 	{ "string", 's', 0, G_OPTION_ARG_STRING, &option_string,
