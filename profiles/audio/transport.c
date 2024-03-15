@@ -1483,6 +1483,27 @@ static void bap_update_bcast_qos(const struct media_transport *transport)
 			"Configuration");
 }
 
+void bap_update_bcast_config(struct media_transport *transport)
+{
+	struct bap_transport *bap = transport->data;
+	struct iovec *cc;
+
+	cc = bt_bap_stream_get_config(bap->stream);
+
+	if (((int)cc->iov_len != transport->size) ||
+		(memcmp(cc->iov_base, transport->configuration,
+			transport->size) != 0)) {
+		free(transport->configuration);
+		transport->configuration = util_memdup(cc->iov_base,
+							cc->iov_len);
+		transport->size = cc->iov_len;
+
+		g_dbus_emit_property_changed(btd_get_dbus_connection(),
+			transport->path, MEDIA_TRANSPORT_INTERFACE,
+			"Configuration");
+	}
+}
+
 static guint transport_bap_resume(struct media_transport *transport,
 				struct media_owner *owner)
 {
