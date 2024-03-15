@@ -4895,7 +4895,7 @@ static void cmd_acquire_transport(int argc, char *argv[])
 		transport_acquire(proxy, false);
 	}
 
-	return bt_shell_noninteractive_quit(EXIT_SUCCESS);
+	return;
 }
 
 static void release_reply(DBusMessage *message, void *user_data)
@@ -4947,7 +4947,7 @@ static void cmd_release_transport(int argc, char *argv[])
 		}
 	}
 
-	return bt_shell_noninteractive_quit(EXIT_SUCCESS);
+	return;
 }
 
 static int open_file(const char *filename, int flags)
