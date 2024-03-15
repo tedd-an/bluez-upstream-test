@@ -1643,8 +1643,12 @@ static void bap_state_changed(struct bt_bap_stream *stream, uint8_t old_state,
 		bap_update_links(transport);
 		if (!media_endpoint_is_broadcast(transport->endpoint))
 			bap_update_qos(transport);
-		else if (bt_bap_stream_io_dir(stream) != BT_BAP_BCAST_SOURCE)
+		else if (bt_bap_stream_io_dir(stream) != BT_BAP_BCAST_SOURCE) {
 			bap_update_bcast_qos(transport);
+			if (old_state == BT_BAP_STREAM_STATE_QOS)
+				bap_update_bcast_config(transport);
+		}
+
 		transport_update_playing(transport, FALSE);
 		return;
 	case BT_BAP_STREAM_STATE_DISABLING:
