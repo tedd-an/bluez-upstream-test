@@ -533,6 +533,109 @@ static void manufacturer_mode_cmd(uint16_t index, const void *data,
 	print_field("Reset behavior: %s (0x%2.2x)", str, reset);
 }
 
+static void read_connection_info_cmd(uint16_t index, const void *data,
+				     uint8_t size)
+{
+	uint8_t addr_type;
+	const char *str;
+
+	addr_type = get_u8(data);
+
+	switch (addr_type) {
+	case 0x00:
+		str = "Public Device Address";
+		break;
+	case 0x01:
+		str = "Random Device Address";
+		break;
+	default:
+		str = "Unknown Device Address";
+		break;
+	}
+	print_field("Device Address Type: %s (0x%2.2x)", str, addr_type);
+	packet_print_addr("Address", data + 1, 0x00);
+	packet_hexdump(data + 1, 6);
+
+}
+
+static void read_connection_info_rsp(uint16_t index, const void *data,
+				     uint8_t size)
+{
+	uint8_t status = get_u8(data);
+	uint8_t hndls;
+	const uint8_t *p;
+	const char *str;
+	uint8_t i;
+
+	print_status(status);
+
+	if (status)
+		return;
+	size--;
+
+	hndls = get_u8(data + 1);
+	print_field("Number of handles: 0x%2.2x", hndls);
+	size--;
+
+	for (i = 0, p = data + 2; size > 0 && i < hndls;
+			size -= 4, i++, p = p + 4) {
+		uint16_t handle = get_le16(p);
+		uint8_t state = get_u8(p + 2);
+		uint8_t type = get_u8(p + 3);
+
+		print_field("Handle: %u", handle);
+		switch (state) {
+		case 1:
+			str = "Connection is detached but handle is not yet released";
+			break;
+		case 2:
+			str = "Connection is used for outgoing remote name request";
+			break;
+		case 4:
+			str = "Connection is prepared  but handle is not yet sent to host";
+			break;
+		case 5:
+			str = "Connection request is pending to the host on this handle";
+			break;
+		case 6:
+			str = "Connection is established on this handle";
+			break;
+		case 7:
+			str = "Connection is in Hold mode";
+			break;
+		case 8:
+			str = "Connection in Sniff mode";
+			break;
+		default:
+			str = "Unknown state";
+			break;
+		}
+
+		print_field("State: %s (0x%2.2x)", str, state);
+		switch (type) {
+		case 0:
+			str = "Handle belongs to SCO link";
+			break;
+		case 1:
+			str = "Handle belongs to ACL link";
+			break;
+		case 2:
+			str = "Handle belongs to eSCO link";
+			break;
+		case 4:
+			str  = "Handle belongs to LE link";
+			break;
+		case 255:
+			str = "Handle doesn't have an associated link";
+			break;
+		default:
+			str = "Unknown link";
+			break;
+		}
+		print_field("Type: %s (0x%2.2x)", str, type);
+	}
+}
+
 static void write_bd_data_cmd(uint16_t index, const void *data, uint8_t size)
 {
 	uint8_t features[8];
@@ -762,6 +865,9 @@ static const struct vendor_ocf vendor_ocf_table[] = {
 	{ 0x012, "Read Link RSSI" },
 	{ 0x022, "Get Exception Info" },
 	{ 0x024, "Clear Exception Info" },
+	{ 0x02a, "Read Connection Info by bd address",
+			read_connection_info_cmd, 7, true,
+			read_connection_info_rsp, 1, false },
 	{ 0x02f, "Write BD Data",
 			write_bd_data_cmd, 6, false },
 	{ 0x030, "Read BD Data",
