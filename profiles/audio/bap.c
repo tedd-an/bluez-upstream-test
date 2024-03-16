@@ -95,6 +95,12 @@ struct bap_ep {
 	struct queue *setups;
 };
 
+struct bap_select {
+	int ref_count;
+	struct bap_data *data;
+	struct bap_ep *ep;
+};
+
 struct bap_data {
 	struct btd_device *device;
 	struct btd_adapter *adapter;
@@ -107,8 +113,8 @@ struct bap_data {
 	struct queue *snks;
 	struct queue *bcast;
 	struct queue *streams;
+	struct queue *selecting;
 	GIOChannel *listen_io;
-	int selecting;
 	void *user_data;
 };
 
@@ -194,6 +200,14 @@ static void ep_unregister(void *data)
 						MEDIA_ENDPOINT_INTERFACE);
 }
 
+static void bap_cancel_select(void *data)
+{
+	struct bap_select *sel = data;
+
+	sel->data = NULL;
+	sel->ep = NULL;
+}
+
 static void bap_data_free(struct bap_data *data)
 {
 	if (data->listen_io) {
@@ -210,6 +224,7 @@ static void bap_data_free(struct bap_data *data)
 	queue_destroy(data->srcs, ep_unregister);
 	queue_destroy(data->bcast, ep_unregister);
 	queue_destroy(data->streams, NULL);
+	queue_destroy(data->selecting, bap_cancel_select);
 	bt_bap_ready_unregister(data->bap, data->ready_id);
 	bt_bap_state_unregister(data->bap, data->state_id);
 	bt_bap_pac_unregister(data->bap, data->pac_id);
@@ -1148,10 +1163,20 @@ static const GDBusMethodTable ep_methods[] = {
 	{ },
 };
 
+static void ep_cancel_select(void *data, void *user_data)
+{
+	struct bap_select *sel = data;
+
+	if (sel->ep == user_data)
+		sel->ep = NULL;
+}
+
 static void ep_free(void *data)
 {
 	struct bap_ep *ep = data;
 	struct queue *setups = ep->setups;
+
+	queue_foreach(ep->data->selecting, ep_cancel_select, ep);
 
 	ep->setups = NULL;
 	queue_destroy(setups, setup_free);
@@ -1348,16 +1373,29 @@ static void bap_config(void *data, void *user_data)
 	queue_foreach(ep->setups, setup_config, NULL);
 }
 
+static void select_count(void *data, void *user_data)
+{
+	struct bap_select *sel = data;
+	int *count = user_data;
+
+	*count += sel->ref_count;
+}
+
 static void select_cb(struct bt_bap_pac *pac, int err, struct iovec *caps,
 				struct iovec *metadata, struct bt_bap_qos *qos,
 				void *user_data)
 {
-	struct bap_ep *ep = user_data;
+	struct bap_select *sel = user_data;
+	struct bap_data *data = sel->data;
+	struct bap_ep *ep = sel->ep;
 	struct bap_setup *setup;
+	int count = 0;
+
+	if (!data || !ep)
+		err = ECANCELED;
 
 	if (err) {
 		error("err %d", err);
-		ep->data->selecting--;
 		goto done;
 	}
 
@@ -1366,16 +1404,23 @@ static void select_cb(struct bt_bap_pac *pac, int err, struct iovec *caps,
 	setup->metadata = util_iov_dup(metadata, 1);
 	setup->qos = *qos;
 
-	DBG("selecting %d", ep->data->selecting);
-	ep->data->selecting--;
+	queue_foreach(data->selecting, select_count, &count);
+
+	DBG("selecting %d", count);
 
 done:
-	if (ep->data->selecting)
+	if (sel->ref_count-- <= 1) {
+		if (data)
+			queue_remove(data->selecting, sel);
+		free(sel);
+	}
+
+	if (!data || !queue_isempty(data->selecting))
 		return;
 
-	queue_foreach(ep->data->srcs, bap_config, NULL);
-	queue_foreach(ep->data->snks, bap_config, NULL);
-	queue_foreach(ep->data->bcast, bap_config, NULL);
+	queue_foreach(data->srcs, bap_config, NULL);
+	queue_foreach(data->snks, bap_config, NULL);
+	queue_foreach(data->bcast, bap_config, NULL);
 }
 
 static bool pac_register(struct bt_bap_pac *lpac, struct bt_bap_pac *rpac,
@@ -1420,8 +1465,21 @@ static bool pac_select(struct bt_bap_pac *lpac, struct bt_bap_pac *rpac,
 	}
 
 	/* TODO: Cache LRU? */
-	if (btd_service_is_initiator(service))
-		bt_bap_select(lpac, rpac, &ep->data->selecting, select_cb, ep);
+	if (btd_service_is_initiator(service)) {
+		struct bap_select *sel;
+
+		sel = new0(struct bap_select, 1);
+		sel->ep = ep;
+		sel->data = ep->data;
+		sel->ref_count = 0;
+
+		bt_bap_select(lpac, rpac, &sel->ref_count, select_cb, sel);
+
+		if (sel->ref_count)
+			queue_push_tail(ep->data->selecting, sel);
+		else
+			free(sel);
+	}
 
 	return true;
 }
@@ -2495,6 +2553,7 @@ static struct bap_data *bap_data_new(struct btd_device *device)
 	data->srcs = queue_new();
 	data->snks = queue_new();
 	data->bcast = queue_new();
+	data->selecting = queue_new();
 
 	return data;
 }
