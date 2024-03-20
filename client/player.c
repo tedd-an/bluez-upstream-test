@@ -3662,10 +3662,15 @@ static void endpoint_set_config_bcast(struct endpoint_config *cfg)
 		config_endpoint_iso_group, cfg);
 }
 
+static void endpoint_init_defaults(struct endpoint *ep);
 static void cmd_config_endpoint(int argc, char *argv[])
 {
+	DBusMessageIter iter;
 	struct endpoint_config *cfg;
-	const struct codec_preset *preset;
+	const struct codec_preset *preset = NULL;
+	const struct capabilities *cap;
+	uint8_t codec;
+	const char *uuid;
 
 	cfg = new0(struct endpoint_config, 1);
 
@@ -3680,8 +3685,75 @@ static void cmd_config_endpoint(int argc, char *argv[])
 	/* Search for the local endpoint */
 	cfg->ep = endpoint_find(argv[2]);
 	if (!cfg->ep) {
-		bt_shell_printf("Local Endpoint %s not found\n", argv[2]);
-		goto fail;
+		/* If argc != 3 then argv[2] should be the
+		 * local endpoint. Return error.
+		 */
+		if (argc != 3) {
+			bt_shell_printf("Local Endpoint %s not found\n",
+					argv[2]);
+			goto fail;
+		}
+
+		/* If local endpoint is not found verify if this is a
+		 * broadcast remote endpoint because this can be an
+		 * endpoint config command with remote endpoint and
+		 * preset. In this case we have to create its own
+		 * local endpoint.
+		 */
+		if (!g_dbus_proxy_get_property(cfg->proxy, "UUID", &iter))
+			return;
+		dbus_message_iter_get_basic(&iter, &uuid);
+
+		/* The local endpoint must have the UUID of local pac but
+		 * the remote endpoint has the UUID of the remote pac, so
+		 * based on this information we determine the UUID for the
+		 * local endpoint.
+		 */
+		if (!strcmp(uuid, BAA_SERVICE_UUID))
+			uuid = BCAA_SERVICE_UUID;
+		else if (!strcmp(uuid, BCAA_SERVICE_UUID))
+			uuid = BAA_SERVICE_UUID;
+		else {
+			/* This should be a local endpoint because is not
+			 * a broadcast endpoint.
+			 */
+			bt_shell_printf("Local Endpoint %s not found\n",
+					argv[2]);
+			goto fail;
+		}
+
+		if (!g_dbus_proxy_get_property(cfg->proxy, "Codec", &iter))
+			return;
+
+		dbus_message_iter_get_basic(&iter, &codec);
+
+		/* Verify if the local endpoint already exists */
+		cfg->ep = endpoint_find(uuid);
+		if ((!cfg->ep) || (cfg->ep->codec != codec)) {
+			/* Get capabilities to create the local endpoint */
+			cap = find_capabilities(uuid, codec);
+			if (!cap) {
+				bt_shell_printf(
+					"Capabilities not found for UUID %s, codec id %d",
+					uuid, codec);
+				goto fail;
+			}
+
+			cfg->ep = endpoint_new(cap);
+			endpoint_init_defaults(cfg->ep);
+		}
+
+		/* Verify if argv[2] parameter is a valid preset */
+		preset = preset_find_name(cfg->ep->preset, argv[2]);
+		if (!preset) {
+			bt_shell_printf("Preset %s not found\n",
+				argv[2]);
+			/* Free created endpoint */
+			local_endpoints = g_list_remove(local_endpoints,
+						cfg->ep);
+			endpoint_free(cfg->ep);
+			goto fail;
+		}
 	}
 
 	if (argc > 3) {
@@ -3690,7 +3762,9 @@ static void cmd_config_endpoint(int argc, char *argv[])
 			bt_shell_printf("Preset %s not found\n", argv[3]);
 			goto fail;
 		}
+	}
 
+	if (preset) {
 		cfg->caps = g_new0(struct iovec, 1);
 		/* Copy capabilities */
 		util_iov_append(cfg->caps, preset->data.iov_base,
