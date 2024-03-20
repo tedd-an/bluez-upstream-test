@@ -77,6 +77,7 @@ struct input_device {
 	unsigned int		report_req_timer;
 	uint32_t		report_rsp_id;
 	bool			virtual_cable_unplug;
+	unsigned int		idle_timer;
 };
 
 static int idle_timeout = 0;
@@ -139,6 +140,9 @@ static void input_device_free(struct input_device *idev)
 		g_free(idev->req);
 	}
 
+	if (idev->idle_timer)
+		timeout_remove(idev->idle_timer);
+
 	if (idev->reconnect_timer > 0)
 		timeout_remove(idev->reconnect_timer);
 
@@ -154,6 +158,29 @@ static void virtual_cable_unplug(struct input_device *idev)
 				btd_device_get_bdaddr_type(idev->device));
 
 	idev->virtual_cable_unplug = false;
+}
+
+static bool input_device_idle_timeout(gpointer user_data)
+{
+	struct input_device *idev = user_data;
+
+	idev->idle_timer = 0;
+
+	DBG("path=%s", idev->path);
+
+	if (connection_disconnect(idev, 0) == -ENOTCONN) {
+		/* Force UHID_DESTROY on idle */
+		if (idev->uhid)
+			uhid_disconnect(idev, true);
+	}
+}
+
+static void input_device_idle_reset(struct input_device *idev)
+{
+	timeout_remove(idev->idle_timer);
+	idev->idle_timer = timeout_add_seconds(idle_timeout,
+					input_device_idle_timeout, idev,
+					NULL);
 }
 
 static bool hidp_send_message(GIOChannel *chan, uint8_t hdr,
@@ -190,6 +217,8 @@ static bool hidp_send_message(GIOChannel *chan, uint8_t hdr,
 								len, size + 1);
 		return false;
 	}
+
+	input_device_idle_reset(idev);
 
 	return true;
 }
@@ -296,6 +325,8 @@ static bool hidp_recv_intr_data(GIOChannel *chan, struct input_device *idev)
 		DBG("BT socket read returned 0 bytes");
 		return true;
 	}
+
+	input_device_idle_reset(idev);
 
 	hdr = data[0];
 	if (hdr != (HIDP_TRANS_DATA | HIDP_DATA_RTYPE_INPUT)) {
@@ -519,6 +550,8 @@ static bool hidp_recv_ctrl_message(GIOChannel *chan, struct input_device *idev)
 		DBG("BT socket read returned 0 bytes");
 		return true;
 	}
+
+	input_device_idle_reset(idev);
 
 	hdr = data[0];
 	type = hdr & HIDP_HEADER_TRANS_MASK;
