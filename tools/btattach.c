@@ -97,7 +97,8 @@ static void local_version_callback(const void *data, uint8_t size,
 }
 
 static int attach_proto(const char *path, unsigned int proto,
-			unsigned int speed, bool flowctl, unsigned int flags)
+			unsigned int speed, bool flowctl, unsigned int flags,
+			unsigned long soc_type)
 {
 	int fd, dev_id;
 
@@ -109,6 +110,16 @@ static int attach_proto(const char *path, unsigned int proto,
 		perror("Failed to set flags");
 		close(fd);
 		return -1;
+	}
+
+	if ((proto == HCI_UART_QCA) && (soc_type > 0)) {
+		if (ioctl(fd, HCIUARTSETPROTODATA, soc_type) < 0) {
+			fprintf(stderr,
+				"Failed to set soc_type(%lu) for protocol qca\n",
+				soc_type);
+			close(fd);
+			return -1;
+		}
 	}
 
 	if (ioctl(fd, HCIUARTSETPROTO, proto) < 0) {
@@ -181,6 +192,7 @@ static void usage(void)
 		"\t-A, --amp <device>     Attach AMP controller\n"
 		"\t-P, --protocol <proto> Specify protocol type\n"
 		"\t-S, --speed <baudrate> Specify which baudrate to use\n"
+		"\t-T, --type <soc_type>  Specify soc_type for protocol qca\n"
 		"\t-N, --noflowctl        Disable flow control\n"
 		"\t-h, --help             Show help options\n");
 }
@@ -190,6 +202,7 @@ static const struct option main_options[] = {
 	{ "amp",      required_argument, NULL, 'A' },
 	{ "protocol", required_argument, NULL, 'P' },
 	{ "speed",    required_argument, NULL, 'S' },
+	{ "type",     required_argument, NULL, 'T' },
 	{ "noflowctl",no_argument,       NULL, 'N' },
 	{ "version",  no_argument,       NULL, 'v' },
 	{ "help",     no_argument,       NULL, 'h' },
@@ -221,12 +234,13 @@ int main(int argc, char *argv[])
 	bool flowctl = true, raw_device = false;
 	int exit_status, count = 0, proto_id = HCI_UART_H4;
 	unsigned int speed = B115200;
+	unsigned long soc_type = 0;
 
 	for (;;) {
 		int opt;
 
-		opt = getopt_long(argc, argv, "B:A:P:S:NRvh",
-						main_options, NULL);
+		opt = getopt_long(argc, argv, "B:A:P:S:T:NRvh",
+				  main_options, NULL);
 		if (opt < 0)
 			break;
 
@@ -236,6 +250,9 @@ int main(int argc, char *argv[])
 			break;
 		case 'A':
 			amp_path = optarg;
+			break;
+		case 'T':
+			soc_type = strtoul(optarg, NULL, 0);
 			break;
 		case 'P':
 			proto = optarg;
@@ -298,7 +315,8 @@ int main(int argc, char *argv[])
 		if (raw_device)
 			flags = (1 << HCI_UART_RAW_DEVICE);
 
-		fd = attach_proto(bredr_path, proto_id, speed, flowctl, flags);
+		fd = attach_proto(bredr_path, proto_id, speed, flowctl, flags,
+				  soc_type);
 		if (fd >= 0) {
 			mainloop_add_fd(fd, 0, uart_callback, NULL, NULL);
 			count++;
@@ -317,7 +335,8 @@ int main(int argc, char *argv[])
 		if (raw_device)
 			flags = (1 << HCI_UART_RAW_DEVICE);
 
-		fd = attach_proto(amp_path, proto_id, speed, flowctl, flags);
+		fd = attach_proto(amp_path, proto_id, speed, flowctl, flags,
+				  soc_type);
 		if (fd >= 0) {
 			mainloop_add_fd(fd, 0, uart_callback, NULL, NULL);
 			count++;
