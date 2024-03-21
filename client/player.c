@@ -3574,6 +3574,7 @@ static void config_endpoint_channel_location(const char *input, void *user_data)
 	struct endpoint_config *cfg = user_data;
 	char *endptr = NULL;
 	uint32_t location;
+	uint8_t channels = 1;
 
 	if (!strcasecmp(input, "n") || !strcasecmp(input, "no"))
 		goto add_meta;
@@ -3589,6 +3590,13 @@ static void config_endpoint_channel_location(const char *input, void *user_data)
 	location = cpu_to_le32(location);
 	iov_append_ltv(&cfg->caps, LC3_CONFIG_CHAN_ALLOC_LEN,
 			LC3_CONFIG_CHAN_ALLOC, &location);
+
+	/* Adjust the SDU size based on the number of
+	 * locations/channels that is being requested.
+	 */
+	channels = __builtin_popcount(location);
+	if (channels > 1)
+		cfg->qos.bcast.io_qos.sdu *= channels;
 
 add_meta:
 	/* Add metadata */
