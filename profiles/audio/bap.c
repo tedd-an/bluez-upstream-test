@@ -2734,6 +2734,8 @@ static int short_lived_pa_sync(struct bap_bcast_pa_req *req)
 			NULL, &err,
 			BT_IO_OPT_SOURCE_BDADDR,
 			btd_adapter_get_address(data->adapter),
+			BT_IO_OPT_SOURCE_TYPE,
+			btd_adapter_get_address_type(data->adapter),
 			BT_IO_OPT_DEST_BDADDR,
 			device_get_address(data->device),
 			BT_IO_OPT_DEST_TYPE,
