@@ -1597,12 +1597,6 @@ static void avctp_confirm_cb(GIOChannel *chan, gpointer data)
 	if (session == NULL)
 		return;
 
-	if (btd_device_get_service(device, AVRCP_REMOTE_UUID) == NULL)
-		btd_device_add_uuid(device, AVRCP_REMOTE_UUID);
-
-	if (btd_device_get_service(device, AVRCP_TARGET_UUID) == NULL)
-		btd_device_add_uuid(device, AVRCP_TARGET_UUID);
-
 	switch (psm) {
 	case AVCTP_CONTROL_PSM:
 		avctp_control_confirm(session, chan, device);
