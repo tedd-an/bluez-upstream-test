@@ -34,6 +34,7 @@
 
 #include "lib/bluetooth.h"
 #include "lib/uuid.h"
+#include "lib/iso.h"
 
 #include "profiles/audio/a2dp-codecs.h"
 #include "src/shared/lc3.h"
@@ -5007,7 +5008,6 @@ static bool transport_timer_read(struct io *io, void *user_data)
 	struct bt_iso_qos qos;
 	socklen_t len;
 	int ret, fd;
-	uint32_t num;
 	uint64_t exp;
 
 	if (transport->fd < 0)
@@ -5031,10 +5031,7 @@ static bool transport_timer_read(struct io *io, void *user_data)
 		return false;
 	}
 
-	/* num of packets = latency (ms) / interval (us) */
-	num = (qos.ucast.out.latency * 1000 / qos.ucast.out.interval);
-
-	ret = transport_send_seq(transport, transport->fd, num);
+	ret = transport_send_seq(transport, transport->fd, 1);
 	if (ret < 0) {
 		bt_shell_printf("Unable to send: %s (%d)\n",
 					strerror(-ret), ret);
@@ -5052,6 +5049,8 @@ static bool transport_timer_read(struct io *io, void *user_data)
 static int transport_send(struct transport *transport, int fd,
 					struct bt_iso_qos *qos)
 {
+	struct sockaddr_iso addr;
+	socklen_t optlen;
 	struct itimerspec ts;
 	int timer_fd;
 
@@ -5068,9 +5067,30 @@ static int transport_send(struct transport *transport, int fd,
 		return -errno;
 
 	memset(&ts, 0, sizeof(ts));
-	ts.it_value.tv_nsec = qos->ucast.out.latency * 1000000;
-	ts.it_interval.tv_nsec = qos->ucast.out.latency * 1000000;
 
+	/* Need to know if the transport on which data is sent is
+	 * broadcast or unicast so that the correct qos structure
+	 * can be accessed. At this point in code there no other
+	 * way of knowing this besides checking the peer address.
+	 * Broadcast will use BDADDR_ANY, while Unicast will use
+	 * the connected peer's actual address.
+	 */
+	memset(&addr, 0, sizeof(addr));
+	optlen = sizeof(addr);
+
+	if (getpeername(transport->sk, &addr, &optlen) < 0)
+		return -errno;
+
+	if (!(bacmp(&addr.iso_bdaddr, BDADDR_ANY))) {
+		/* Interval is measured in us, multiply by 1000 to get ns */
+		ts.it_value.tv_nsec = qos->bcast.out.interval * 1000;
+		ts.it_interval.tv_nsec = qos->bcast.out.interval * 1000;
+	} else {
+		/* Interval is measured in us, multiply by 1000 to get ns */
+		ts.it_value.tv_nsec = qos->ucast.out.interval * 1000;
+		ts.it_interval.tv_nsec = qos->ucast.out.interval * 1000;
+
+	}
 	if (timerfd_settime(timer_fd, TFD_TIMER_ABSTIME, &ts, NULL) < 0)
 		return -errno;
 
