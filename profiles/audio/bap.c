@@ -2907,12 +2907,23 @@ static int bap_bcast_probe(struct btd_service *service)
 	return 0;
 }
 
+static bool remove_service(const void *data, const void *match_data)
+{
+	struct bap_bcast_pa_req *pa_req = (struct bap_bcast_pa_req *)data;
+
+	if (pa_req->type == BAP_PA_SHORT_REQ &&
+		pa_req->data.service == match_data)
+		return true;
+	return false;
+}
+
 static void bap_bcast_remove(struct btd_service *service)
 {
 	struct btd_device *device = btd_service_get_device(service);
 	struct bap_data *data;
 	char addr[18];
 
+	queue_remove_if(bcast_pa_requests, remove_service, service);
 	ba2str(device_get_address(device), addr);
 	DBG("%s", addr);
 
