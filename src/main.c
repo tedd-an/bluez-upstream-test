@@ -657,7 +657,7 @@ static void parse_le_config(GKeyFile *config)
 		  &btd_opts.defaults.le.autoconnect_timeout,
 		  sizeof(btd_opts.defaults.le.autoconnect_timeout),
 		  0x0001,
-		  0x4000},
+		  0x4E20},
 		{ "AdvMonAllowlistScanDuration",
 		  &btd_opts.defaults.le.advmon_allowlist_scan_duration,
 		  sizeof(btd_opts.defaults.le.advmon_allowlist_scan_duration),
