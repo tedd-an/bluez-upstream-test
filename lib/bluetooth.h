@@ -6,7 +6,7 @@
  *  Copyright (C) 2000-2001  Qualcomm Incorporated
  *  Copyright (C) 2002-2003  Maxim Krasnyansky <maxk@qualcomm.com>
  *  Copyright (C) 2002-2010  Marcel Holtmann <marcel@holtmann.org>
- *  Copyright 2023 NXP
+ *  Copyright 2023-2024 NXP
  *
  *
  */
@@ -190,6 +190,9 @@ struct bt_iso_bcast_qos {
 	uint8_t  mse;
 	uint16_t timeout;
 };
+
+#define HCI_MAX_PER_AD_LENGTH	252
+#define EIR_SERVICE_DATA_LENGTH	4
 
 /* (HCI_MAX_PER_AD_LENGTH - EIR_SERVICE_DATA_LENGTH) */
 #define BASE_MAX_LENGTH 248
