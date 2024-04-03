@@ -11,6 +11,9 @@ builtin_sources += plugins/autopair.c
 builtin_modules += policy
 builtin_sources += plugins/policy.c
 
+builtin_modules += airpods
+builtin_sources += plugins/airpods.c
+
 if ADMIN
 builtin_modules += admin
 builtin_sources += plugins/admin.c
