@@ -845,7 +845,7 @@ static uint16_t get_handle_at_index(struct gatt_db_service *service,
 }
 
 static struct gatt_db_attribute *
-service_insert_characteristic(struct gatt_db_service *service,
+service_append_characteristic(struct gatt_db_service *service,
 					uint16_t handle,
 					const bt_uuid_t *uuid,
 					uint32_t permissions,
@@ -912,7 +912,7 @@ service_insert_characteristic(struct gatt_db_service *service,
 }
 
 struct gatt_db_attribute *
-gatt_db_insert_characteristic(struct gatt_db *db,
+gatt_db_append_characteristic(struct gatt_db *db,
 					uint16_t handle,
 					const bt_uuid_t *uuid,
 					uint32_t permissions,
@@ -927,14 +927,14 @@ gatt_db_insert_characteristic(struct gatt_db *db,
 	if (!attrib)
 		return NULL;
 
-	return service_insert_characteristic(attrib->service, handle, uuid,
+	return service_append_characteristic(attrib->service, handle, uuid,
 						permissions, properties,
 						read_func, write_func,
 						user_data);
 }
 
 struct gatt_db_attribute *
-gatt_db_service_insert_characteristic(struct gatt_db_attribute *attrib,
+gatt_db_service_append_characteristic(struct gatt_db_attribute *attrib,
 					uint16_t handle,
 					const bt_uuid_t *uuid,
 					uint32_t permissions,
@@ -946,7 +946,7 @@ gatt_db_service_insert_characteristic(struct gatt_db_attribute *attrib,
 	if (!attrib)
 		return NULL;
 
-	return service_insert_characteristic(attrib->service, handle, uuid,
+	return service_append_characteristic(attrib->service, handle, uuid,
 						permissions, properties,
 						read_func, write_func,
 						user_data);
@@ -964,14 +964,14 @@ gatt_db_service_add_characteristic(struct gatt_db_attribute *attrib,
 	if (!attrib)
 		return NULL;
 
-	return service_insert_characteristic(attrib->service, 0, uuid,
+	return service_append_characteristic(attrib->service, 0, uuid,
 						permissions, properties,
 						read_func, write_func,
 						user_data);
 }
 
 static struct gatt_db_attribute *
-service_insert_descriptor(struct gatt_db_service *service,
+service_append_descriptor(struct gatt_db_service *service,
 					uint16_t handle,
 					const bt_uuid_t *uuid,
 					uint32_t permissions,
@@ -1003,7 +1003,7 @@ service_insert_descriptor(struct gatt_db_service *service,
 }
 
 struct gatt_db_attribute *
-gatt_db_insert_descriptor(struct gatt_db *db,
+gatt_db_append_descriptor(struct gatt_db *db,
 					uint16_t handle,
 					const bt_uuid_t *uuid,
 					uint32_t permissions,
@@ -1017,13 +1017,13 @@ gatt_db_insert_descriptor(struct gatt_db *db,
 	if (!attrib)
 		return NULL;
 
-	return service_insert_descriptor(attrib->service, handle, uuid,
+	return service_append_descriptor(attrib->service, handle, uuid,
 					permissions, read_func, write_func,
 					user_data);
 }
 
 struct gatt_db_attribute *
-gatt_db_service_insert_descriptor(struct gatt_db_attribute *attrib,
+gatt_db_service_append_descriptor(struct gatt_db_attribute *attrib,
 					uint16_t handle,
 					const bt_uuid_t *uuid,
 					uint32_t permissions,
@@ -1034,7 +1034,7 @@ gatt_db_service_insert_descriptor(struct gatt_db_attribute *attrib,
 	if (!attrib)
 		return NULL;
 
-	return service_insert_descriptor(attrib->service, handle, uuid,
+	return service_append_descriptor(attrib->service, handle, uuid,
 					permissions, read_func, write_func,
 					user_data);
 }
@@ -1050,7 +1050,7 @@ gatt_db_service_add_descriptor(struct gatt_db_attribute *attrib,
 	if (!attrib)
 		return NULL;
 
-	return service_insert_descriptor(attrib->service, 0, uuid,
+	return service_append_descriptor(attrib->service, 0, uuid,
 					permissions, read_func, write_func,
 					user_data);
 }
@@ -1088,7 +1088,7 @@ gatt_db_service_add_ccc(struct gatt_db_attribute *attrib, uint32_t permissions)
 	if (!value || value->notify_func)
 		return NULL;
 
-	ccc = service_insert_descriptor(attrib->service, 0, &ccc_uuid,
+	ccc = service_append_descriptor(attrib->service, 0, &ccc_uuid,
 					permissions,
 					db->ccc->read_func,
 					db->ccc->write_func,
@@ -1121,7 +1121,7 @@ void gatt_db_ccc_register(struct gatt_db *db, gatt_db_read_t read_func,
 }
 
 static struct gatt_db_attribute *
-service_insert_included(struct gatt_db_service *service, uint16_t handle,
+service_append_included(struct gatt_db_service *service, uint16_t handle,
 					struct gatt_db_attribute *include)
 {
 	struct gatt_db_service *included;
@@ -1186,22 +1186,22 @@ gatt_db_service_add_included(struct gatt_db_attribute *attrib,
 	if (!attrib || !include)
 		return NULL;
 
-	return service_insert_included(attrib->service, 0, include);
+	return service_append_included(attrib->service, 0, include);
 }
 
 struct gatt_db_attribute *
-gatt_db_service_insert_included(struct gatt_db_attribute *attrib,
+gatt_db_service_append_included(struct gatt_db_attribute *attrib,
 				uint16_t handle,
 				struct gatt_db_attribute *include)
 {
 	if (!attrib || !handle || !include)
 		return NULL;
 
-	return service_insert_included(attrib->service, handle, include);
+	return service_append_included(attrib->service, handle, include);
 }
 
 struct gatt_db_attribute *
-gatt_db_insert_included(struct gatt_db *db, uint16_t handle,
+gatt_db_append_included(struct gatt_db *db, uint16_t handle,
 			struct gatt_db_attribute *include)
 {
 	struct gatt_db_attribute *attrib;
@@ -1210,7 +1210,7 @@ gatt_db_insert_included(struct gatt_db *db, uint16_t handle,
 	if (!attrib)
 		return NULL;
 
-	return service_insert_included(attrib->service, handle, include);
+	return service_append_included(attrib->service, handle, include);
 }
 
 bool gatt_db_service_set_active(struct gatt_db_attribute *attrib, bool active)

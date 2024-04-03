@@ -515,7 +515,7 @@ static struct gatt_db_attribute *insert_chrc(const struct l2cap_frame *frame,
 	if (!db)
 		return NULL;
 
-	return gatt_db_insert_characteristic(db, handle, uuid, 0, prop, NULL,
+	return gatt_db_append_characteristic(db, handle, uuid, 0, prop, NULL,
 							NULL, NULL);
 }
 
@@ -4153,7 +4153,7 @@ static struct gatt_db_attribute *insert_desc(const struct l2cap_frame *frame,
 	if (!db)
 		return NULL;
 
-	return gatt_db_insert_descriptor(db, handle, uuid, 0, NULL, NULL, NULL);
+	return gatt_db_append_descriptor(db, handle, uuid, 0, NULL, NULL, NULL);
 }
 
 static void att_find_info_rsp_16(const struct l2cap_frame *frame)

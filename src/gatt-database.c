@@ -3178,7 +3178,7 @@ static bool database_add_desc(struct external_service *service,
 		return false;
 	}
 
-	desc->attrib = gatt_db_service_insert_descriptor(service->attrib,
+	desc->attrib = gatt_db_service_append_descriptor(service->attrib,
 							handle, &uuid,
 							desc->perm,
 							desc_read_cb,
@@ -3351,7 +3351,7 @@ static bool database_add_chrc(struct external_service *service,
 		return false;
 	}
 
-	chrc->attrib = gatt_db_service_insert_characteristic(service->attrib,
+	chrc->attrib = gatt_db_service_append_characteristic(service->attrib,
 						handle, &uuid, chrc->perm,
 						chrc->props, chrc_read_cb,
 						chrc_write_cb, chrc);

@@ -638,7 +638,7 @@ static void discover_incl_cb(bool success, uint8_t att_ecode,
 			continue;
 		}
 
-		attr = gatt_db_insert_included(client->db, handle, attr);
+		attr = gatt_db_append_included(client->db, handle, attr);
 		if (!attr) {
 			DBG(client,
 				"Unable to add include attribute at 0x%04x",
@@ -734,7 +734,7 @@ static bool discover_descs(struct discovery_op *op, bool *discovering)
 			op->cur_svc = svc;
 		}
 
-		attr = gatt_db_insert_characteristic(client->db,
+		attr = gatt_db_append_characteristic(client->db,
 							chrc_data->value_handle,
 							&chrc_data->uuid, 0,
 							chrc_data->properties,
@@ -788,7 +788,7 @@ static bool discover_descs(struct discovery_op *op, bool *discovering)
 			 */
 			bt_uuid16_create(&ccc_uuid,
 					GATT_CLIENT_CHARAC_CFG_UUID);
-			attr = gatt_db_insert_descriptor(client->db, desc_start,
+			attr = gatt_db_append_descriptor(client->db, desc_start,
 							&ccc_uuid, 0, NULL,
 							NULL, NULL);
 			if (attr) {
@@ -952,7 +952,7 @@ static void discover_descs_cb(bool success, uint8_t att_ecode,
 
 		DBG(client, "handle: 0x%04x, uuid: %s", handle, uuid_str);
 
-		attr = gatt_db_insert_descriptor(client->db, handle,
+		attr = gatt_db_append_descriptor(client->db, handle,
 							&uuid, 0, NULL, NULL,
 							NULL);
 		if (!attr) {

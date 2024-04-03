@@ -1236,7 +1236,7 @@ add_char_with_value(struct gatt_db_attribute *service_att, uint16_t handle,
 	struct gatt_db_attribute *attrib;
 
 	if (handle)
-		attrib = gatt_db_service_insert_characteristic(service_att,
+		attrib = gatt_db_service_append_characteristic(service_att,
 								handle, uuid,
 								att_permissions,
 								char_properties,
@@ -1265,7 +1265,7 @@ add_desc_with_value(struct gatt_db_attribute *att, uint16_t handle,
 	struct gatt_db_attribute *desc_att;
 
 	if (handle)
-		desc_att = gatt_db_service_insert_descriptor(att, handle, uuid,
+		desc_att = gatt_db_service_append_descriptor(att, handle, uuid,
 							att_perms, NULL, NULL,
 							NULL);
 	else
