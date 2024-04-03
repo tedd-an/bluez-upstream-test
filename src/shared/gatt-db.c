@@ -1003,6 +1003,72 @@ service_append_descriptor(struct gatt_db_service *service,
 }
 
 struct gatt_db_attribute *
+gatt_db_insert_descriptor(struct gatt_db *db,
+					uint16_t handle,
+					const bt_uuid_t *uuid,
+					uint32_t permissions,
+					gatt_db_read_t read_func,
+					gatt_db_write_t write_func,
+					void *user_data)
+{
+	struct gatt_db_attribute *attrib, *iter_attr, *char_attr = NULL;
+	struct gatt_db_service *service;
+	int i, j, num_index, char_index;
+
+	attrib = gatt_db_get_service(db, handle);
+	if (!attrib)
+		return NULL;
+
+	service = attrib->service;
+	num_index = get_attribute_index(service, 0);
+	if (!num_index)
+		return NULL;
+
+	// Find the characteristic the descriptor belongs to.
+	for (i = 0; i < num_index; i++) {
+		iter_attr = service->attributes[i];
+		if (bt_uuid_cmp(&characteristic_uuid, &iter_attr->uuid))
+			continue;
+
+		if (iter_attr->handle > handle)
+			continue;
+
+		// Find the characteristic with the largest handle among those
+		// with handles less than the descriptor's handle.
+		if (!char_attr || iter_attr->handle > char_attr->handle) {
+			char_attr = iter_attr;
+			char_index = i;
+		}
+	}
+
+	// There is no characteristic contain this descriptor. Something went
+	// wrong
+	if (!char_attr)
+		return NULL;
+
+	// Find the end of this characteristic
+	for (i = char_index + 1; i < num_index; i++) {
+		iter_attr = service->attributes[i];
+
+		if (!bt_uuid_cmp(&characteristic_uuid, &iter_attr->uuid) ||
+			!bt_uuid_cmp(&included_service_uuid, &iter_attr->uuid))
+			break;
+	}
+
+	// Move all of the attributes after the end of this characteristic to
+	// its next index.
+	for (j = num_index; j > i; j--)
+		service->attributes[j] = service->attributes[j - 1];
+
+	service->attributes[i] = new_attribute(service, handle, uuid, NULL, 0);
+
+	set_attribute_data(service->attributes[i], read_func, write_func,
+							permissions, user_data);
+
+	return service->attributes[i];
+}
+
+struct gatt_db_attribute *
 gatt_db_append_descriptor(struct gatt_db *db,
 					uint16_t handle,
 					const bt_uuid_t *uuid,
