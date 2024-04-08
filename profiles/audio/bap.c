@@ -107,6 +107,8 @@ struct bap_data {
 	struct queue *snks;
 	struct queue *bcast;
 	struct queue *streams;
+	struct queue *bcast_pa_requests;
+	unsigned int pa_timer_id;
 	GIOChannel *listen_io;
 	int selecting;
 	void *user_data;
@@ -127,8 +129,6 @@ struct bap_bcast_pa_req {
 };
 
 static struct queue *sessions;
-static struct queue *bcast_pa_requests;
-static unsigned int pa_timer_id;
 
 /* Structure holding the parameters for Periodic Advertisement create sync.
  * The full QOS is populated at the time the user selects and endpoint and
@@ -965,15 +965,25 @@ static DBusMessage *set_configuration(DBusConnection *conn, DBusMessage *msg,
 	return NULL;
 }
 
+static bool match_adapter_entry(const void *data, const void *match_data)
+{
+	const struct bap_data *bdata = data;
+	const struct btd_adapter *adapter = match_data;
+
+	return (bdata->user_data == adapter) && (bdata->device == NULL);
+}
+
 static void iso_bcast_confirm_cb(GIOChannel *io, GError *err, void *user_data)
 {
 	struct bap_bcast_pa_req *req = user_data;
 	struct bap_setup *setup = req->data.setup;
+	struct bap_data *bap_data = queue_find(sessions,
+			match_adapter_entry, setup->ep->data->adapter);
 	int fd;
 
 	DBG("BIG Sync completed");
 
-	queue_remove(bcast_pa_requests, req);
+	queue_remove(bap_data->bcast_pa_requests, req);
 
 	/* This device is no longer needed */
 	btd_service_connecting_complete(setup->ep->data->service, 0);
@@ -1109,6 +1119,7 @@ static void iso_pa_sync_confirm_cb(GIOChannel *io, void *user_data)
 	GError *err = NULL;
 	struct bap_bcast_pa_req *pa_req = user_data;
 	struct bap_data *data = btd_service_get_user_data(pa_req->data.service);
+	struct bt_bap *bap = data->bap;
 	struct bt_iso_base base;
 	struct bt_iso_qos qos;
 
@@ -1130,12 +1141,13 @@ static void iso_pa_sync_confirm_cb(GIOChannel *io, void *user_data)
 	g_io_channel_unref(data->listen_io);
 	g_io_channel_shutdown(io, TRUE, NULL);
 	data->listen_io = NULL;
-	queue_remove(bcast_pa_requests, pa_req);
+	data = queue_find(sessions, match_adapter_entry, data->adapter);
+	queue_remove(data->bcast_pa_requests, pa_req);
 
 	/* Analyze received BASE data and create remote media endpoints for each
 	 * BIS matching our capabilities
 	 */
-	parse_base(data->bap, &base, bap_debug);
+	parse_base(bap, &base, bap_debug);
 }
 
 static bool match_data_bap_data(const void *data, const void *match_data)
@@ -2015,25 +2027,37 @@ static void pa_and_big_sync(struct bap_bcast_pa_req *req);
 
 static gboolean pa_idle_timer(gpointer user_data)
 {
-	struct bap_bcast_pa_req *req = user_data;
+	struct bap_data *bap_data = user_data;
+	struct bap_bcast_pa_req *req =
+				queue_peek_head(bap_data->bcast_pa_requests);
 	bool in_progress = FALSE;
 
+	/* If the queue is empty, stop the timer. It will be started,later on,
+	 * if any new requests arrive.
+	 */
+	if (req == NULL) {
+		/* Set the adapter's pa_timer id to 0. This will later be
+		 * used to check if the timer is on or off.
+		 */
+		bap_data->pa_timer_id = 0;
+		/* Stop the adapter's pa_timer by returning FALSE */
+		return FALSE;
+	}
+
 	/* Handle timer if no request is in progress */
-	queue_foreach(bcast_pa_requests, check_pa_req_in_progress,
+	queue_foreach(bap_data->bcast_pa_requests, check_pa_req_in_progress,
 			&in_progress);
 	if (in_progress == FALSE) {
-		req = queue_peek_head(bcast_pa_requests);
-		if (req != NULL)
-			switch (req->type) {
-			case BAP_PA_SHORT_REQ:
-				DBG("do short lived PA Sync");
-				short_lived_pa_sync(req);
-				break;
-			case BAP_PA_BIG_SYNC_REQ:
-				DBG("do PA Sync and BIG Sync");
-				pa_and_big_sync(req);
-				break;
-			}
+		switch (req->type) {
+		case BAP_PA_SHORT_REQ:
+			DBG("do short lived PA Sync");
+			short_lived_pa_sync(req);
+			break;
+		case BAP_PA_BIG_SYNC_REQ:
+			DBG("do PA Sync and BIG Sync");
+			pa_and_big_sync(req);
+			break;
+		}
 	}
 
 	return TRUE;
@@ -2043,15 +2067,25 @@ static void setup_accept_io_broadcast(struct bap_data *data,
 					struct bap_setup *setup)
 {
 	struct bap_bcast_pa_req *pa_req = new0(struct bap_bcast_pa_req, 1);
+	struct bap_data *bap_data = queue_find(sessions,
+		match_adapter_entry, data->adapter);
+
+	/* Timer could be stopped if all the short lived requests were treated.
+	 * Check the state of the timer and turn it on so that this requests
+	 * can also be treated.
+	 */
+	if (bap_data->pa_timer_id == 0)
+		bap_data->pa_timer_id = g_timeout_add_seconds(
+		PA_IDLE_TIMEOUT, pa_idle_timer, bap_data);
 
 	/* Add this request to the PA queue.
-	 * We don't need to check the queue here and the timer, as we cannot
-	 * have BAP_PA_BIG_SYNC_REQ before a short PA (BAP_PA_SHORT_REQ)
+	 * We don't need to check the queue here, as we cannot have
+	 * BAP_PA_BIG_SYNC_REQ before a short PA (BAP_PA_SHORT_REQ)
 	 */
 	pa_req->type = BAP_PA_BIG_SYNC_REQ;
 	pa_req->in_progress = FALSE;
 	pa_req->data.setup = setup;
-	queue_push_tail(bcast_pa_requests, pa_req);
+	queue_push_tail(bap_data->bcast_pa_requests, pa_req);
 }
 
 static void setup_create_ucast_io(struct bap_data *data,
@@ -2878,6 +2912,8 @@ static int bap_bcast_probe(struct btd_service *service)
 {
 	struct btd_device *device = btd_service_get_device(service);
 	struct btd_adapter *adapter = device_get_adapter(device);
+	struct bap_data *bap_data = queue_find(sessions,
+						match_adapter_entry, adapter);
 	struct bap_bcast_pa_req *pa_req =
 			new0(struct bap_bcast_pa_req, 1);
 
@@ -2886,12 +2922,10 @@ static int bap_bcast_probe(struct btd_service *service)
 		return -ENOTSUP;
 	}
 
-	/* First time initialize the queue and start the idle timer */
-	if (bcast_pa_requests == NULL) {
-		bcast_pa_requests = queue_new();
-		pa_timer_id = g_timeout_add_seconds(PA_IDLE_TIMEOUT,
-					pa_idle_timer, NULL);
-	}
+	/* Start the PA timer if it isn't active */
+	if (bap_data->pa_timer_id == 0)
+		bap_data->pa_timer_id = g_timeout_add_seconds(
+		PA_IDLE_TIMEOUT, pa_idle_timer, bap_data);
 
 	/* Enqueue this device advertisement so that we can do short-lived
 	 */
@@ -2899,16 +2933,30 @@ static int bap_bcast_probe(struct btd_service *service)
 	pa_req->type = BAP_PA_SHORT_REQ;
 	pa_req->in_progress = FALSE;
 	pa_req->data.service = service;
-	queue_push_tail(bcast_pa_requests, pa_req);
+	queue_push_tail(bap_data->bcast_pa_requests, pa_req);
 
 	return 0;
+}
+
+static bool remove_service(const void *data, const void *match_data)
+{
+	struct bap_bcast_pa_req *pa_req = (struct bap_bcast_pa_req *)data;
+
+	if (pa_req->type == BAP_PA_SHORT_REQ &&
+		pa_req->data.service == match_data)
+		return true;
+	return false;
 }
 
 static void bap_bcast_remove(struct btd_service *service)
 {
 	struct btd_device *device = btd_service_get_device(service);
-	struct bap_data *data;
+	struct btd_adapter *adapter = device_get_adapter(device);
+	struct bap_data *data = queue_find(sessions,
+						match_adapter_entry, adapter);
 	char addr[18];
+
+	queue_remove_if(data->bcast_pa_requests, remove_service, service);
 
 	ba2str(device_get_address(device), addr);
 	DBG("%s", addr);
@@ -3035,6 +3083,7 @@ static int bap_adapter_probe(struct btd_profile *p,
 
 	data->bap = bt_bap_new(btd_gatt_database_get_db(database),
 					btd_gatt_database_get_db(database));
+	data->bcast_pa_requests = queue_new();
 	if (!data->bap) {
 		error("Unable to create BAP instance");
 		free(data);
