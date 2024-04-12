@@ -1105,6 +1105,9 @@ static void bap_stream_free(void *data)
 	free(stream);
 }
 
+static void bap_abort_stream_req(struct bt_bap *bap,
+						struct bt_bap_stream *stream);
+
 static void bap_stream_detach(struct bt_bap_stream *stream)
 {
 	struct bt_bap_endpoint *ep = stream->ep;
@@ -1113,6 +1116,8 @@ static void bap_stream_detach(struct bt_bap_stream *stream)
 		return;
 
 	DBG(stream->bap, "stream %p ep %p", stream, ep);
+
+	bap_abort_stream_req(stream->bap, stream);
 
 	queue_remove(stream->bap->streams, stream);
 	bap_stream_clear_cfm(stream);
@@ -1475,6 +1480,28 @@ static bool bap_process_queue(void *data)
 	}
 
 	return false;
+}
+
+static bool match_req_stream(const void *data, const void *match_data)
+{
+	const struct bt_bap_req *pend = data;
+
+	return pend->stream == match_data;
+}
+
+static void bap_req_abort(void *data)
+{
+	struct bt_bap_req *req = data;
+	struct bt_bap *bap = req->stream->bap;
+
+	DBG(bap, "req %p", req);
+	bap_req_complete(req, NULL);
+}
+
+static void bap_abort_stream_req(struct bt_bap *bap,
+						struct bt_bap_stream *stream)
+{
+	queue_remove_all(bap->reqs, match_req_stream, stream, bap_req_abort);
 }
 
 static bool bap_queue_req(struct bt_bap *bap, struct bt_bap_req *req)
