@@ -62,6 +62,8 @@ OPTIONS
 
 -S baudrate, --speed baudrate       Specify wich baudrate to use
 
+-T soc_type, --type soc_type        Specify soc_type for protocol qca
+
 -N, --noflowctl            Disable flow control
 
 -v, --version              Show version
