@@ -19,6 +19,8 @@
 #define HCIUARTGETDEVICE	_IOR('U', 202, int)
 #define HCIUARTSETFLAGS		_IOW('U', 203, int)
 #define HCIUARTGETFLAGS		_IOR('U', 204, int)
+#define HCIUARTSETPROTODATA    _IOW('U', 205, unsigned long)
+
 
 #define HCI_UART_H4	0
 #define HCI_UART_BCSP	1
