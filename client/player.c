@@ -34,6 +34,7 @@
 
 #include "lib/bluetooth.h"
 #include "lib/uuid.h"
+#include "lib/iso.h"
 
 #include "profiles/audio/a2dp-codecs.h"
 #include "src/shared/lc3.h"
@@ -4972,11 +4973,23 @@ static int transport_send_seq(struct transport *transport, int fd, uint32_t num)
 		}
 
 		ret = send(transport->sk, buf, ret, 0);
+		/* If send failed due to the resource being temporarily
+		 * unavailable the controller's ISO data buffers are
+		 * full. Try sending the same packet next time.
+		 */
 		if (ret <= 0) {
-			bt_shell_printf("send failed: %s (%d)",
+			if (errno == EAGAIN) {
+				/* Decrease the fd's offset so that the same
+				 * packet is sent next time.
+				 */
+				offset = lseek(fd, -transport->mtu[1],
+								SEEK_CUR);
+			} else {
+				bt_shell_printf("send failed: %s (%d)",
 							strerror(errno), errno);
-			free(buf);
-			return -errno;
+				free(buf);
+				return -errno;
+			}
 		}
 
 		elapsed_time(!transport->seq, &secs, &nsecs);
@@ -5033,7 +5046,15 @@ static bool transport_timer_read(struct io *io, void *user_data)
 
 	/* num of packets = latency (ms) / interval (us) */
 	num = (qos.ucast.out.latency * 1000 / qos.ucast.out.interval);
-
+	if (num < 1)
+		/* The latency could be smaller than the interval resulting in
+		 * num being 0. If this is the case, set it to 1 so that packets
+		 * will still be sent.
+		 */
+		num = 1;
+	/* TODO: replace this timer based implementation with one that
+	 * uses the number of completed packets reports.
+	 */
 	ret = transport_send_seq(transport, transport->fd, num);
 	if (ret < 0) {
 		bt_shell_printf("Unable to send: %s (%d)\n",
@@ -5052,6 +5073,8 @@ static bool transport_timer_read(struct io *io, void *user_data)
 static int transport_send(struct transport *transport, int fd,
 					struct bt_iso_qos *qos)
 {
+	struct sockaddr_iso addr;
+	socklen_t optlen;
 	struct itimerspec ts;
 	int timer_fd;
 
@@ -5068,8 +5091,28 @@ static int transport_send(struct transport *transport, int fd,
 		return -errno;
 
 	memset(&ts, 0, sizeof(ts));
-	ts.it_value.tv_nsec = qos->ucast.out.latency * 1000000;
-	ts.it_interval.tv_nsec = qos->ucast.out.latency * 1000000;
+	/* Need to know if the transport on which data is sent is
+	 * broadcast or unicast so that the correct qos structure
+	 * can be accessed. At this point in code there's no other
+	 * way of knowing this besides checking the peer address.
+	 * Broadcast will use BDADDR_ANY, while Unicast will use
+	 * the connected peer's actual address.
+	 */
+	memset(&addr, 0, sizeof(addr));
+	optlen = sizeof(addr);
+
+	if (getpeername(transport->sk, &addr, &optlen) < 0)
+		return -errno;
+
+	if (!(bacmp(&addr.iso_bdaddr, BDADDR_ANY))) {
+		/* Interval is measured in ms, multiply by 1000000 to get ns */
+		ts.it_value.tv_nsec = qos->bcast.out.latency * 1000000;
+		ts.it_interval.tv_nsec = qos->bcast.out.latency * 1000000;
+	} else {
+		/* Interval is measured in ms, multiply by 1000000 to get ns */
+		ts.it_value.tv_nsec = qos->ucast.out.latency * 1000000;
+		ts.it_interval.tv_nsec = qos->ucast.out.latency * 1000000;
+	}
 
 	if (timerfd_settime(timer_fd, TFD_TIMER_ABSTIME, &ts, NULL) < 0)
 		return -errno;
