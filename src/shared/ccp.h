@@ -3,7 +3,7 @@
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
- *  Copyright (C) 2020  Intel Corporation. All rights reserved.
+ *  Copyright (C) 2023  Intel Corporation. All rights reserved.
  *
  */
 
@@ -18,13 +18,17 @@ struct bt_ccp;
 struct bt_ccp_db;
 struct bt_ccp_session_info;
 
+struct bt_ccp_event_callback {
+	void (*incoming_call)(struct bt_ccp *ccp,
+			      const uint8_t *value, uint16_t len);
+	void (*terminate_call)(struct bt_ccp *ccp,
+			       const uint8_t *value, uint16_t len);
+	void (*call_list_update)(struct bt_ccp *ccp,
+				 const uint8_t *value, uint16_t len);
+};
+
 typedef void (*bt_ccp_debug_func_t)(const char *str, void *user_data);
 typedef void (*bt_ccp_destroy_func_t)(void *user_data);
-
-struct bt_ccp_event_callback {
-	void (*call_state)(struct bt_ccp *ccp,  const uint8_t *value,
-			   uint16_t length);
-};
 
 void bt_ccp_set_event_callbacks(struct bt_ccp *ccp,
 				const struct bt_ccp_event_callback *cbs,
@@ -43,3 +47,6 @@ void bt_ccp_unref(struct bt_ccp *ccp);
 
 bool bt_ccp_set_user_data(struct bt_ccp *ccp, void *user_data);
 void *bt_ccp_get_user_data(struct bt_ccp *ccp);
+
+unsigned int bt_ccp_call_answer(struct bt_ccp *ccp, uint8_t index);
+unsigned int bt_ccp_call_reject(struct bt_ccp *ccp, uint8_t index);

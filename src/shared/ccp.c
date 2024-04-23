@@ -3,7 +3,7 @@
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
- *  Copyright (C) 2022  Intel Corporation. All rights reserved.
+ *  Copyright (C) 2023  Intel Corporation. All rights reserved.
  *
  */
 
@@ -112,6 +112,55 @@ struct bt_ccs {
 };
 
 static struct queue *ccp_db;
+static struct bt_ccs *ccp_get_ccs(struct bt_ccp *ccp)
+{
+	if (!ccp)
+		return NULL;
+
+	if (ccp->rdb->ccs)
+		return ccp->rdb->ccs;
+
+	ccp->rdb->ccs = new0(struct bt_ccs, 1);
+	ccp->rdb->ccs->mdb = ccp->rdb;
+
+	return ccp->rdb->ccs;
+}
+
+static unsigned int ccp_send(struct bt_ccp *ccp, uint8_t index,
+			     uint8_t operation)
+{
+	int ret;
+	uint16_t handle;
+	uint8_t cmd[2];
+	struct bt_ccs *ccs = ccp_get_ccs(ccp);
+
+	cmd[0] = operation;
+	cmd[1] = index;
+
+	if (!ccp->client)
+		return -1;
+
+	if (!gatt_db_attribute_get_char_data(ccs->call_ctrl_point, NULL,
+					     &handle, NULL, NULL, NULL))
+		return -1;
+
+	ret = bt_gatt_client_write_without_response(ccp->client, handle, false,
+						    cmd, 2);
+	if (!ret)
+		return -1;
+
+	return 0;
+}
+
+unsigned int bt_ccp_call_answer(struct bt_ccp *ccp, uint8_t index)
+{
+	return ccp_send(ccp, index, 0);
+}
+
+unsigned int bt_ccp_call_reject(struct bt_ccp *ccp, uint8_t index)
+{
+	return ccp_send(ccp, index, 1);
+}
 
 static void ccp_debug(struct bt_ccp *ccp, const char *format, ...)
 {
@@ -429,20 +478,6 @@ static struct bt_ccs *ccs_new(struct gatt_db *db)
 	return ccs;
 }
 
-static struct bt_ccs *ccp_get_ccs(struct bt_ccp *ccp)
-{
-	if (!ccp)
-		return NULL;
-
-	if (ccp->rdb->ccs)
-		return ccp->rdb->ccs;
-
-	ccp->rdb->ccs = new0(struct bt_ccs, 1);
-	ccp->rdb->ccs->mdb = ccp->rdb;
-
-	return ccp->rdb->ccs;
-}
-
 static void ccp_pending_destroy(void *data)
 {
 	struct bt_ccp_pending *pending = data;
@@ -503,6 +538,8 @@ static void ccp_cb_register(uint16_t att_ecode, void *user_data)
 {
 	struct bt_ccp *ccp = user_data;
 
+	DBG(ccp, "");
+
 	if (att_ecode)
 		DBG(ccp, "ccp cb notification failed: 0x%04x", att_ecode);
 
@@ -515,6 +552,40 @@ static void ccp_cb_notify(uint16_t value_handle, const uint8_t *value,
 	 /* TODO: generic handler for non-mandatory CCP notifications */
 }
 
+static void ccp_tc_update_call_list(struct bt_ccp *ccp,
+				    const uint8_t *value, uint16_t length)
+{
+	struct event_callback *cb = ccp->cb;
+
+	DBG(ccp, " ");
+
+	if (cb && cb->cbs && cb->cbs->call_list_update)
+		cb->cbs->call_list_update(ccp, value, length);
+}
+
+static void ccp_tc_handle_incoming_call(struct bt_ccp *ccp,
+					const uint8_t *value, uint16_t length)
+{
+	struct event_callback *cb = ccp->cb;
+
+	DBG(ccp, " ");
+
+	if (cb && cb->cbs && cb->cbs->incoming_call)
+		cb->cbs->incoming_call(ccp, value, length);
+}
+
+static void ccp_tc_handle_terminate_call(struct bt_ccp *ccp,
+					 const uint8_t *value, uint16_t length)
+{
+	struct event_callback *cb = ccp->cb;
+
+	DBG(ccp, " ");
+
+	if (cb && cb->cbs && cb->cbs->terminate_call)
+		cb->cbs->terminate_call(ccp, value, length);
+}
+
+/* callback registered function */
 static void ccp_cb_status_flag_register(uint16_t att_ecode, void *user_data)
 {
 	struct bt_ccp *ccp = user_data;
@@ -523,61 +594,12 @@ static void ccp_cb_status_flag_register(uint16_t att_ecode, void *user_data)
 		DBG(ccp, "ccp cb notification failed: 0x%04x", att_ecode);
 }
 
-static void ccp_cb_status_flag_notify(uint16_t value_handle,
-				      const uint8_t *value,
-				      uint16_t length, void *user_data)
-{
-	struct bt_ccp *ccp = user_data;
-
-	DBG(ccp, "");
-
-	if (!length)
-		return;
-}
-
 static void ccp_cb_terminate_register(uint16_t att_ecode, void *user_data)
 {
 	struct bt_ccp *ccp = user_data;
 
 	if (att_ecode)
 		DBG(ccp, "ccp cb notification failed: 0x%04x", att_ecode);
-}
-
-static void ccp_cb_terminate_notify(uint16_t value_handle, const uint8_t *value,
-				    uint16_t length, void *user_data)
-{
-	struct bt_ccp *ccp = user_data;
-
-	DBG(ccp, "");
-
-	if (!length)
-		return;
-
-	/* TODO: update call state in Local context */
-}
-
-static void ccp_cb_bearer_name_register(uint16_t att_ecode, void *user_data)
-{
-	struct bt_ccp *ccp = user_data;
-
-	DBG(ccp, "");
-
-	if (att_ecode)
-		DBG(ccp, "ccp cb notification failed: 0x%04x", att_ecode);
-}
-
-static void ccp_cb_bearer_name_notify(uint16_t value_handle,
-				      const uint8_t *value,
-				      uint16_t length, void *user_data)
-{
-	struct bt_ccp *ccp = user_data;
-
-	DBG(ccp, "");
-
-	if (!length)
-		return;
-
-	/* TODO: update call details in Local context */
 }
 
 static void ccp_cb_call_list_register(uint16_t att_ecode, void *user_data)
@@ -590,19 +612,6 @@ static void ccp_cb_call_list_register(uint16_t att_ecode, void *user_data)
 		DBG(ccp, "ccp cb notification failed: 0x%04x", att_ecode);
 }
 
-static void ccp_cb_call_list_notify(uint16_t value_handle, const uint8_t *value,
-				    uint16_t length, void *user_data)
-{
-	struct bt_ccp *ccp = user_data;
-
-	DBG(ccp, "");
-
-	if (!length)
-		return;
-
-	 /* TODO: update call list in Local context */
-}
-
 static void ccp_cb_call_state_register(uint16_t att_ecode, void *user_data)
 {
 	struct bt_ccp *ccp = user_data;
@@ -611,20 +620,6 @@ static void ccp_cb_call_state_register(uint16_t att_ecode, void *user_data)
 
 	if (att_ecode)
 		DBG(ccp, "ccp cb notification failed: 0x%04x", att_ecode);
-}
-
-static void ccp_cb_call_state_notify(uint16_t value_handle,
-				     const uint8_t *value,
-				     uint16_t length, void *user_data)
-{
-	struct bt_ccp *ccp = user_data;
-
-	DBG(ccp, "");
-
-	if (!length)
-		return;
-
-	/* TODO: update call state in Local context */
 }
 
 static void ccp_cb_incom_call_register(uint16_t att_ecode, void *user_data)
@@ -637,18 +632,66 @@ static void ccp_cb_incom_call_register(uint16_t att_ecode, void *user_data)
 		DBG(ccp, "ccp cb notification failed: 0x%04x", att_ecode);
 }
 
+static void ccp_cb_bearer_name_register(uint16_t att_ecode, void *user_data)
+{
+	struct bt_ccp *ccp = user_data;
+
+	DBG(ccp, "");
+
+	if (att_ecode)
+		DBG(ccp, "ccp cb notification failed: 0x%04x", att_ecode);
+}
+
+static void ccp_cb_status_flag_notify(uint16_t value_handle,
+				      const uint8_t *value,
+				      uint16_t length, void *user_data)
+{
+	struct bt_ccp *ccp = user_data;
+	DBG(ccp, "length  %d", length);
+
+	if (!length)
+		return;
+}
+
+static void ccp_cb_terminate_notify(uint16_t value_handle,
+				    const uint8_t *value,
+				    uint16_t length, void *user_data)
+{
+	struct bt_ccp *ccp = user_data;
+
+	DBG(ccp, "length  %d", length);
+
+	if (!length)
+		return;
+
+	ccp_tc_handle_terminate_call(ccp, value, length);
+}
+
+static void ccp_cb_call_list_notify(uint16_t value_handle, const uint8_t *value,
+				    uint16_t length, void *user_data)
+{
+	struct bt_ccp *ccp = user_data;
+
+	DBG(ccp, "length  %d", length);
+
+	if (!length)
+		return;
+
+	ccp_tc_update_call_list(ccp, value, length);
+}
+
 static void ccp_cb_incom_call_notify(uint16_t value_handle,
 				     const uint8_t *value,
 				     uint16_t length, void *user_data)
 {
 	struct bt_ccp *ccp = user_data;
 
-	DBG(ccp, "");
+	DBG(ccp, "length  %d", length);
 
 	if (!length)
 		return;
 
-	/* TODO: Handle incoming call notofiation, Answer/reject etc */
+	ccp_tc_handle_incoming_call(ccp, value, length);
 }
 
 static void bt_ccp_incom_call_attach(struct bt_ccp *ccp)
@@ -691,7 +734,7 @@ static void bt_ccp_call_state_attach(struct bt_ccp *ccp)
 		bt_gatt_client_register_notify(ccp->client,
 					       value_handle,
 					       ccp_cb_call_state_register,
-					       ccp_cb_call_state_notify, ccp,
+					       NULL, ccp,
 					       NULL);
 }
 
@@ -735,7 +778,7 @@ static void bt_ccp_name_attach(struct bt_ccp *ccp)
 		bt_gatt_client_register_notify(ccp->client,
 					       value_handle,
 					       ccp_cb_bearer_name_register,
-					       ccp_cb_bearer_name_notify, ccp,
+					       NULL, ccp,
 					       NULL);
 }
 
@@ -799,7 +842,7 @@ static void bt_ccp_uci_attach(struct bt_ccp *ccp)
 	ccp->bearer_uci_id = bt_gatt_client_register_notify(ccp->client,
 							    value_handle,
 							    ccp_cb_register,
-							    ccp_cb_notify, ccp,
+							    NULL, ccp,
 							    NULL);
 }
 
@@ -820,7 +863,7 @@ static void bt_ccp_technology_attach(struct bt_ccp *ccp)
 	ccp->bearer_technology_id =
 		bt_gatt_client_register_notify(ccp->client,
 					       value_handle, ccp_cb_register,
-					       ccp_cb_notify, ccp, NULL);
+					       NULL, ccp, NULL);
 }
 
 static void bt_ccp_strength_attach(struct bt_ccp *ccp)
@@ -839,7 +882,7 @@ static void bt_ccp_strength_attach(struct bt_ccp *ccp)
 
 	ccp->signal_strength_id =
 		bt_gatt_client_register_notify(ccp->client, value_handle,
-					       ccp_cb_register, ccp_cb_notify,
+					       ccp_cb_register, NULL,
 					       ccp, NULL);
 }
 
@@ -859,7 +902,7 @@ static void bt_ccp_ccid_attach(struct bt_ccp *ccp)
 	ccp->ccid_id = bt_gatt_client_register_notify(ccp->client,
 						      value_handle,
 						      ccp_cb_register,
-						      ccp_cb_notify, ccp, NULL);
+						      NULL, ccp, NULL);
 }
 
 static void bt_ccp_tar_uri_attach(struct bt_ccp *ccp)
@@ -879,7 +922,7 @@ static void bt_ccp_tar_uri_attach(struct bt_ccp *ccp)
 	ccp->target_bearer_uri_id =
 		bt_gatt_client_register_notify(ccp->client,
 					       value_handle, ccp_cb_register,
-					       ccp_cb_notify, ccp,
+					       NULL, ccp,
 					       NULL);
 }
 
@@ -900,7 +943,7 @@ static void bt_ccp_ctrl_point_attach(struct bt_ccp *ccp)
 	ccp->call_control_pt_id =
 		bt_gatt_client_register_notify(ccp->client,
 					       value_handle, ccp_cb_register,
-					       ccp_cb_notify, ccp, NULL);
+					       NULL, ccp, NULL);
 }
 
 static void bt_ccp_ctrl_opcode_attach(struct bt_ccp *ccp)
@@ -920,7 +963,7 @@ static void bt_ccp_ctrl_opcode_attach(struct bt_ccp *ccp)
 	ccp->call_control_opt_opcode_id =
 		bt_gatt_client_register_notify(ccp->client,
 					       value_handle, ccp_cb_register,
-					       ccp_cb_notify, ccp, NULL);
+					       NULL, ccp, NULL);
 }
 
 static void bt_ccp_friendly_name_attach(struct bt_ccp *ccp)
@@ -940,7 +983,7 @@ static void bt_ccp_friendly_name_attach(struct bt_ccp *ccp)
 	ccp->friendly_name_id =
 		bt_gatt_client_register_notify(ccp->client,
 					       value_handle, ccp_cb_register,
-					       ccp_cb_notify, ccp, NULL);
+					       NULL, ccp, NULL);
 }
 
 static void bt_ccp_signal_intrvl_attach(struct bt_ccp *ccp)
@@ -960,7 +1003,7 @@ static void bt_ccp_signal_intrvl_attach(struct bt_ccp *ccp)
 	ccp->signal_reporting_intrvl_id =
 		bt_gatt_client_register_notify(ccp->client,
 					       value_handle, ccp_cb_register,
-					       ccp_cb_notify, ccp, NULL);
+					       NULL, ccp, NULL);
 }
 
 static void bt_ccp_uri_list_attach(struct bt_ccp *ccp)
@@ -980,7 +1023,7 @@ static void bt_ccp_uri_list_attach(struct bt_ccp *ccp)
 	ccp->bearer_uri_schemes_list_id =
 		bt_gatt_client_register_notify(ccp->client,
 					       value_handle, ccp_cb_register,
-					       ccp_cb_notify, ccp, NULL);
+					       NULL, ccp, NULL);
 }
 
 static void foreach_ccs_char(struct gatt_db_attribute *attr, void *user_data)
@@ -988,7 +1031,8 @@ static void foreach_ccs_char(struct gatt_db_attribute *attr, void *user_data)
 	struct bt_ccp *ccp = user_data;
 	struct bt_ccs *ccs;
 	uint16_t value_handle;
-	bt_uuid_t uuid;
+	bt_uuid_t uuid, uuid16;
+	uint16_t be16;
 
 	if (!gatt_db_attribute_get_char_data(attr, NULL, &value_handle,
 					     NULL, NULL, &uuid))
@@ -998,105 +1042,122 @@ static void foreach_ccs_char(struct gatt_db_attribute *attr, void *user_data)
 	if (!ccs || ccs->call_state)
 		return;
 
-	if (bt_uuid16_cmp(&uuid, BEARER_PROVIDER_NAME_CHRC_UUID)) {
+	uuid16.type  =  uuid.type;
+
+	if (uuid.type == BT_UUID16) {
+		DBG(ccp, "uuid %x", uuid.value.u16);
+		uuid16.value.u16 = uuid.value.u16;
+	} else if (uuid.type == BT_UUID128) {
+		DBG(ccp, "uuid is u128 ");
+		uuid16.type = BT_UUID16;
+		memcpy(&be16, &uuid.value.u128.data[2], 2);
+		uuid16.value.u16 = htons(be16);
+	} else {
+		DBG(ccp, "unexpected uuid type %d", uuid16.type);
+		return;
+	}
+
+	DBG(ccp, "uuid read from gatt database %x", uuid16.value.u16);
+
+	if (bt_uuid16_cmp(&uuid16, BEARER_PROVIDER_NAME_CHRC_UUID)) {
 		DBG(ccp, "Found Bearer Name, handle 0x%04x", value_handle);
 
 		ccs->bearer_name = attr;
 		bt_ccp_name_attach(ccp);
 	}
 
-	if (bt_uuid16_cmp(&uuid, BEARER_UCI_CHRC_UUID)) {
+	if (bt_uuid16_cmp(&uuid16, BEARER_UCI_CHRC_UUID)) {
 		DBG(ccp, "Found Bearer Uci, handle 0x%04x", value_handle);
 
 		ccs->bearer_uci = attr;
 		bt_ccp_uci_attach(ccp);
 	}
 
-	if (bt_uuid16_cmp(&uuid, BEARER_TECH_CHRC_UUID)) {
+	if (bt_uuid16_cmp(&uuid16, BEARER_TECH_CHRC_UUID)) {
 		DBG(ccp, "Found Bearer Technology, handle %x", value_handle);
 
 		ccs->bearer_technology = attr;
 		bt_ccp_technology_attach(ccp);
 	}
 
-	if (bt_uuid16_cmp(&uuid, BEARER_SIGNAL_STR_CHRC_UUID)) {
+	if (bt_uuid16_cmp(&uuid16, BEARER_SIGNAL_STR_CHRC_UUID)) {
 		DBG(ccp, "Found Signal Strength, handle 0x%04x", value_handle);
 
 		ccs->signal_strength = attr;
 		bt_ccp_strength_attach(ccp);
 	}
 
-	if (bt_uuid16_cmp(&uuid, BEARER_SIGNAL_INTRVL_CHRC_UUID)) {
+	if (bt_uuid16_cmp(&uuid16, BEARER_SIGNAL_INTRVL_CHRC_UUID)) {
 		DBG(ccp, "Found Signal Interval, handle 0x%04x", value_handle);
 
 		ccs->signal_reporting_intrvl = attr;
 		bt_ccp_signal_intrvl_attach(ccp);
 	}
 
-	if (bt_uuid16_cmp(&uuid, CALL_STATUS_FLAG_CHRC_UUID)) {
+	if (bt_uuid16_cmp(&uuid16, CALL_STATUS_FLAG_CHRC_UUID)) {
 		DBG(ccp, "Found Status Flag, handle 0x%04x", value_handle);
 
 		ccs->status_flag = attr;
 		bt_ccp_status_attach(ccp);
 	}
 
-	if (bt_uuid16_cmp(&uuid, BEARER_URI_SCHEME_CHRC_UUID)) {
+	if (bt_uuid16_cmp(&uuid16, BEARER_URI_SCHEME_CHRC_UUID)) {
 		DBG(ccp, "Found URI Scheme, handle 0x%04x", value_handle);
 
 		ccs->bearer_uri_schemes_list = attr;
 		bt_ccp_uri_list_attach(ccp);
 	}
 
-	if (bt_uuid16_cmp(&uuid, CURR_CALL_LIST_CHRC_UUID)) {
+	if (bt_uuid16_cmp(&uuid16, CURR_CALL_LIST_CHRC_UUID)) {
 		DBG(ccp, "Found Call List, handle 0x%04x", value_handle);
 
 		ccs->current_call_list = attr;
 		bt_ccp_call_list_attach(ccp);
 	}
 
-	if (bt_uuid16_cmp(&uuid, BEARER_CCID_CHRC_UUID)) {
+	if (bt_uuid16_cmp(&uuid16, BEARER_CCID_CHRC_UUID)) {
 		DBG(ccp, "Found CCID, handle 0x%04x", value_handle);
 
 		ccs->ccid = attr;
 		bt_ccp_ccid_attach(ccp);
 	}
 
-	if (bt_uuid16_cmp(&uuid, INCOM_CALL_TARGET_URI_CHRC_UUID)) {
+	if (bt_uuid16_cmp(&uuid16, INCOM_CALL_TARGET_URI_CHRC_UUID)) {
 		DBG(ccp, "Found Bearer Uri, handle 0x%04x", value_handle);
 
 		ccs->target_bearer_uri = attr;
 		bt_ccp_tar_uri_attach(ccp);
 	}
 
-	if (bt_uuid16_cmp(&uuid, CALL_CTRL_POINT_CHRC_UUID)) {
+	if (bt_uuid16_cmp(&uuid16, CALL_CTRL_POINT_CHRC_UUID)) {
 		DBG(ccp, "Found Control Point, handle 0x%04x", value_handle);
 
 		ccs->call_ctrl_point = attr;
 		bt_ccp_ctrl_point_attach(ccp);
 	}
 
-	if (bt_uuid16_cmp(&uuid, CALL_CTRL_POINT_OPT_OPCODE_CHRC_UUID)) {
+	if (bt_uuid16_cmp(&uuid16, CALL_CTRL_POINT_OPT_OPCODE_CHRC_UUID)) {
 		DBG(ccp, "Found Control opcode, handle 0x%04x", value_handle);
 
 		ccs->call_ctrl_opt_opcode = attr;
 		bt_ccp_ctrl_opcode_attach(ccp);
 	}
 
-	if (bt_uuid16_cmp(&uuid, TERMINATION_REASON_CHRC_UUID)) {
+	if (bt_uuid16_cmp(&uuid16, TERMINATION_REASON_CHRC_UUID)) {
 		DBG(ccp, "Found Termination Reason, handle %x", value_handle);
 
 		ccs->termination_reason = attr;
 		bt_ccp_term_reason_attach(ccp);
 	}
 
-	if (bt_uuid16_cmp(&uuid, INCOMING_CALL_CHRC_UUID)) {
+	if (bt_uuid16_cmp(&uuid16, INCOMING_CALL_CHRC_UUID)) {
 		DBG(ccp, "Found Incoming call, handle 0x%04x", value_handle);
 
 		ccs->incoming_call = attr;
 		bt_ccp_incom_call_attach(ccp);
 	}
 
-	if (bt_uuid16_cmp(&uuid, CALL_FRIENDLY_NAME_CHRC_UUID)) {
+	if (bt_uuid16_cmp(&uuid16, CALL_FRIENDLY_NAME_CHRC_UUID)) {
 		DBG(ccp, "Found Friendly name, handle 0x%04x", value_handle);
 
 		ccs->friendly_name = attr;

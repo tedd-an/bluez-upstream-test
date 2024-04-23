@@ -40,7 +40,6 @@
 #include "src/shared/gatt-db.h"
 #include "src/shared/gatt-client.h"
 #include "src/shared/gatt-server.h"
-#include "src/shared/ccp.h"
 
 #include "btio/btio.h"
 #include "src/plugin.h"
@@ -51,6 +50,8 @@
 #include "src/service.h"
 #include "src/log.h"
 #include "src/error.h"
+#include "src/shared/ccp.h"
+#include "telephony.h"
 
 #define GTBS_UUID_STR "0000184C-0000-1000-8000-00805f9b34fb"
 
@@ -58,8 +59,131 @@ struct ccp_data {
 	struct btd_device *device;
 	struct btd_service *service;
 	struct bt_ccp *ccp;
-	unsigned int state_id;
+	unsigned int call_state_id;
+	struct telephony_ctrl *tc;
 };
+
+static int ct_call_answer(struct telephony_ctrl *tc, void *user_data)
+{
+	struct bt_ccp *ccp = user_data;
+
+	DBG(" status %d index %d", tc->call_status, tc->call_index);
+
+	if (tc->call_status == CALL_DISCONNECTED)
+		return -1;
+
+	return bt_ccp_call_answer(ccp, tc->call_index);
+}
+
+static int ct_call_reject(struct telephony_ctrl *tc, void *user_data)
+{
+	struct bt_ccp *ccp = user_data;
+
+	DBG(" status %d  index %d", tc->call_status, tc->call_index);
+
+	if (tc->call_status == CALL_DISCONNECTED)
+		return -1;
+
+	return bt_ccp_call_reject(ccp, tc->call_index);
+}
+
+static const struct telephony_control_callback ct_cbs = {
+	.call_answer = &ct_call_answer,
+	.call_reject = &ct_call_reject,
+};
+
+static void cb_call_list_update(struct bt_ccp *ccp,  const uint8_t *buf,
+				uint16_t length)
+{
+	struct telephony_ctrl *tc = bt_ccp_get_user_data(ccp);
+	struct ccp_call_list_evt *evt;
+
+	DBG("");
+
+	if (length < sizeof(struct ccp_call_list_evt))
+		return;
+
+	evt = (struct ccp_call_list_evt *)buf;
+	tc->call_index = evt->index;
+	tc->call_status = evt->state;
+
+	DBG(" status %d  index %d", tc->call_status, tc->call_index);
+
+	telephony_update_call_Info(tc);
+}
+
+static void cb_incoming_call(struct bt_ccp *ccp,  const uint8_t *buf,
+			     uint16_t length)
+{
+	struct ccp_incoming_call_evt *evt;
+	struct telephony_ctrl *tc = bt_ccp_get_user_data(ccp);
+
+	DBG("");
+
+	if (length < sizeof(struct ccp_incoming_call_evt))
+		return;
+
+	evt = (struct ccp_incoming_call_evt *)buf;
+	tc->call_index = evt->index;
+	tc->call_status = INCOMING_CALL;
+
+	DBG(" status %d  index %d", tc->call_status, tc->call_index);
+
+	telephony_update_call_Info(tc);
+}
+
+static void cb_terminate_call(struct bt_ccp *ccp,  const uint8_t *buf,
+			      uint16_t length)
+{
+	struct ccp_call_terminate_evt *evt;
+	struct telephony_ctrl *tc = bt_ccp_get_user_data(ccp);
+
+	DBG("");
+
+	if (length < sizeof(struct ccp_call_terminate_evt))
+		return;
+
+	evt = (struct ccp_call_terminate_evt *)buf;
+	tc->call_index = evt->index;
+	tc->call_status = CALL_DISCONNECTED;
+
+	DBG(" status %d  index %d", tc->call_status, tc->call_index);
+
+	telephony_update_call_Info(tc);
+}
+
+static const struct bt_ccp_event_callback cbs = {
+	.incoming_call =  cb_incoming_call,
+	.terminate_call =  cb_terminate_call,
+	.call_list_update = cb_call_list_update
+};
+
+static int ccp_accept(struct btd_service *service)
+{
+	struct btd_device *device = btd_service_get_device(service);
+	struct bt_gatt_client *client = btd_device_get_gatt_client(device);
+	struct ccp_data *data = btd_service_get_user_data(service);
+	char addr[18];
+
+	ba2str(device_get_address(device), addr);
+	DBG("%s", addr);
+
+	bt_ccp_attach(data->ccp, client);
+
+	data->tc = telephony_create_device(device_get_path(device), 0);
+	if (!data->tc) {
+		DBG("Unable to create telephony device object");
+		data->tc = NULL;
+		return -EINVAL;
+	}
+
+	telephony_set_callbacks(data->tc, &ct_cbs, data->ccp);
+	bt_ccp_set_user_data(data->ccp, data->tc);
+	bt_ccp_set_event_callbacks(data->ccp, &cbs, data->tc);
+	btd_service_connecting_complete(service, 0);
+
+	return 0;
+}
 
 static void ccp_debug(const char *str, void *user_data)
 {
@@ -138,28 +262,6 @@ static void ccp_remove(struct btd_service *service)
 	}
 
 	ccp_data_remove(data);
-}
-
-static int ccp_accept(struct btd_service *service)
-{
-	struct btd_device *device = btd_service_get_device(service);
-	struct bt_gatt_client *client = btd_device_get_gatt_client(device);
-	struct ccp_data *data = btd_service_get_user_data(service);
-	char addr[18];
-
-	ba2str(device_get_address(device), addr);
-	DBG("%s", addr);
-
-	if (!bt_ccp_attach(data->ccp, client)) {
-		error("CCP unable to attach");
-		return -EINVAL;
-	}
-
-	/* TODO: register telephony operations here */
-
-	btd_service_connecting_complete(service, 0);
-
-	return 0;
 }
 
 static int ccp_connect(struct btd_service *service)

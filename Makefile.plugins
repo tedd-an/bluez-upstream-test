@@ -46,7 +46,8 @@ builtin_modules += avrcp
 builtin_sources += profiles/audio/control.h profiles/audio/control.c \
 			profiles/audio/avctp.h profiles/audio/avctp.c \
 			profiles/audio/avrcp.h profiles/audio/avrcp.c \
-			profiles/audio/player.h profiles/audio/player.c
+			profiles/audio/player.h profiles/audio/player.c\
+			profiles/audio/telephony.c profiles/audio/telephony.h
 endif
 
 if NETWORK
