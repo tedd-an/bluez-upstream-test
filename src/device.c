@@ -1500,7 +1500,7 @@ dev_property_advertising_data_exist(const GDBusPropertyTable *property,
 	return bt_ad_has_data(device->ad, NULL);
 }
 
-static bool device_get_wake_support(struct btd_device *device)
+bool device_get_wake_support(struct btd_device *device)
 {
 	return device->wake_support;
 }

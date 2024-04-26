@@ -11,6 +11,10 @@ builtin_sources += plugins/autopair.c
 builtin_modules += policy
 builtin_sources += plugins/policy.c
 
+builtin_modules += wake_policy
+builtin_sources += plugins/wake-policy.c
+EXTRA_DIST += plugins/wake-policy.conf
+
 if ADMIN
 builtin_modules += admin
 builtin_sources += plugins/admin.c
