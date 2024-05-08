@@ -65,7 +65,9 @@ struct asha_device {
 	struct gatt_db *db;
 	struct gatt_db_attribute *attr;
 	uint16_t acp_handle;
-	unsigned int notify_id;
+	uint16_t volume_handle;
+	unsigned int status_notify_id;
+	unsigned int volume_notify_id;
 
 	uint16_t psm;
 	bool right_side;
@@ -75,6 +77,7 @@ struct asha_device {
 	uint8_t hisyncid[8];
 	uint16_t render_delay;
 	uint16_t codec_ids;
+	int8_t volume;
 
 	struct media_transport *transport;
 	int fd;
@@ -95,9 +98,15 @@ static struct asha_device *asha_device_new(void)
 
 static void asha_device_reset(struct asha_device *asha)
 {
-	if (asha->notify_id)
+	if (asha->status_notify_id) {
 		bt_gatt_client_unregister_notify(asha->client,
-				asha->notify_id);
+						asha->status_notify_id);
+	}
+
+	if (asha->volume_notify_id) {
+		bt_gatt_client_unregister_notify(asha->client,
+						asha->volume_notify_id);
+	}
 
 	gatt_db_unref(asha->db);
 	asha->db = NULL;
@@ -244,6 +253,7 @@ unsigned int asha_device_start(struct asha_device *asha, asha_cb_t cb,
 		0x01, // START
 		0x01, // G.722, 16 kHz
 		0,   // Unknown media type
+		asha->volume, // Volume
 		0,   // Other disconnected
 	};
 	int ret;
@@ -288,6 +298,24 @@ unsigned int asha_device_stop(struct asha_device *asha, asha_cb_t cb,
 		return 0;
 
 	return asha->resume_id;
+}
+
+int8_t asha_device_get_volume(struct asha_device *asha)
+{
+	return asha->volume;
+}
+
+bool asha_device_set_volume(struct asha_device *asha, int8_t volume)
+{
+	if (!bt_gatt_client_write_value(asha->client, asha->volume_handle,
+				(const uint8_t *)&volume, 1, NULL, NULL,
+				NULL)) {
+		error("Error writing ACP start");
+		return false;
+	}
+
+	asha->volume = volume;
+	return true;
 }
 
 static char *make_endpoint_path(struct asha_device *asha)
@@ -410,6 +438,39 @@ void audio_status_notify(uint16_t value_handle, const uint8_t *value,
 	}
 }
 
+static void read_volume(bool success,
+			uint8_t att_ecode,
+			const uint8_t *value,
+			uint16_t length,
+			void *user_data)
+{
+	struct asha_device *asha = user_data;
+
+	if (!success) {
+		DBG("Reading volume failed with ATT errror: %u", att_ecode);
+		return;
+	}
+
+	if (length != 2) {
+		DBG("Reading volume failed: unexpected length %u", length);
+		return;
+	}
+
+	asha->volume = get_s8(value);
+
+	DBG("Got volume: %d", asha->volume);
+}
+
+void volume_notify(uint16_t value_handle, const uint8_t *value,
+					uint16_t length, void *user_data)
+{
+	struct asha_device *asha = user_data;
+
+	asha->volume = get_s8(value);
+
+	DBG("Volume changed: %d", asha->volume);
+}
+
 static void handle_characteristic(struct gatt_db_attribute *attr,
 								void *user_data)
 {
@@ -430,16 +491,29 @@ static void handle_characteristic(struct gatt_db_attribute *attr,
 	} if (uuid_cmp(ASHA_CHRC_READ_ONLY_PROPERTIES_UUID, &uuid)) {
 		if (!bt_gatt_client_read_value(asha->client, value_handle,
 					read_rops, asha, NULL))
-			DBG("Failed to send request to read battery level");
+			DBG("Failed to send request for readonly properties");
 	} if (uuid_cmp(ASHA_CHRC_AUDIO_CONTROL_POINT_UUID, &uuid)) {
 		// Store this for later writes
 		asha->acp_handle = value_handle;
+	} if (uuid_cmp(ASHA_CHRC_VOLUME_UUID, &uuid)) {
+		// Store this for later reads and writes
+		asha->volume_handle = value_handle;
+		asha->volume_notify_id =
+			bt_gatt_client_register_notify(asha->client,
+				value_handle, NULL, volume_notify, asha,
+				NULL);
+		if (!asha->status_notify_id)
+			DBG("Failed to send request to notify volume");
+		if (!bt_gatt_client_read_value(asha->client, value_handle,
+					read_volume, asha, NULL))
+			DBG("Failed to send request to volume");
 	} if (uuid_cmp(ASHA_CHRC_AUDIO_STATUS_UUID, &uuid)) {
-		asha->notify_id = bt_gatt_client_register_notify(asha->client,
+		asha->status_notify_id =
+			bt_gatt_client_register_notify(asha->client,
 				value_handle, NULL, audio_status_notify, asha,
 				NULL);
-		if (!asha->notify_id)
-			DBG("Failed to send request to read battery level");
+		if (!asha->status_notify_id)
+			DBG("Failed to send request to notify AudioStatus");
 	} else {
 		char uuid_str[MAX_LEN_UUID_STR];
 

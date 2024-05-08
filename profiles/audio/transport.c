@@ -1841,6 +1841,32 @@ static guint transport_asha_suspend(struct media_transport *transport,
 	return ret;
 }
 
+static int8_t transport_asha_get_volume(struct media_transport *transport)
+{
+	struct asha_device *asha = transport->data;
+	int8_t volume;
+	int scaled_volume;
+
+	volume = asha_device_get_volume(asha);
+
+	// Convert -128-0 to 0-127
+	scaled_volume = ((((int) volume) + 128) * 127) / 128;
+
+	return scaled_volume;
+}
+
+static int transport_asha_set_volume(struct media_transport *transport,
+					int8_t volume)
+{
+	struct asha_device *asha = transport->data;
+	int scaled_volume;
+
+	// Convert 0-127 to -128-0
+	scaled_volume = ((((int) volume) * 128) / 127) - 128;
+
+	return asha_device_set_volume(asha, scaled_volume) ? 0 : -EIO;
+}
+
 static void *transport_asha_init(struct media_transport *transport, void *data)
 {
 	/* We just store the struct asha_device on the transport */
@@ -1893,7 +1919,7 @@ static void *transport_asha_init(struct media_transport *transport, void *data)
 			transport_asha_init, \
 			transport_asha_resume, transport_asha_suspend, \
 			NULL, NULL, NULL, \
-			NULL, NULL, \
+			transport_asha_get_volume, transport_asha_set_volume, \
 			NULL)
 
 static const struct media_transport_ops transport_ops[] = {

@@ -10,6 +10,7 @@
  *
  */
 
+#include <stdbool.h>
 #include <stdint.h>
 
 struct asha_device;
@@ -32,3 +33,6 @@ unsigned int asha_device_start(struct asha_device *asha, asha_cb_t cb,
 		void *user_data);
 unsigned int asha_device_stop(struct asha_device *asha, asha_cb_t cb,
 		void *user_data);
+
+int8_t asha_device_get_volume(struct asha_device *asha);
+bool asha_device_set_volume(struct asha_device *asha, int8_t volume);
