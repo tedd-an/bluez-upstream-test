@@ -2474,7 +2474,7 @@ static uint8_t get_streams_nb_by_state(struct bap_setup *setup)
 			 */
 			return 1;
 		else if (bt_bap_stream_get_state(ent_setup->stream) !=
-				BT_BAP_STREAM_STATE_CONFIG)
+				BT_BAP_STREAM_STATE_ENABLING)
 			/* Not all streams form a BIG have received transport
 			 * acquire, so wait for the other streams to.
 			 */
@@ -2516,8 +2516,12 @@ static void bap_state_bcast_src(struct bt_bap_stream *stream, uint8_t old_state,
 			queue_remove(data->streams, stream);
 		break;
 	case BT_BAP_STREAM_STATE_CONFIG:
-		if (!setup || setup->id)
-			break;
+		// TO DO Reconfiguration
+		break;
+	/* On transport acquire use BT_BAP_STREAM_STATE_ENABLING
+	 * as a substate of BT_BAP_STREAM_STATE_CONFIG
+	 */
+	case BT_BAP_STREAM_STATE_ENABLING:
 		/* If the stream attached to a broadcast
 		 * source endpoint generate the base.
 		 */
@@ -2855,8 +2859,7 @@ static void bap_connecting_bcast(struct bt_bap_stream *stream, bool state,
 
 		setup->qos.bcast.big = iso_qos.bcast.big;
 		setup->qos.bcast.bis = iso_qos.bcast.bis;
-		bt_bap_stream_config(setup->stream, &setup->qos, setup->caps,
-							NULL, NULL);
+		bt_bap_stream_qos(setup->stream, &setup->qos, NULL, NULL);
 	}
 
 	DBG("stream %p fd %d: BIG 0x%02x BIS 0x%02x", stream, fd,
