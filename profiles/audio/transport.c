@@ -1814,6 +1814,12 @@ static guint transport_asha_resume(struct media_transport *transport,
 	struct bt_asha *asha = transport->data;
 	guint ret;
 
+	btd_device_set_conn_param(transport->device,
+			0x0010 /* min interval = 1.25ms intervals => 20ms */,
+			0x0010 /* max interval = 1.25ms intervals => 20ms */,
+			0x000A /* 10 events' latency */,
+			0x0064 /* 1s timeout */);
+
 	ret = bt_asha_connect_socket(asha);
 	if (ret < 0)
 		return ret;
