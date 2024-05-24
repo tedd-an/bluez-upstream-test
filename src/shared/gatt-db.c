@@ -260,6 +260,48 @@ struct gatt_db *gatt_db_new(void)
 	return gatt_db_ref(db);
 }
 
+static void service_clone(void *data, void *user_data)
+{
+	struct gatt_db_service *service = data;
+	struct gatt_db *db = user_data;
+	struct gatt_db_service *clone;
+	int i;
+
+	clone = new0(struct gatt_db_service, 1);
+	clone->db = db;
+	clone->active = service->active;
+	clone->num_handles = service->num_handles;
+	clone->attributes = new0(struct gatt_db_attribute *,
+					service->num_handles);
+
+	/* Clone attributes */
+	for (i = 0; i < service->num_handles; i++) {
+		struct gatt_db_attribute *attribute = service->attributes[i];
+
+		clone->attributes[i] = new_attribute(clone, attribute->handle,
+							&attribute->uuid,
+							NULL, 0);
+	}
+
+	queue_push_tail(db->services, clone);
+}
+
+struct gatt_db *gatt_db_clone(struct gatt_db *db)
+{
+	struct gatt_db *clone;
+
+	if (!db)
+		return NULL;
+
+	clone = gatt_db_new();
+	if (!clone)
+		return NULL;
+
+	queue_foreach(db->services, service_clone, clone);
+
+	return clone;
+}
+
 static void notify_destroy(void *data)
 {
 	struct notify *notify = data;
