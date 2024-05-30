@@ -429,6 +429,20 @@ static void avdtp_sep_set_state(struct avdtp *session,
 				struct avdtp_local_sep *sep,
 				avdtp_state_t state);
 
+#define REQ_GET_NTH_SEID(x)						\
+	static struct seid *						\
+	x##_req_get_nth_seid(struct x##_req *req, int count, int i)	\
+	{								\
+		if (count == 0 || i >= count)				\
+			return NULL;					\
+		if (i == 1)						\
+			return &req->first_seid;			\
+		return &req->other_seids[i];				\
+	}
+
+REQ_GET_NTH_SEID(start)
+REQ_GET_NTH_SEID(suspend)
+
 static const char *avdtp_statestr(avdtp_state_t state)
 {
 	switch (state) {
@@ -1672,11 +1686,11 @@ static void check_seid_collision(struct pending_req *req, uint8_t id)
 static void check_start_collision(struct pending_req *req, uint8_t id)
 {
 	struct start_req *start = req->data;
-	struct seid *seid = &start->first_seid;
 	int count = 1 + req->data_size - sizeof(struct start_req);
 	int i;
 
-	for (i = 0; i < count; i++, seid++) {
+	for (i = 0; i < count; i++) {
+		struct seid *seid = start_req_get_nth_seid(start, count, i);
 		if (seid->seid == id) {
 			req->collided = TRUE;
 			return;
@@ -1687,11 +1701,11 @@ static void check_start_collision(struct pending_req *req, uint8_t id)
 static void check_suspend_collision(struct pending_req *req, uint8_t id)
 {
 	struct suspend_req *suspend = req->data;
-	struct seid *seid = &suspend->first_seid;
 	int count = 1 + req->data_size - sizeof(struct suspend_req);
 	int i;
 
-	for (i = 0; i < count; i++, seid++) {
+	for (i = 0; i < count; i++) {
+		struct seid *seid = suspend_req_get_nth_seid(suspend, count, i);
 		if (seid->seid == id) {
 			req->collided = TRUE;
 			return;
@@ -1785,7 +1799,6 @@ static gboolean avdtp_start_cmd(struct avdtp *session, uint8_t transaction,
 	struct avdtp_local_sep *sep;
 	struct avdtp_stream *stream;
 	struct stream_rej rej;
-	struct seid *seid;
 	uint8_t err, failed_seid;
 	int seid_count, i;
 
@@ -1796,9 +1809,9 @@ static gboolean avdtp_start_cmd(struct avdtp *session, uint8_t transaction,
 
 	seid_count = 1 + size - sizeof(struct start_req);
 
-	seid = &req->first_seid;
+	for (i = 0; i < seid_count; i++) {
+		struct seid *seid = start_req_get_nth_seid(req, seid_count, i);
 
-	for (i = 0; i < seid_count; i++, seid++) {
 		failed_seid = seid->seid;
 
 		sep = find_local_sep_by_seid(session, seid->seid);
@@ -1898,7 +1911,6 @@ static gboolean avdtp_suspend_cmd(struct avdtp *session, uint8_t transaction,
 	struct avdtp_local_sep *sep;
 	struct avdtp_stream *stream;
 	struct stream_rej rej;
-	struct seid *seid;
 	uint8_t err, failed_seid;
 	int seid_count, i;
 
@@ -1909,9 +1921,8 @@ static gboolean avdtp_suspend_cmd(struct avdtp *session, uint8_t transaction,
 
 	seid_count = 1 + size - sizeof(struct suspend_req);
 
-	seid = &req->first_seid;
-
-	for (i = 0; i < seid_count; i++, seid++) {
+	for (i = 0; i < seid_count; i++) {
+		struct seid *seid = suspend_req_get_nth_seid(req, seid_count, i);
 		failed_seid = seid->seid;
 
 		sep = find_local_sep_by_seid(session, seid->seid);
