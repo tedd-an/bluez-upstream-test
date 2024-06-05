@@ -1492,10 +1492,19 @@ static guint transport_bap_resume(struct media_transport *transport,
 
 	if (!bap->stream)
 		return 0;
+
 	if (bap->resume_id)
-		return 0;
+		return bap->resume_id;
 
 	bap_update_links(transport);
+
+	/* If there is already an fd set consider it ready and proceed to
+	 * complete the resume process.
+	 */
+	if (transport->fd >= 0) {
+		bap->resume_id = g_idle_add(bap_resume_complete_cb, transport);
+		return bap->resume_id;
+	}
 
 	switch (bt_bap_stream_get_state(bap->stream)) {
 	case BT_BAP_STREAM_STATE_ENABLING:
@@ -1671,6 +1680,22 @@ static void bap_state_changed(struct bt_bap_stream *stream, uint8_t old_state,
 	g_io_channel_unref(chan);
 
 	media_transport_set_fd(transport, fd, imtu, omtu);
+
+	/* If the transport is linked update the fd in the link as well as they
+	 * share the same io channel.
+	 */
+	if (bap->linked) {
+		struct bt_bap_stream *link = bt_bap_stream_io_get_link(stream);
+
+		if (link) {
+			struct media_transport *t;
+
+			t = find_transport_by_bap_stream(link);
+			if (t)
+				media_transport_set_fd(t, fd, imtu, omtu);
+		}
+	}
+
 	transport_update_playing(transport, TRUE);
 
 done:
