@@ -538,15 +538,17 @@ static void bsrc_pac_added(struct bt_bap_pac *pac, void *user_data)
 
 	bt_bap_pac_set_ops(pac, &bcast_pac_ops, NULL);
 
-	stream = bt_bap_stream_new(data->bap, pac, NULL,
-						&data->cfg->qos,
-						&data->cfg->cc);
-	g_assert(stream);
+	for (uint8_t i = 0; i < data->cfg->streams; i++) {
+		stream = bt_bap_stream_new(data->bap, pac, NULL,
+							&data->cfg->qos,
+							&data->cfg->cc);
+		g_assert(stream);
 
-	queue_push_tail(data->streams, stream);
+		queue_push_tail(data->streams, stream);
 
-	bt_bap_stream_config(stream, &data->cfg->qos,
-					&data->cfg->cc, NULL, data);
+		bt_bap_stream_config(stream, &data->cfg->qos,
+						&data->cfg->cc, NULL, data);
+	}
 }
 
 static void bsrc_state_cfg(struct bt_bap_stream *stream, uint8_t old_state,
@@ -5603,6 +5605,7 @@ static struct test_config cfg_bsrc_8_1_1 = {
 	.base = UTIL_IOV_INIT(BASE_LC3_8_1),
 	.src = true,
 	.state_func = bsrc_state_cfg,
+	.streams = 1,
 };
 
 static struct test_config cfg_bsrc_8_1_2 = {
@@ -5611,6 +5614,7 @@ static struct test_config cfg_bsrc_8_1_2 = {
 	.base = UTIL_IOV_INIT(BASE_LC3_8_1),
 	.src = true,
 	.state_func = bsrc_state_cfg,
+	.streams = 1,
 };
 
 #define LC3_CFG_8_2 \
@@ -5627,6 +5631,7 @@ static struct test_config cfg_bsrc_8_2_1 = {
 	.base = UTIL_IOV_INIT(BASE_LC3_8_2),
 	.src = true,
 	.state_func = bsrc_state_cfg,
+	.streams = 1,
 };
 
 static struct test_config cfg_bsrc_8_2_2 = {
@@ -5635,6 +5640,7 @@ static struct test_config cfg_bsrc_8_2_2 = {
 	.base = UTIL_IOV_INIT(BASE_LC3_8_2),
 	.src = true,
 	.state_func = bsrc_state_cfg,
+	.streams = 1,
 };
 
 #define LC3_CFG_16_1 \
@@ -5651,6 +5657,7 @@ static struct test_config cfg_bsrc_16_1_1 = {
 	.base = UTIL_IOV_INIT(BASE_LC3_16_1),
 	.src = true,
 	.state_func = bsrc_state_cfg,
+	.streams = 1,
 };
 
 static struct test_config cfg_bsrc_16_1_2 = {
@@ -5659,6 +5666,7 @@ static struct test_config cfg_bsrc_16_1_2 = {
 	.base = UTIL_IOV_INIT(BASE_LC3_16_1),
 	.src = true,
 	.state_func = bsrc_state_cfg,
+	.streams = 1,
 };
 
 #define LC3_CFG_16_2 \
@@ -5675,6 +5683,7 @@ static struct test_config cfg_bsrc_16_2_1 = {
 	.base = UTIL_IOV_INIT(BASE_LC3_16_2),
 	.src = true,
 	.state_func = bsrc_state_cfg,
+	.streams = 1,
 };
 
 static struct test_config cfg_bsrc_16_2_2 = {
@@ -5683,6 +5692,7 @@ static struct test_config cfg_bsrc_16_2_2 = {
 	.base = UTIL_IOV_INIT(BASE_LC3_16_2),
 	.src = true,
 	.state_func = bsrc_state_cfg,
+	.streams = 1,
 };
 
 #define LC3_CFG_24_1 \
@@ -5699,6 +5709,7 @@ static struct test_config cfg_bsrc_24_1_1 = {
 	.base = UTIL_IOV_INIT(BASE_LC3_24_1),
 	.src = true,
 	.state_func = bsrc_state_cfg,
+	.streams = 1,
 };
 
 static struct test_config cfg_bsrc_24_1_2 = {
@@ -5707,6 +5718,7 @@ static struct test_config cfg_bsrc_24_1_2 = {
 	.base = UTIL_IOV_INIT(BASE_LC3_24_1),
 	.src = true,
 	.state_func = bsrc_state_cfg,
+	.streams = 1,
 };
 
 #define LC3_CFG_24_2 \
@@ -5723,6 +5735,7 @@ static struct test_config cfg_bsrc_24_2_1 = {
 	.base = UTIL_IOV_INIT(BASE_LC3_24_2),
 	.src = true,
 	.state_func = bsrc_state_cfg,
+	.streams = 1,
 };
 
 static struct test_config cfg_bsrc_24_2_2 = {
@@ -5731,6 +5744,7 @@ static struct test_config cfg_bsrc_24_2_2 = {
 	.base = UTIL_IOV_INIT(BASE_LC3_24_2),
 	.src = true,
 	.state_func = bsrc_state_cfg,
+	.streams = 1,
 };
 
 #define LC3_CFG_32_1 \
@@ -5747,6 +5761,7 @@ static struct test_config cfg_bsrc_32_1_1 = {
 	.base = UTIL_IOV_INIT(BASE_LC3_32_1),
 	.src = true,
 	.state_func = bsrc_state_cfg,
+	.streams = 1,
 };
 
 static struct test_config cfg_bsrc_32_1_2 = {
@@ -5755,6 +5770,7 @@ static struct test_config cfg_bsrc_32_1_2 = {
 	.base = UTIL_IOV_INIT(BASE_LC3_32_1),
 	.src = true,
 	.state_func = bsrc_state_cfg,
+	.streams = 1,
 };
 
 #define LC3_CFG_32_2 \
@@ -5771,6 +5787,7 @@ static struct test_config cfg_bsrc_32_2_1 = {
 	.base = UTIL_IOV_INIT(BASE_LC3_32_2),
 	.src = true,
 	.state_func = bsrc_state_cfg,
+	.streams = 1,
 };
 
 static struct test_config cfg_bsrc_32_2_2 = {
@@ -5779,6 +5796,7 @@ static struct test_config cfg_bsrc_32_2_2 = {
 	.base = UTIL_IOV_INIT(BASE_LC3_32_2),
 	.src = true,
 	.state_func = bsrc_state_cfg,
+	.streams = 1,
 };
 
 #define LC3_CFG_44_1 \
@@ -5795,6 +5813,7 @@ static struct test_config cfg_bsrc_44_1_1 = {
 	.base = UTIL_IOV_INIT(BASE_LC3_44_1),
 	.src = true,
 	.state_func = bsrc_state_cfg,
+	.streams = 1,
 };
 
 static struct test_config cfg_bsrc_44_1_2 = {
@@ -5803,6 +5822,7 @@ static struct test_config cfg_bsrc_44_1_2 = {
 	.base = UTIL_IOV_INIT(BASE_LC3_44_1),
 	.src = true,
 	.state_func = bsrc_state_cfg,
+	.streams = 1,
 };
 
 #define LC3_CFG_44_2 \
@@ -5819,6 +5839,7 @@ static struct test_config cfg_bsrc_44_2_1 = {
 	.base = UTIL_IOV_INIT(BASE_LC3_44_2),
 	.src = true,
 	.state_func = bsrc_state_cfg,
+	.streams = 1,
 };
 
 static struct test_config cfg_bsrc_44_2_2 = {
@@ -5827,6 +5848,7 @@ static struct test_config cfg_bsrc_44_2_2 = {
 	.base = UTIL_IOV_INIT(BASE_LC3_44_2),
 	.src = true,
 	.state_func = bsrc_state_cfg,
+	.streams = 1,
 };
 
 #define LC3_CFG_48_1 \
@@ -5843,6 +5865,7 @@ static struct test_config cfg_bsrc_48_1_1 = {
 	.base = UTIL_IOV_INIT(BASE_LC3_48_1),
 	.src = true,
 	.state_func = bsrc_state_cfg,
+	.streams = 1,
 };
 
 static struct test_config cfg_bsrc_48_1_2 = {
@@ -5851,6 +5874,7 @@ static struct test_config cfg_bsrc_48_1_2 = {
 	.base = UTIL_IOV_INIT(BASE_LC3_48_1),
 	.src = true,
 	.state_func = bsrc_state_cfg,
+	.streams = 1,
 };
 
 #define LC3_CFG_48_2 \
@@ -5867,6 +5891,7 @@ static struct test_config cfg_bsrc_48_2_1 = {
 	.base = UTIL_IOV_INIT(BASE_LC3_48_2),
 	.src = true,
 	.state_func = bsrc_state_cfg,
+	.streams = 1,
 };
 
 static struct test_config cfg_bsrc_48_2_2 = {
@@ -5875,6 +5900,7 @@ static struct test_config cfg_bsrc_48_2_2 = {
 	.base = UTIL_IOV_INIT(BASE_LC3_48_2),
 	.src = true,
 	.state_func = bsrc_state_cfg,
+	.streams = 1,
 };
 
 #define LC3_CFG_48_3 \
@@ -5891,6 +5917,7 @@ static struct test_config cfg_bsrc_48_3_1 = {
 	.base = UTIL_IOV_INIT(BASE_LC3_48_3),
 	.src = true,
 	.state_func = bsrc_state_cfg,
+	.streams = 1,
 };
 
 static struct test_config cfg_bsrc_48_3_2 = {
@@ -5899,6 +5926,7 @@ static struct test_config cfg_bsrc_48_3_2 = {
 	.base = UTIL_IOV_INIT(BASE_LC3_48_3),
 	.src = true,
 	.state_func = bsrc_state_cfg,
+	.streams = 1,
 };
 
 #define LC3_CFG_48_4 \
@@ -5915,6 +5943,7 @@ static struct test_config cfg_bsrc_48_4_1 = {
 	.base = UTIL_IOV_INIT(BASE_LC3_48_4),
 	.src = true,
 	.state_func = bsrc_state_cfg,
+	.streams = 1,
 };
 
 static struct test_config cfg_bsrc_48_4_2 = {
@@ -5923,6 +5952,7 @@ static struct test_config cfg_bsrc_48_4_2 = {
 	.base = UTIL_IOV_INIT(BASE_LC3_48_4),
 	.src = true,
 	.state_func = bsrc_state_cfg,
+	.streams = 1,
 };
 
 #define LC3_CFG_48_5 \
@@ -5939,6 +5969,7 @@ static struct test_config cfg_bsrc_48_5_1 = {
 	.base = UTIL_IOV_INIT(BASE_LC3_48_5),
 	.src = true,
 	.state_func = bsrc_state_cfg,
+	.streams = 1,
 };
 
 static struct test_config cfg_bsrc_48_5_2 = {
@@ -5947,6 +5978,7 @@ static struct test_config cfg_bsrc_48_5_2 = {
 	.base = UTIL_IOV_INIT(BASE_LC3_48_5),
 	.src = true,
 	.state_func = bsrc_state_cfg,
+	.streams = 1,
 };
 
 #define LC3_CFG_48_6 \
@@ -5963,6 +5995,7 @@ static struct test_config cfg_bsrc_48_6_1 = {
 	.base = UTIL_IOV_INIT(BASE_LC3_48_6),
 	.src = true,
 	.state_func = bsrc_state_cfg,
+	.streams = 1,
 };
 
 static struct test_config cfg_bsrc_48_6_2 = {
@@ -5971,6 +6004,7 @@ static struct test_config cfg_bsrc_48_6_2 = {
 	.base = UTIL_IOV_INIT(BASE_LC3_48_6),
 	.src = true,
 	.state_func = bsrc_state_cfg,
+	.streams = 1,
 };
 
 #define VS_CC \
@@ -6007,6 +6041,7 @@ static struct test_config cfg_bsrc_vs = {
 	.vs = true,
 	.src = true,
 	.state_func = bsrc_state_cfg,
+	.streams = 1,
 };
 
 /* Test Purpose:
@@ -6152,6 +6187,7 @@ static struct test_config cfg_bsrc_8_1_1_estab = {
 	.qos = LC3_QOS_8_1_1_B,
 	.src = true,
 	.state_func = bsrc_state_estab,
+	.streams = 1,
 };
 
 /* Test Purpose:
@@ -6196,6 +6232,7 @@ static struct test_config cfg_bsrc_8_1_1_disable = {
 	.qos = LC3_QOS_8_1_1_B,
 	.src = true,
 	.state_func = bsrc_state_disable,
+	.streams = 1,
 };
 
 /* Test Purpose:
@@ -6241,6 +6278,7 @@ static struct test_config cfg_bsrc_8_1_1_release = {
 	.qos = LC3_QOS_8_1_1_B,
 	.src = true,
 	.state_func = bsrc_state_release,
+	.streams = 1,
 };
 
 /* Test Purpose:
