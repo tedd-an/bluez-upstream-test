@@ -1041,10 +1041,12 @@ static void create_stream_for_bis(struct bap_data *bap_data,
 	setup->qos.bcast.packing = qos->bcast.packing;
 	setup->qos.bcast.framing = qos->bcast.framing;
 	setup->qos.bcast.encryption = qos->bcast.encryption;
-	if (setup->qos.bcast.encryption)
+	if (setup->qos.bcast.encryption) {
+		setup->qos.bcast.bcode = new0(struct iovec, 1);
 		util_iov_append(setup->qos.bcast.bcode,
 				qos->bcast.bcode,
 				sizeof(qos->bcast.bcode));
+	}
 	setup->qos.bcast.options = qos->bcast.options;
 	setup->qos.bcast.skip = qos->bcast.skip;
 	setup->qos.bcast.sync_timeout = qos->bcast.sync_timeout;
