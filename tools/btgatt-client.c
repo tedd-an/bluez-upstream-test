@@ -36,6 +36,8 @@
 #include "src/shared/gatt-helpers.h"
 
 #define ATT_CID 4
+#define CENTRAL_MODE   1
+#define PERIPHERAL_MODE   2
 
 #define PRLOG(...) \
 	printf(__VA_ARGS__); print_prompt();
@@ -1633,6 +1635,68 @@ static void signal_cb(int signum, void *user_data)
 	}
 }
 
+static int l2cap_le_att_listen_and_accept(bdaddr_t *src, int sec,
+							uint8_t src_type)
+{
+	int sk, nsk;
+	struct sockaddr_l2 srcaddr, addr;
+	socklen_t optlen;
+	struct bt_security btsec;
+	char ba[18];
+
+	sk = socket(PF_BLUETOOTH, SOCK_SEQPACKET, BTPROTO_L2CAP);
+	if (sk < 0) {
+		perror("Failed to create L2CAP socket");
+		return -1;
+	}
+
+	/* Set up source address */
+	memset(&srcaddr, 0, sizeof(srcaddr));
+	srcaddr.l2_family = AF_BLUETOOTH;
+	srcaddr.l2_cid = htobs(ATT_CID);
+	srcaddr.l2_bdaddr_type = src_type;
+	bacpy(&srcaddr.l2_bdaddr, src);
+
+	if (bind(sk, (struct sockaddr *) &srcaddr, sizeof(srcaddr)) < 0) {
+		perror("Failed to bind L2CAP socket");
+		goto fail;
+	}
+
+	/* Set the security level */
+	memset(&btsec, 0, sizeof(btsec));
+	btsec.level = sec;
+	if (setsockopt(sk, SOL_BLUETOOTH, BT_SECURITY, &btsec,
+							sizeof(btsec)) != 0) {
+		fprintf(stderr, "Failed to set L2CAP security level\n");
+		goto fail;
+	}
+
+	if (listen(sk, 10) < 0) {
+		perror("Listening on socket failed");
+		goto fail;
+	}
+
+	printf("Started listening on ATT channel. Waiting for connections\n");
+
+	memset(&addr, 0, sizeof(addr));
+	optlen = sizeof(addr);
+	nsk = accept(sk, (struct sockaddr *) &addr, &optlen);
+	if (nsk < 0) {
+		perror("Accept failed");
+		goto fail;
+	}
+
+	ba2str(&addr.l2_bdaddr, ba);
+	printf("Connect from %s\n", ba);
+	close(sk);
+
+	return nsk;
+
+fail:
+	close(sk);
+	return -1;
+}
+
 static int l2cap_le_att_connect(bdaddr_t *src, bdaddr_t *dst, uint8_t dst_type,
 									int sec)
 {
@@ -1709,6 +1773,7 @@ static void usage(void)
 	printf("Options:\n"
 		"\t-i, --index <id>\t\tSpecify adapter index, e.g. hci0\n"
 		"\t-d, --dest <addr>\t\tSpecify the destination address\n"
+		"\t-p, --peripheral mode\t\t\tStar Listening on Att Channel\n"
 		"\t-t, --type [random|public] \tSpecify the LE address type\n"
 		"\t-m, --mtu <mtu> \t\tThe ATT MTU to use\n"
 		"\t-s, --security-level <sec> \tSet security level (low|medium|"
@@ -1720,6 +1785,7 @@ static void usage(void)
 static struct option main_options[] = {
 	{ "index",		1, 0, 'i' },
 	{ "dest",		1, 0, 'd' },
+	{ "peripheral",		1, 0, 'p' },
 	{ "type",		1, 0, 't' },
 	{ "mtu",		1, 0, 'm' },
 	{ "security-level",	1, 0, 's' },
@@ -1738,9 +1804,10 @@ int main(int argc, char *argv[])
 	bdaddr_t src_addr, dst_addr;
 	int dev_id = -1;
 	int fd;
+	int peri_cent = CENTRAL_MODE;
 	struct client *cli;
 
-	while ((opt = getopt_long(argc, argv, "+hvs:m:t:d:i:",
+	while ((opt = getopt_long(argc, argv, "+hvs:m:t:d:p:i:",
 						main_options, NULL)) != -1) {
 		switch (opt) {
 		case 'h':
@@ -1809,6 +1876,17 @@ int main(int argc, char *argv[])
 			}
 
 			break;
+		case 'p':
+			if (strcmp(optarg, "peripheral") == 0)
+				 peri_cent = PERIPHERAL_MODE;
+			else if (strcmp(optarg, "central") == 0)
+				peri_cent = CENTRAL_MODE;
+			else {
+				fprintf(stderr,
+					"Allowed Modes: peripheral, central\n");
+				return EXIT_FAILURE;
+			}
+            break;
 		default:
 			fprintf(stderr, "Invalid option: %c\n", opt);
 			return EXIT_FAILURE;
@@ -1836,14 +1914,21 @@ int main(int argc, char *argv[])
 		return EXIT_FAILURE;
 	}
 
-	if (!dst_addr_given) {
-		fprintf(stderr, "Destination address required!\n");
-		return EXIT_FAILURE;
-	}
+    if(peri_cent == CENTRAL_MODE)
+    {
+        if (!dst_addr_given) {
+            fprintf(stderr, "Destination address required!\n");
+            return EXIT_FAILURE;
+        }
+
+    }
 
 	mainloop_init();
 
-	fd = l2cap_le_att_connect(&src_addr, &dst_addr, dst_type, sec);
+    if(peri_cent == CENTRAL_MODE)
+        fd = l2cap_le_att_connect(&src_addr, &dst_addr, dst_type, sec);
+    else
+        fd = l2cap_le_att_listen_and_accept(&src_addr, sec, BDADDR_LE_PUBLIC);
 	if (fd < 0)
 		return EXIT_FAILURE;
 
