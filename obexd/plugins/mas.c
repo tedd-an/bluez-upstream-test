@@ -51,6 +51,8 @@
 #define ML_BODY_END "</MAP-msg-listing>"
 
 struct mas_session {
+	uint8_t notification_status;
+	char *path;
 	struct mas_request *request;
 	void *backend_data;
 	gboolean finished;
@@ -59,7 +61,6 @@ struct mas_session {
 	GObexApparam *inparams;
 	GObexApparam *outparams;
 	gboolean ap_sent;
-	uint8_t notification_status;
 };
 
 static const uint8_t MAS_TARGET[TARGET_SIZE] = {
@@ -125,6 +126,7 @@ static void *mas_connect(struct obex_session *os, int *err)
 		goto failed;
 
 	manager_register_session(os);
+	mas->path = NULL;
 
 	return mas;
 
