@@ -1507,7 +1507,8 @@ static void ext_remove_records(struct ext_profile *ext,
 
 		ext->records = g_slist_remove(ext->records, r);
 
-		adapter_service_remove(adapter, r->handle);
+		if (adapter)
+			adapter_service_remove(adapter, r->handle);
 		btd_adapter_unref(r->adapter);
 		g_free(r);
 	}
