@@ -875,7 +875,8 @@ static void bass_handle_add_src_op(struct bt_bass *bass,
 					attr);
 
 		queue_remove(bass->ldb->bcast_srcs, src);
-		bass_bcast_src_free(src);
+		if (src)
+			bass_bcast_src_free(src);
 		bcast_src->attr = attr;
 	}
 
