@@ -1444,6 +1444,7 @@ static DBusMessage *parse_advertisement(struct btd_adv_client *client)
 {
 	struct adv_parser *parser;
 	int err;
+	uint8_t flags;
 
 	for (parser = parsers; parser && parser->name; parser++) {
 		DBusMessageIter iter;
@@ -1497,6 +1498,21 @@ static DBusMessage *parse_advertisement(struct btd_adv_client *client)
 		error("MinInterval must be less than MaxInterval (%u > %u)",
 				client->min_interval, client->max_interval);
 		goto fail;
+	}
+
+	if (!btd_adapter_get_discoverable(client->manager->adapter)) {
+		/* GAP.TS.p44 Test Spec GAP/DISC/NONM/BV-02-C
+		 * page 158:
+		 * IUT does not contain
+		 * ‘LE General Discoverable Mode’ flag or the
+		 * ‘LE Limited Discoverable Mode’ flag in the Flags AD Type
+		 * But AD Flag Type should be there for the test case to
+		 * PASS. Thus BR/EDR Not Supported BIT shall be included
+		 * in the AD Type flag.
+		 */
+		flags = bt_ad_get_flags(client->data);
+		flags |= BT_AD_FLAG_NO_BREDR;
+		bt_ad_add_flags(client->data, &flags, 1);
 	}
 
 	err = refresh_advertisement(client, add_adv_callback);
