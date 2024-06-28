@@ -8367,6 +8367,16 @@ static void bonding_attempt_complete(struct btd_adapter *adapter,
 		}
 	}
 
+	if (status == MGMT_STATUS_CONNECT_FAILED) {
+		if (device != NULL) {
+
+			DBG("status is 0x%x, retry it.", status);
+
+			if (device_bonding_attempt_retry(device) == 0)
+				return;
+		}
+	}
+
 	/* Ignore disconnects during retry. */
 	if (status == MGMT_STATUS_DISCONNECTED &&
 					device && device_is_retrying(device))
