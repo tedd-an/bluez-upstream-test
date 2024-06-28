@@ -101,8 +101,8 @@ array{string} SupportedSecondaryChannels [readonly, Experimental]
 	:"2M":
 	:"Coded":
 
-dict SupportedCapabilities [readonly, Experimental]
-```````````````````````````````````````````````````
+dict SupportedCapabilities [readonly]
+`````````````````````````````````````
 
 	Enumerates Advertising-related controller capabilities useful to the
 	client.
@@ -125,8 +125,8 @@ dict SupportedCapabilities [readonly, Experimental]
 
 		Max advertising tx power (dBm)
 
-array{string} SupportedFeatures [readonly,optional,Experimental]
-````````````````````````````````````````````````````````````````
+array{string} SupportedFeatures [readonly,optional]
+```````````````````````````````````````````````````
 
 	List of supported platform features. If no features are available on
 	the platform, the SupportedFeatures array will be empty.
