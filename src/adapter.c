@@ -8371,6 +8371,10 @@ static void bonding_attempt_complete(struct btd_adapter *adapter,
 		}
 	}
 
+	/* Retry once when status is MGMT_STATUS_CONNECT_FAILED */
+	if (device && device_bonding_check_connection(device, status))
+		return;
+
 	/* Ignore disconnects during retry. */
 	if (status == MGMT_STATUS_DISCONNECTED &&
 					device && device_is_retrying(device))
