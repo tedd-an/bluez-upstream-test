@@ -290,6 +290,8 @@ struct btd_device {
 	time_t		name_resolve_failed_time;
 
 	int8_t		volume;
+
+	uint8_t bonding_status;
 };
 
 static const uint16_t uuid_list[] = {
@@ -6557,6 +6559,28 @@ bool device_remove_svc_complete_callback(struct btd_device *dev,
 	}
 
 	return false;
+}
+
+gboolean device_bonding_check_connection(struct btd_device *device,
+								uint8_t status)
+{
+	if (status == MGMT_STATUS_CONNECT_FAILED) {
+
+		if (device->bonding_status != MGMT_STATUS_CONNECT_FAILED) {
+			device->bonding_status = MGMT_STATUS_CONNECT_FAILED;
+
+			DBG("status is 0x%x, retry once.", status);
+
+			if (device_bonding_attempt_retry(device) == 0)
+				return TRUE;
+		}
+	} else {
+		device->bonding_status = status;
+
+		DBG("device->bonding_status is 0x%x.", device->bonding_status);
+	}
+
+	return FALSE;
 }
 
 gboolean device_is_bonding(struct btd_device *device, const char *sender)
