@@ -734,8 +734,7 @@ static bool set_flags(struct btd_adv_client *client, uint8_t flags)
 	/* Set BR/EDR Not Supported if adapter is not discoverable but the
 	 * instance is.
 	 */
-	if ((flags & (BT_AD_FLAG_GENERAL | BT_AD_FLAG_LIMITED)) &&
-			!btd_adapter_get_discoverable(client->manager->adapter))
+	if (!btd_adapter_get_discoverable(client->manager->adapter))
 		flags |= BT_AD_FLAG_NO_BREDR;
 
 	if (!bt_ad_add_flags(client->data, &flags, 1))
@@ -1486,6 +1485,12 @@ static DBusMessage *parse_advertisement(struct btd_adv_client *client)
 				client->min_interval, client->max_interval);
 		goto fail;
 	}
+
+	/* GAP.TS.p44 Test Spec GAP/DISC/NONM/BV-02-C
+	 * BR/EDR Not Supported BIT shall be included
+	 * in the AD Type flag.
+	 */
+	set_flags(client, bt_ad_get_flags(client->data));
 
 	err = refresh_advertisement(client, add_adv_callback);
 
