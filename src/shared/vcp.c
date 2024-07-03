@@ -2128,13 +2128,14 @@ static void read_vocs_audio_descriptor(struct bt_vcp *vcp, bool success,
 	}
 
 	vocs_ao_dec_r = malloc(length+1);
-	memset(vocs_ao_dec_r, 0, length+1);
-	memcpy(vocs_ao_dec_r, value, length);
 
 	if (!vocs_ao_dec_r) {
 		DBG(vcp, "Unable to get VOCS Audio Descriptor");
 		return;
 	}
+
+	memset(vocs_ao_dec_r, 0, length+1);
+	memcpy(vocs_ao_dec_r, value, length);
 
 	DBG(vcp, "VOCS Audio Descriptor: %s", vocs_ao_dec_r);
 	free(vocs_ao_dec_r);
@@ -2532,13 +2533,14 @@ static void read_aics_audio_ip_description(struct bt_vcp *vcp, bool success,
 	}
 
 	ip_descrptn = malloc(length+1);
-	memset(ip_descrptn, 0, length+1);
-	memcpy(ip_descrptn, value, length);
 
 	if (!ip_descrptn) {
 		DBG(vcp, "Unable to get Audio Input Description");
 		return;
 	}
+
+	memset(ip_descrptn, 0, length+1);
+	memcpy(ip_descrptn, value, length);
 
 	DBG(vcp, "Audio Input Description: %s", ip_descrptn);
 	free(ip_descrptn);
