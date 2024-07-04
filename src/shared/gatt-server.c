@@ -1118,7 +1118,7 @@ static struct read_mult_data *read_mult_data_new(struct bt_gatt_server *server,
 	data->server = server;
 	data->num_handles = num_handles;
 	data->cur_handle = 0;
-	data->mtu = bt_att_get_mtu(server->att);
+	data->mtu = MAX(bt_att_get_mtu(server->att), BT_ATT_DEFAULT_LE_MTU);
 	data->length = 0;
 	data->rsp_data = new0(uint8_t, data->mtu - 1);
 
