@@ -525,6 +525,7 @@ static int cmd_exec(const struct bt_shell_menu_entry *entry,
 		print_text(COLOR_HIGHLIGHT,
 			"Unable to parse mandatory command arguments: %s", man );
 		free(man);
+		wordfree(&w);
 		return -EINVAL;
 	}
 
@@ -545,6 +546,7 @@ optional:
 		print_text(COLOR_HIGHLIGHT,
 			"Unable to parse optional command arguments: %s", opt);
 		free(opt);
+		wordfree(&w);
 		return -EINVAL;
 	}
 
