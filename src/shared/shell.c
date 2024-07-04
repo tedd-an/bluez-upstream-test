@@ -1117,8 +1117,10 @@ static char **shell_completion(const char *text, int start, int end)
 	if (start > 0) {
 		wordexp_t w;
 
-		if (wordexp(rl_line_buffer, &w, WRDE_NOCMD))
+		if (wordexp(rl_line_buffer, &w, WRDE_NOCMD)) {
+			wordfree(&w);
 			return NULL;
+		}
 
 		matches = menu_completion(default_menu, text, w.we_wordc,
 							w.we_wordv[0]);
@@ -1421,15 +1423,20 @@ int bt_shell_exec(const char *input)
 	err = wordexp(input, &w, WRDE_NOCMD);
 	switch (err) {
 	case WRDE_BADCHAR:
+		wordfree(&w);
 		return -EBADMSG;
 	case WRDE_BADVAL:
 	case WRDE_SYNTAX:
+		wordfree(&w);
 		return -EINVAL;
 	case WRDE_NOSPACE:
+		wordfree(&w);
 		return -ENOMEM;
 	case WRDE_CMDSUB:
-		if (wordexp(input, &w, 0))
+		if (wordexp(input, &w, 0)) {
+			wordfree(&w);
 			return -ENOEXEC;
+		}
 		break;
 	};
 
