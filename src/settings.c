@@ -243,13 +243,32 @@ static int gatt_db_load(struct gatt_db *db, GKeyFile *key_file, char **keys)
 	struct gatt_db_attribute *current_service;
 	char **handle, *value, type[MAX_LEN_UUID_STR];
 	int ret;
+	char pattern[6];
+	char *colon_pos;
+	size_t len;
 
 	/* first load service definitions */
 	for (handle = keys; *handle; handle++) {
 		value = g_key_file_get_string(key_file, "Attributes", *handle,
 									NULL);
+		if (!value)
+			return -EIO;
 
-		if (!value || sscanf(value, "%[^:]:", type) != 1) {
+		colon_pos = memchr(value, ':', MAX_LEN_UUID_STR);
+		if (!colon_pos) {
+			g_free(value);
+			return -EIO;
+		}
+
+		len = colon_pos - value;
+		if (!len) {
+			g_free(value);
+			return -EIO;
+		}
+
+		snprintf(pattern, sizeof(pattern), "%%%lds:", len);
+
+		if (sscanf(value, pattern, type) != 1) {
 			g_free(value);
 			return -EIO;
 		}
@@ -271,8 +290,24 @@ static int gatt_db_load(struct gatt_db *db, GKeyFile *key_file, char **keys)
 	for (handle = keys; *handle; handle++) {
 		value = g_key_file_get_string(key_file, "Attributes", *handle,
 									NULL);
+		if (!value)
+			return -EIO;
 
-		if (!value || sscanf(value, "%[^:]:", type) != 1) {
+		colon_pos = memchr(value, ':', MAX_LEN_UUID_STR);
+		if (!colon_pos) {
+			g_free(value);
+			return -EIO;
+		}
+
+		len = colon_pos - value;
+		if (!len) {
+			g_free(value);
+			return -EIO;
+		}
+
+		snprintf(pattern, sizeof(pattern), "%%%lds:", len);
+
+		if (sscanf(value, pattern, type) != 1) {
 			g_free(value);
 			return -EIO;
 		}
