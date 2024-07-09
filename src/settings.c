@@ -187,13 +187,30 @@ static int load_service(struct gatt_db *db, char *handle, char *value)
 	char type[MAX_LEN_UUID_STR], uuid_str[MAX_LEN_UUID_STR];
 	bt_uuid_t uuid;
 	bool primary;
+	char pattern[16];
+	char *colon_pos;
+	size_t len;
 
 	if (sscanf(handle, "%04hx", &start) != 1) {
 		DBG("Failed to parse handle: %s", handle);
 		return -EIO;
 	}
 
-	if (sscanf(value, "%[^:]:%04hx:%36s", type, &end, uuid_str) != 3) {
+	colon_pos = memchr(value, ':', MAX_LEN_UUID_STR);
+	if (!colon_pos) {
+		DBG("Failed to parse value: %s", value);
+		return -EIO;
+	}
+
+	len = colon_pos - value;
+	if (!len) {
+		DBG("Failed to parse value: %s", value);
+		return -EIO;
+	}
+
+	snprintf(pattern, sizeof(pattern), "%%%lds:%%04hx:%%36s", len);
+
+	if (sscanf(value, pattern, type, &end, uuid_str) != 3) {
 		DBG("Failed to parse value: %s", value);
 		return -EIO;
 	}
