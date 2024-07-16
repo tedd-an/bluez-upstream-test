@@ -205,6 +205,9 @@ static void print_version_tlv_img_type(const struct intel_version_tlv *tlv,
 	case 0x01:
 		str = "Bootloader";
 		break;
+	case 0x02:
+		str = "Intermediate loader";
+		break;
 	case 0x03:
 		str = "Firmware";
 		break;
@@ -252,6 +255,12 @@ static void print_version_tlv_mfg(const struct intel_version_tlv *tlv,
 						bt_compidtostr(mfg_id), mfg_id);
 }
 
+static void print_version_tlv_fw_id(const struct intel_version_tlv *tlv,
+				    const char *type_str)
+{
+	print_field("%s(%u): %s", type_str, tlv->type, tlv->val);
+}
+
 static const struct intel_version_tlv_desc {
 	uint8_t type;
 	const char *type_str;
@@ -291,6 +300,8 @@ static const struct intel_version_tlv_desc {
 	{ 47, "SBE Type", print_version_tlv_u8 },
 	{ 48, "OTP BDADDR", print_version_tlv_otp_bdaddr },
 	{ 49, "Unlocked State", print_version_tlv_enabled },
+	{ 50, "Firmware SHA1", print_version_tlv_u32},
+	{ 80, "Firmware ID", print_version_tlv_fw_id},
 	{ 0, NULL, NULL },
 };
 
