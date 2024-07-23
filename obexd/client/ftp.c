@@ -463,7 +463,8 @@ int ftp_init(void)
 
 	DBG("");
 
-	conn = dbus_bus_get(DBUS_BUS_SESSION, NULL);
+	conn = dbus_bus_get(USE_SYSTEMBUS_FOR_OBEXD ?
+			DBUS_BUS_SYSTEM : DBUS_BUS_SESSION, NULL);
 	if (!conn)
 		return -EIO;
 

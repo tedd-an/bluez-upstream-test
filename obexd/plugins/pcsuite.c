@@ -322,7 +322,8 @@ static gboolean send_backup_dbus_message(const char *oper,
 
 	file_size = size ? *size : 0;
 
-	conn = g_dbus_setup_bus(DBUS_BUS_SESSION, NULL, NULL);
+	conn = g_dbus_setup_bus(USE_SYSTEMBUS_FOR_OBEXD ?
+			DBUS_BUS_SYSTEM : DBUS_BUS_SESSION, NULL, NULL);
 
 	if (conn == NULL)
 		return FALSE;
