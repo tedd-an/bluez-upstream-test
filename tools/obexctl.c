@@ -2154,7 +2154,8 @@ int main(int argc, char *argv[])
 	bt_shell_set_menu(&main_menu);
 	bt_shell_set_prompt(PROMPT_OFF);
 
-	dbus_conn = g_dbus_setup_bus(DBUS_BUS_SESSION, NULL, NULL);
+	dbus_conn = g_dbus_setup_bus(USE_SYSTEMBUS_FOR_OBEXD ?
+				DBUS_BUS_SYSTEM : DBUS_BUS_SESSION, NULL, NULL);
 
 	client = g_dbus_client_new(dbus_conn, "org.bluez.obex",
 							"/org/bluez/obex");

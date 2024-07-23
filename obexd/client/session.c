@@ -583,7 +583,8 @@ struct obc_session *obc_session_create(const char *source,
 	if (driver == NULL)
 		return NULL;
 
-	conn = dbus_bus_get(DBUS_BUS_SESSION, NULL);
+	conn = dbus_bus_get(USE_SYSTEMBUS_FOR_OBEXD ?
+			DBUS_BUS_SYSTEM : DBUS_BUS_SESSION, NULL);
 	if (conn == NULL)
 		return NULL;
 
