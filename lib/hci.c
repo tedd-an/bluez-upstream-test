@@ -1119,6 +1119,87 @@ int hci_send_cmd(int dd, uint16_t ogf, uint16_t ocf, uint8_t plen, void *param)
 	return 0;
 }
 
+int hci_send_acl_data(int dd, uint16_t handle, uint8_t dlen,
+			struct signal_hdr *sh, struct signal_payload_hdr *plh,
+			void *pl)
+{
+	uint8_t type = HCI_ACLDATA_PKT;
+	hci_acl_hdr ha;
+	struct iovec iv[5];
+	int ivn;
+
+	ha.handle = handle;
+	ha.dlen = dlen;
+
+	iv[0].iov_base = &type;
+	iv[0].iov_len = 1;
+	iv[1].iov_base = &ha;
+	iv[1].iov_len = HCI_ACL_HDR_SIZE;
+	ivn = 2;
+
+	printf("\nACL Packet details[handle:%x, length:%d]\n",
+			ha.handle, ha.dlen);
+
+	if (dlen) {
+		iv[2].iov_base = sh;
+		iv[2].iov_len = 4; //HCI_SIGNAL_HDR_SIZE;
+		ivn = 3;
+		printf("\nACL signal command details[length:%d, cid:%d]\n",
+				sh->len, sh->cid);
+		if (sh->len > 0) {
+			iv[3].iov_base = plh;
+			iv[3].iov_len = 4; //HCI_SIGNAL_PAYLOAD_HDR_SIZE;
+			ivn = 4;
+			if (plh->len > 0) {
+				iv[4].iov_base = pl;
+				iv[4].iov_len = plh->len;
+				ivn = 5;
+			}
+		}
+	}
+
+	while (writev(dd, iv, ivn) < 0) {
+		if (errno == EAGAIN || errno == EINTR)
+			continue;
+		return -1;
+	}
+	return 0;
+}
+
+int hci_signal_le_con_param_update_req(int dd, uint16_t handle,
+						uint16_t interval_min,
+						uint16_t interval_max,
+						uint16_t slave_latency,
+						uint16_t timeout_multiplier)
+{
+	struct signal_hdr sh;
+	struct signal_payload_hdr pl;
+	struct le_con_param_update_req ur;
+
+	uint16_t length = 0x0010;
+
+	memset(&sh, 0, sizeof(sh));
+	memset(&pl, 0, sizeof(pl));
+	memset(&ur, 0, sizeof(ur));
+
+	sh.len = HCI_SIGNAL_LE_CON_PARAM_UPDATE_REQ_SIZE;
+	sh.cid = HCI_LE_CHANNEL_ID;
+
+	pl.code = LE_CON_PARAM_UPDATE_REQ_CODE;
+	pl.id = 0x77;
+	pl.len = LE_CON_PARAM_UPDATE_LEN;
+
+	ur.interval_min = interval_min;
+	ur.interval_max = interval_max;
+	ur.slave_latency = slave_latency;
+	ur.timeout_multiplier = timeout_multiplier;
+
+	if (hci_send_acl_data(dd, handle, length, &sh, &pl, &ur) < 0)
+		return -1;
+
+	return 0;
+}
+
 int hci_send_req(int dd, struct hci_request *r, int to)
 {
 	unsigned char buf[HCI_MAX_EVENT_SIZE], *ptr;
