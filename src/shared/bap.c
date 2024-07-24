@@ -5420,7 +5420,7 @@ int bt_bap_select(struct bt_bap_pac *lpac, struct bt_bap_pac *rpac,
 			selected++;
 
 			/* Check if there are any channels left to select */
-			map.count &= ~(map.count & rc->count);
+				map.count &= ~(map.count & rc->count);
 			/* Check if there are any locations left to select */
 			map.location &= ~(map.location & rc->location);
 
