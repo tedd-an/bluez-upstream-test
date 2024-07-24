@@ -35,12 +35,47 @@ struct hci_version {
 	uint16_t lmp_subver;
 };
 
+struct hci_acl_hdr {
+	uint16_t handle;
+	uint16_t len;
+};
+
+struct signal_hdr {
+	uint16_t len;
+	uint16_t cid;
+};
+
+struct signal_payload_hdr {
+	uint8_t  code;
+	uint8_t  id;
+	uint16_t len;
+};
+
+struct le_con_param_update_req {
+	uint16_t interval_min;
+	uint16_t interval_max;
+	uint16_t slave_latency;
+	uint16_t timeout_multiplier;
+};
+#define HCI_SIGNAL_LE_CON_PARAM_UPDATE_REQ_SIZE 0x000C
+#define HCI_LE_CHANNEL_ID                       0x0005
+#define LE_CON_PARAM_UPDATE_REQ_CODE            0x12
+#define LE_CON_PARAM_UPDATE_LEN                 0x0008
+
 int hci_open_dev(int dev_id);
 int hci_close_dev(int dd);
 int hci_send_cmd(int dd, uint16_t ogf, uint16_t ocf, uint8_t plen, void *param);
+int hci_send_acl_data(int dd, uint16_t handle, uint8_t dlen,
+				struct signal_hdr *sh,
+				struct signal_payload_hdr *plh, void *pl);
 int hci_send_req(int dd, struct hci_request *req, int timeout);
 
 int hci_create_connection(int dd, const bdaddr_t *bdaddr, uint16_t ptype, uint16_t clkoffset, uint8_t rswitch, uint16_t *handle, int to);
+int hci_signal_le_con_param_update_req(int dd, uint16_t handle,
+						uint16_t interval_min,
+						uint16_t interval_max,
+						uint16_t slave_latency,
+						uint16_t timeout_multiplier);
 int hci_disconnect(int dd, uint16_t handle, uint8_t reason, int to);
 
 int hci_inquiry(int dev_id, int len, int num_rsp, const uint8_t *lap, inquiry_info **ii, long flags);
