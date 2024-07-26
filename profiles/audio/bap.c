@@ -871,7 +871,10 @@ static struct bap_setup *setup_new(struct bap_ep *ep)
 		/* Mark BIG and BIS to be auto assigned */
 		setup->qos.bcast.big = BT_ISO_QOS_BIG_UNSET;
 		setup->qos.bcast.bis = BT_ISO_QOS_BIS_UNSET;
-		setup->qos.bcast.sync_factor = 0x01;
+		/* sync_factor should be >=2 to avoid invalid extended
+		 * advertising interval value
+		 */
+		setup->qos.bcast.sync_factor = 0x02;
 		setup->qos.bcast.sync_timeout = BT_ISO_SYNC_TIMEOUT;
 		setup->qos.bcast.timeout = BT_ISO_SYNC_TIMEOUT;
 		setup->qos_parser = setup_parse_bcast_qos;
