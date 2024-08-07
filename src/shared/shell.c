@@ -60,6 +60,11 @@ struct bt_shell_prompt_input {
 	void *user_data;
 };
 
+struct input {
+	struct io *io;
+	FILE *f;
+};
+
 static struct {
 	bool init;
 	char *name;
@@ -71,7 +76,6 @@ static struct {
 	bool monitor;
 	int timeout;
 	int init_fd;
-	FILE *f;
 	struct queue *inputs;
 
 	char *line;
@@ -262,11 +266,18 @@ static int bt_shell_queue_exec(char *line)
 {
 	int err;
 
+	/* Ignore comments */
+	if (line[0] == '#')
+		return 0;
+
 	/* Queue if already executing */
 	if (data.line) {
 		/* Check if prompt is being held then release using the line */
-		if (!bt_shell_release_prompt(line))
+		if (!bt_shell_release_prompt(line)) {
+			bt_shell_printf("%s\n", line);
 			return 0;
+		}
+
 		queue_push_tail(data.queue, strdup(line));
 		return 0;
 	}
@@ -282,6 +293,7 @@ static int bt_shell_queue_exec(char *line)
 
 static bool input_read(struct io *io, void *user_data)
 {
+	struct input *input = user_data;
 	int fd;
 	char *line = NULL;
 	size_t len = 0;
@@ -299,15 +311,15 @@ static bool input_read(struct io *io, void *user_data)
 		return true;
 	}
 
-	if (!data.f) {
-		data.f = fdopen(fd, "r");
-		if (!data.f) {
+	if (!input->f) {
+		input->f = fdopen(fd, "r");
+		if (!input->f) {
 			printf("fdopen: %s (%d)\n", strerror(errno), errno);
 			return false;
 		}
 	}
 
-	nread = getline(&line, &len, data.f);
+	nread = getline(&line, &len, input->f);
 	if (nread > 0) {
 		int err;
 
@@ -317,9 +329,9 @@ static bool input_read(struct io *io, void *user_data)
 		err = bt_shell_queue_exec(line);
 		if (err < 0)
 			printf("%s: %s (%d)\n", line, strerror(-err), -err);
-	} else {
-		fclose(data.f);
-		data.f = NULL;
+	} else if (input->f) {
+		fclose(input->f);
+		input->f = NULL;
 	}
 
 	free(line);
@@ -327,9 +339,9 @@ static bool input_read(struct io *io, void *user_data)
 	return true;
 }
 
-static bool io_hup(struct io *io, void *user_data)
+static bool input_hup(struct io *io, void *user_data)
 {
-	if (queue_remove(data.inputs, io)) {
+	if (queue_remove(data.inputs, user_data)) {
 		if (!queue_isempty(data.inputs))
 			return false;
 	}
@@ -339,18 +351,33 @@ static bool io_hup(struct io *io, void *user_data)
 	return false;
 }
 
-static bool bt_shell_script_attach(int fd)
+static struct input *input_new(int fd)
 {
+	struct input *input;
 	struct io *io;
 
 	io = io_new(fd);
 	if (!io)
 		return false;
 
-	io_set_read_handler(io, input_read, NULL, NULL);
-	io_set_disconnect_handler(io, io_hup, NULL, NULL);
+	input = new0(struct input, 1);
+	input->io = io;
 
-	queue_push_tail(data.inputs, io);
+	queue_push_tail(data.inputs, input);
+
+	return input;
+}
+
+static bool bt_shell_input_attach(int fd)
+{
+	struct input *input;
+
+	input = input_new(fd);
+	if (!input)
+		return false;
+
+	io_set_read_handler(input->io, input_read, input, NULL);
+	io_set_disconnect_handler(input->io, input_hup, input, NULL);
 
 	return true;
 }
@@ -369,7 +396,7 @@ static void cmd_script(int argc, char *argv[])
 
 	printf("Running script %s...\n", argv[1]);
 
-	bt_shell_script_attach(fd);
+	bt_shell_input_attach(fd);
 }
 
 static const struct bt_shell_menu_entry default_menu[] = {
@@ -876,7 +903,8 @@ static void rl_handler(char *input)
 		return;
 	}
 
-	if (!strlen(input))
+	/* Ignore empty/comment lines */
+	if (!strlen(input) || input[0] == '#')
 		goto done;
 
 	if (!bt_shell_release_prompt(input))
@@ -1444,6 +1472,17 @@ int bt_shell_exec(const char *input)
 	return err;
 }
 
+static void input_destroy(void *data)
+{
+	struct input *input = data;
+
+	if (input->f)
+		fclose(input->f);
+
+	io_destroy(input->io);
+	free(input);
+}
+
 void bt_shell_cleanup(void)
 {
 	bt_shell_release_prompt("");
@@ -1459,7 +1498,7 @@ void bt_shell_cleanup(void)
 
 	rl_cleanup();
 
-	queue_destroy(data.inputs, NULL);
+	queue_destroy(data.inputs, input_destroy);
 	data.inputs = NULL;
 	queue_destroy(data.queue, free);
 	data.queue = NULL;
@@ -1524,14 +1563,14 @@ void bt_shell_set_prompt(const char *string)
 	if (!data.init || data.mode)
 		return;
 
-	if (asprintf(&prompt, "\001%s\002", string) < 0)
+	if (asprintf(&prompt, "\001%s\002", string) < 0) {
 		rl_set_prompt(string);
-	else {
+	} else {
 		rl_set_prompt(prompt);
 		free(prompt);
 	}
 
-	rl_redisplay();
+	rl_forced_update_display();
 }
 
 static bool shell_quit(void *data)
@@ -1543,18 +1582,16 @@ static bool shell_quit(void *data)
 
 bool bt_shell_attach(int fd)
 {
-	struct io *io;
+	struct input *input;
 
-	io = io_new(fd);
-	if (!io)
+	input = input_new(fd);
+	if (!input)
 		return false;
 
 	if (!data.mode) {
-		io_set_read_handler(io, input_read, NULL, NULL);
-		io_set_disconnect_handler(io, io_hup, NULL, NULL);
+		io_set_read_handler(input->io, input_read, input, NULL);
+		io_set_disconnect_handler(input->io, input_hup, input, NULL);
 	}
-
-	queue_push_tail(data.inputs, io);
 
 	if (data.mode) {
 		if (shell_exec(data.argc, data.argv) < 0) {
@@ -1581,8 +1618,7 @@ bool bt_shell_detach(void)
 	if (queue_isempty(data.inputs))
 		return false;
 
-	queue_remove_all(data.inputs, NULL, NULL,
-					(queue_destroy_func_t) io_destroy);
+	queue_remove_all(data.inputs, NULL, NULL, input_destroy);
 
 	return true;
 }
