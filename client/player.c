@@ -5022,8 +5022,65 @@ static void cmd_acquire_transport(int argc, char *argv[])
 	return bt_shell_noninteractive_quit(EXIT_SUCCESS);
 }
 
+static void set_bcode_cb(const DBusError *error, void *user_data)
+{
+	GDBusProxy *proxy = user_data;
+
+	if (dbus_error_is_set(error)) {
+		bt_shell_printf("Failed to set broadcast code: %s\n",
+								error->name);
+		return bt_shell_noninteractive_quit(EXIT_FAILURE);
+	}
+
+	bt_shell_printf("Setting broadcast code succeeded\n");
+
+	if (!g_dbus_proxy_method_call(proxy, "Select", NULL,
+				select_reply, proxy, NULL))
+		return bt_shell_noninteractive_quit(EXIT_FAILURE);
+}
+
+static void set_bcode(const char *input, void *user_data)
+{
+	GDBusProxy *proxy = user_data;
+	char *bcode = g_strdup(input);
+
+	if (g_dbus_proxy_set_property_dict(proxy, "QoS", "BCode",
+				DBUS_TYPE_STRING, bcode,
+				set_bcode_cb, user_data, NULL) == FALSE){
+		return bt_shell_noninteractive_quit(EXIT_FAILURE);
+	}
+}
+
 static void transport_select(GDBusProxy *proxy, bool prompt)
 {
+	DBusMessageIter iter, array, entry, value;
+	unsigned char encryption;
+	const char *key;
+
+	if (g_dbus_proxy_get_property(proxy, "QoS", &iter) == FALSE)
+		return;
+
+	dbus_message_iter_recurse(&iter, &array);
+
+	while (dbus_message_iter_get_arg_type(&array) !=
+						DBUS_TYPE_INVALID) {
+		dbus_message_iter_recurse(&array, &entry);
+		dbus_message_iter_get_basic(&entry, &key);
+
+		if (!strcasecmp(key, "Encryption")) {
+			dbus_message_iter_next(&entry);
+			dbus_message_iter_recurse(&entry, &value);
+			dbus_message_iter_get_basic(&value, &encryption);
+			if (encryption == 1) {
+				bt_shell_prompt_input("",
+				"Enter broadcast code:", set_bcode, proxy);
+				return;
+			}
+			break;
+		}
+		dbus_message_iter_next(&array);
+	}
+
 	if (!g_dbus_proxy_method_call(proxy, "Select", NULL,
 					select_reply, proxy, NULL)) {
 		bt_shell_printf("Failed select transport\n");
