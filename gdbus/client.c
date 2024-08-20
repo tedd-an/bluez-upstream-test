@@ -4,6 +4,7 @@
  *  D-Bus helper library
  *
  *  Copyright (C) 2004-2011  Marcel Holtmann <marcel@holtmann.org>
+ *  Copyright 2024 NXP
  *
  *
  */
@@ -182,6 +183,33 @@ void g_dbus_dict_append_entry(DBusMessageIter *dict,
 					const char *key, int type, void *val)
 {
 	dict_append_basic(dict, DBUS_TYPE_STRING, &key, type, val);
+}
+
+static void append_dict_variant(DBusMessageIter *iter, char *entry, int type,
+							void *val)
+{
+	DBusMessageIter variant, dict;
+
+	dbus_message_iter_open_container(iter, DBUS_TYPE_VARIANT,
+					DBUS_TYPE_ARRAY_AS_STRING
+					DBUS_DICT_ENTRY_BEGIN_CHAR_AS_STRING
+					DBUS_TYPE_STRING_AS_STRING
+					DBUS_TYPE_VARIANT_AS_STRING
+					DBUS_DICT_ENTRY_END_CHAR_AS_STRING,
+					&variant);
+
+	dbus_message_iter_open_container(&variant, DBUS_TYPE_ARRAY,
+					DBUS_DICT_ENTRY_BEGIN_CHAR_AS_STRING
+					DBUS_TYPE_STRING_AS_STRING
+					DBUS_TYPE_VARIANT_AS_STRING
+					DBUS_DICT_ENTRY_END_CHAR_AS_STRING,
+					&dict);
+
+	g_dbus_dict_append_entry(&dict, entry, type, val);
+
+	dbus_message_iter_close_container(&variant, &dict);
+
+	dbus_message_iter_close_container(iter, &variant);
 }
 
 void g_dbus_dict_append_basic_array(DBusMessageIter *dict, int key_type,
@@ -869,6 +897,64 @@ gboolean g_dbus_proxy_set_property_basic(GDBusProxy *proxy,
 	dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &name);
 
 	append_variant(&iter, type, value);
+
+	if (g_dbus_send_message_with_reply(client->dbus_conn, msg,
+							&call, -1) == FALSE) {
+		dbus_message_unref(msg);
+		g_free(data);
+		return FALSE;
+	}
+
+	dbus_pending_call_set_notify(call, set_property_reply, data, g_free);
+	dbus_pending_call_unref(call);
+
+	dbus_message_unref(msg);
+
+	return TRUE;
+}
+
+gboolean g_dbus_proxy_set_property_dict(GDBusProxy *proxy,
+				const char *name, char *entry, int type,
+				const void *value, GDBusResultFunction function,
+				void *user_data, GDBusDestroyFunction destroy)
+{
+	struct set_property_data *data;
+	GDBusClient *client;
+	DBusMessage *msg;
+	DBusMessageIter iter;
+	DBusPendingCall *call;
+
+	if (proxy == NULL || name == NULL || value == NULL)
+		return FALSE;
+
+	if (dbus_type_is_basic(type) == FALSE)
+		return FALSE;
+
+	client = proxy->client;
+	if (client == NULL)
+		return FALSE;
+
+	data = g_try_new0(struct set_property_data, 1);
+	if (data == NULL)
+		return FALSE;
+
+	data->function = function;
+	data->user_data = user_data;
+	data->destroy = destroy;
+
+	msg = dbus_message_new_method_call(client->service_name,
+			proxy->obj_path, DBUS_INTERFACE_PROPERTIES, "Set");
+	if (msg == NULL) {
+		g_free(data);
+		return FALSE;
+	}
+
+	dbus_message_iter_init_append(msg, &iter);
+	dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING,
+							&proxy->interface);
+	dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &name);
+
+	append_dict_variant(&iter, entry, type, &value);
 
 	if (g_dbus_send_message_with_reply(client->dbus_conn, msg,
 							&call, -1) == FALSE) {
