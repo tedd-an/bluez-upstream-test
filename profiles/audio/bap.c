@@ -182,6 +182,9 @@ static struct bt_iso_qos bap_sink_pa_qos = {
 	}
 };
 
+static bool match_service(const void *data, const void *match_data);
+static void iso_do_big_sync(GIOChannel *io, void *user_data);
+
 static bool bap_data_set_user_data(struct bap_data *data, void *user_data)
 {
 	if (!data)
@@ -211,6 +214,8 @@ static void setup_free(void *data);
 
 static void bap_data_free(struct bap_data *data)
 {
+	struct bap_bcast_pa_req *req;
+
 	if (data->listen_io) {
 		g_io_channel_shutdown(data->listen_io, TRUE, NULL);
 		g_io_channel_unref(data->listen_io);
@@ -230,6 +235,22 @@ static void bap_data_free(struct bap_data *data)
 	bt_bap_state_unregister(data->bap, data->state_id);
 	bt_bap_pac_unregister(data->bap, data->pac_id);
 	bt_bap_unref(data->bap);
+
+	if (data->adapter) {
+		/* If this is a Broadcast Sink session with a Broadcast Source,
+		 * remove any pending PA sync requests from the adapter queue,
+		 * since the session is about to be deleted.
+		 */
+		req = queue_remove_if(data->adapter->bcast_pa_requests,
+						match_service, data->service);
+		if (req && req->io_id) {
+			g_source_remove(req->io_id);
+			req->io_id = 0;
+		}
+
+		free(req);
+	}
+
 	free(data);
 }
 
@@ -1004,9 +1025,11 @@ static void iso_bcast_confirm_cb(GIOChannel *io, GError *err, void *user_data)
 
 	DBG("BIG Sync completed");
 
-	g_io_channel_unref(setup->io);
-	g_io_channel_shutdown(setup->io, TRUE, NULL);
-	setup->io = NULL;
+	if (setup->io) {
+		g_io_channel_unref(setup->io);
+		g_io_channel_shutdown(setup->io, TRUE, NULL);
+		setup->io = NULL;
+	}
 
 	/* This device is no longer needed */
 	btd_service_connecting_complete(bap_data->service, 0);
@@ -1258,8 +1281,24 @@ static gboolean big_info_report_cb(GIOChannel *io, GIOCondition cond,
 	/* Close the io and remove the queue request for another PA Sync */
 	g_io_channel_shutdown(data->listen_io, TRUE, NULL);
 	g_io_channel_unref(data->listen_io);
-	g_io_channel_shutdown(io, TRUE, NULL);
 	data->listen_io = NULL;
+
+	if (bass_bcast_probe(data->device, data->bap)) {
+		/* If this Broadcast Source was successfully probed inside
+		 * BASS, it means that the Broadcast Sink acting as a Scan
+		 * Delegator performed short-lived PA sync as a request from
+		 * a Broadcast Assistant. The Scan Delegator should keep PA
+		 * sync active until instructed otherwise by the Assistant.
+		 * Keep a reference to the PA sync io to keep the fd open.
+		 */
+		data->listen_io = io;
+		g_io_channel_ref(io);
+	} else {
+		/* Unless it is required by a Broadcast Assistant, PA sync is
+		 * no longer needed at this point, so the io can be closed.
+		 */
+		g_io_channel_shutdown(io, TRUE, NULL);
+	}
 
 	/* Analyze received BASE data and create remote media endpoints for each
 	 * BIS matching our capabilities
@@ -1268,9 +1307,18 @@ static gboolean big_info_report_cb(GIOChannel *io, GIOCondition cond,
 
 	service_set_connecting(req->data.service);
 
-	queue_remove(data->adapter->bcast_pa_requests, req);
 	req->io_id = 0;
-	free(req);
+
+	if (!data->listen_io) {
+		/* If PA sync has been terminated, dequeue request to be able
+		 * to probe other Broadcasters. Otherwise, keep this request
+		 * in progress to avoid probing other Broadcasters as long as
+		 * PA is active with the current one. The request will be
+		 * dequeued and freed when the PA sync io will be shutdown.
+		 */
+		queue_remove(data->adapter->bcast_pa_requests, req);
+		free(req);
+	}
 
 	return FALSE;
 }
@@ -2236,6 +2284,26 @@ static void setup_accept_io_broadcast(struct bap_data *data,
 	struct bap_bcast_pa_req *req = new0(struct bap_bcast_pa_req, 1);
 	struct bap_adapter *adapter = data->adapter;
 
+	req->type = BAP_PA_BIG_SYNC_REQ;
+	req->in_progress = FALSE;
+	req->data.setup = setup;
+
+	if (data->listen_io) {
+		/* If there is an active listen io for the BAP session
+		 * with the Broadcast Source, it means that PA sync is
+		 * already established. Go straight to establishing BIG
+		 * sync.
+		 */
+		iso_do_big_sync(data->listen_io, req);
+		return;
+	}
+
+	/* Add this request to the PA queue.
+	 * We don't need to check the queue here, as we cannot have
+	 * BAP_PA_BIG_SYNC_REQ before a short PA (BAP_PA_SHORT_REQ)
+	 */
+	queue_push_tail(adapter->bcast_pa_requests, req);
+
 	/* Timer could be stopped if all the short lived requests were treated.
 	 * Check the state of the timer and turn it on so that this requests
 	 * can also be treated.
@@ -2244,15 +2312,6 @@ static void setup_accept_io_broadcast(struct bap_data *data,
 		adapter->pa_timer_id = g_timeout_add_seconds(PA_IDLE_TIMEOUT,
 								pa_idle_timer,
 								adapter);
-
-	/* Add this request to the PA queue.
-	 * We don't need to check the queue here, as we cannot have
-	 * BAP_PA_BIG_SYNC_REQ before a short PA (BAP_PA_SHORT_REQ)
-	 */
-	req->type = BAP_PA_BIG_SYNC_REQ;
-	req->in_progress = FALSE;
-	req->data.setup = setup;
-	queue_push_tail(adapter->bcast_pa_requests, req);
 }
 
 static void setup_create_ucast_io(struct bap_data *data,
@@ -3030,10 +3089,17 @@ static void iso_do_big_sync(GIOChannel *io, void *user_data)
 	const char *strbis = NULL;
 
 	DBG("PA Sync done");
-	g_io_channel_unref(setup->io);
-	g_io_channel_shutdown(setup->io, TRUE, NULL);
-	setup->io = io;
-	g_io_channel_ref(setup->io);
+
+	if (setup->io) {
+		g_io_channel_unref(setup->io);
+		g_io_channel_shutdown(setup->io, TRUE, NULL);
+
+		/* Keep a reference to the PA sync io until
+		 * BIG sync is established.
+		 */
+		setup->io = io;
+		g_io_channel_ref(setup->io);
+	}
 
 	/* TODO
 	 * We can only synchronize with a single BIS to a BIG.
@@ -3086,14 +3152,14 @@ static void iso_do_big_sync(GIOChannel *io, void *user_data)
 	memcpy(&qos.bcast.out, &setup->qos.bcast.io_qos,
 			sizeof(struct bt_iso_io_qos));
 
-	if (!bt_io_set(setup->io, &err,
+	if (!bt_io_set(io, &err,
 			BT_IO_OPT_QOS, &qos,
 			BT_IO_OPT_INVALID)) {
 		error("bt_io_set: %s", err->message);
 		g_error_free(err);
 	}
 
-	if (!bt_io_bcast_accept(setup->io,
+	if (!bt_io_bcast_accept(io,
 			iso_bcast_confirm_cb,
 			req, NULL, &err,
 			BT_IO_OPT_ISO_BC_NUM_BIS,
@@ -3211,7 +3277,6 @@ static void bap_bcast_remove(struct btd_service *service)
 {
 	struct btd_device *device = btd_service_get_device(service);
 	struct bap_data *data;
-	struct bap_bcast_pa_req *req;
 	char addr[18];
 
 	ba2str(device_get_address(device), addr);
@@ -3222,17 +3287,9 @@ static void bap_bcast_remove(struct btd_service *service)
 		error("BAP service not handled by profile");
 		return;
 	}
-	/* Remove the corresponding entry from the pa_req queue. Any pa_req that
-	 * are in progress will be stopped by bap_data_remove which calls
-	 * bap_data_free.
-	 */
-	req = queue_remove_if(data->adapter->bcast_pa_requests,
-						match_service, service);
-	if (req && req->io_id) {
-		g_source_remove(req->io_id);
-		req->io_id = 0;
-	}
-	free(req);
+
+	/* Notify the BASS plugin about the removed session. */
+	bass_bcast_remove(device);
 
 	bap_data_remove(data);
 
@@ -3393,8 +3450,13 @@ static void bap_adapter_remove(struct btd_profile *p,
 	DBG("%s", addr);
 
 	queue_destroy(data->adapter->bcast_pa_requests, free);
+
+	if (data->adapter->pa_timer_id)
+		g_source_remove(data->adapter->pa_timer_id);
+
 	queue_remove(adapters, data->adapter);
 	free(data->adapter);
+	data->adapter = NULL;
 
 	if (queue_isempty(adapters)) {
 		queue_destroy(adapters, NULL);
