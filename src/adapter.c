@@ -8647,6 +8647,7 @@ static void new_link_key_callback(uint16_t index, uint16_t length,
 	struct btd_adapter *adapter = user_data;
 	struct btd_device *device;
 	char dst[18];
+	uint8_t addr_type;
 
 	if (length < sizeof(*ev)) {
 		btd_error(adapter->dev_id, "Too small new link key event");
@@ -8666,7 +8667,13 @@ static void new_link_key_callback(uint16_t index, uint16_t length,
 		return;
 	}
 
-	device = btd_adapter_get_device(adapter, &addr->bdaddr, addr->type);
+	/*
+	 * For LE public address, key here is cross-transport derived,
+	 * so consider it as BR/EDR public address.
+	 *
+	 */
+	addr_type = addr->type == BDADDR_LE_PUBLIC ? BDADDR_BREDR : addr->type;
+	device = btd_adapter_get_device(adapter, &addr->bdaddr, addr_type);
 	if (!device) {
 		btd_error(adapter->dev_id,
 				"Unable to get device object for %s", dst);
@@ -8682,7 +8689,7 @@ static void new_link_key_callback(uint16_t index, uint16_t length,
 		device_set_bonded(device, BDADDR_BREDR);
 	}
 
-	bonding_complete(adapter, &addr->bdaddr, addr->type, 0);
+	bonding_complete(adapter, &addr->bdaddr, addr_type, 0);
 }
 
 static void store_ltk_group(struct btd_adapter *adapter, const bdaddr_t *peer,
@@ -8773,6 +8780,7 @@ static void new_long_term_key_callback(uint16_t index, uint16_t length,
 	struct btd_device *device;
 	bool persistent;
 	char dst[18];
+	uint8_t addr_type;
 
 	if (length < sizeof(*ev)) {
 		btd_error(adapter->dev_id, "Too small long term key event");
@@ -8784,7 +8792,13 @@ static void new_long_term_key_callback(uint16_t index, uint16_t length,
 	DBG("hci%u new LTK for %s type %u enc_size %u",
 		adapter->dev_id, dst, ev->key.type, ev->key.enc_size);
 
-	device = btd_adapter_get_device(adapter, &addr->bdaddr, addr->type);
+	/*
+	 * For BR/EDR public address, key here is cross-transport derived,
+	 * so consider it as LE public address for SMP.
+	 *
+	 */
+	addr_type = addr->type == BDADDR_BREDR ? BDADDR_LE_PUBLIC : addr->type;
+	device = btd_adapter_get_device(adapter, &addr->bdaddr, addr_type);
 	if (!device) {
 		btd_error(adapter->dev_id,
 				"Unable to get device object for %s", dst);
@@ -8802,8 +8816,7 @@ static void new_long_term_key_callback(uint16_t index, uint16_t length,
 	 * be persistently stored.
 	 *
 	 */
-	if (addr->type == BDADDR_LE_RANDOM &&
-				(addr->bdaddr.b[5] & 0xc0) != 0xc0)
+	if (addr_type == BDADDR_LE_RANDOM && (addr->bdaddr.b[5] & 0xc0) != 0xc0)
 		persistent = false;
 	else
 		persistent = !!ev->store_hint;
@@ -8817,15 +8830,15 @@ static void new_long_term_key_callback(uint16_t index, uint16_t length,
 		rand = le64_to_cpu(key->rand);
 
 		store_longtermkey(adapter, &key->addr.bdaddr,
-					key->addr.type, key->val, key->central,
+					addr_type, key->val, key->central,
 					key->type, key->enc_size, ediv, rand);
 
-		device_set_bonded(device, addr->type);
+		device_set_bonded(device, addr_type);
 	}
 
 	device_set_ltk(device, ev->key.val, ev->key.central, ev->key.enc_size);
 
-	bonding_complete(adapter, &addr->bdaddr, addr->type, 0);
+	bonding_complete(adapter, &addr->bdaddr, addr_type, 0);
 }
 
 static void new_csrk_callback(uint16_t index, uint16_t length,
@@ -8837,6 +8850,7 @@ static void new_csrk_callback(uint16_t index, uint16_t length,
 	struct btd_adapter *adapter = user_data;
 	struct btd_device *device;
 	char dst[18];
+	uint8_t addr_type;
 
 	if (length < sizeof(*ev)) {
 		btd_error(adapter->dev_id, "Too small CSRK event");
@@ -8848,7 +8862,13 @@ static void new_csrk_callback(uint16_t index, uint16_t length,
 	DBG("hci%u new CSRK for %s type %u", adapter->dev_id, dst,
 								ev->key.type);
 
-	device = btd_adapter_get_device(adapter, &addr->bdaddr, addr->type);
+	/*
+	 * For BR/EDR public address, key here is cross-transport derived,
+	 * so consider it as LE public address for SMP.
+	 *
+	 */
+	addr_type = addr->type == BDADDR_BREDR ? BDADDR_LE_PUBLIC : addr->type;
+	device = btd_adapter_get_device(adapter, &addr->bdaddr, addr_type);
 	if (!device) {
 		btd_error(adapter->dev_id,
 				"Unable to get device object for %s", dst);
@@ -8911,6 +8931,7 @@ static void new_irk_callback(uint16_t index, uint16_t length,
 	struct btd_device *device, *duplicate;
 	bool persistent;
 	char dst[18], rpa[18];
+	uint8_t addr_type;
 
 	if (length < sizeof(*ev)) {
 		btd_error(adapter->dev_id, "Too small New IRK event");
@@ -8922,16 +8943,22 @@ static void new_irk_callback(uint16_t index, uint16_t length,
 
 	DBG("hci%u new IRK for %s RPA %s", adapter->dev_id, dst, rpa);
 
+	/*
+	 * For BR/EDR public address, key here is cross-transport derived,
+	 * so consider it as LE public address for SMP.
+	 *
+	 */
+	addr_type = addr->type == BDADDR_BREDR ? BDADDR_LE_PUBLIC : addr->type;
 	if (bacmp(&ev->rpa, BDADDR_ANY)) {
 		device = btd_adapter_get_device(adapter, &ev->rpa,
 							BDADDR_LE_RANDOM);
 		duplicate = btd_adapter_find_device(adapter, &addr->bdaddr,
-								addr->type);
+								addr_type);
 		if (duplicate == device)
 			duplicate = NULL;
 	} else {
 		device = btd_adapter_get_device(adapter, &addr->bdaddr,
-								addr->type);
+								addr_type);
 		duplicate = NULL;
 	}
 
@@ -8941,7 +8968,7 @@ static void new_irk_callback(uint16_t index, uint16_t length,
 		return;
 	}
 
-	device_update_addr(device, &addr->bdaddr, addr->type);
+	device_update_addr(device, &addr->bdaddr, addr_type);
 
 	if (duplicate)
 		device_merge_duplicate(device, duplicate);
@@ -8950,7 +8977,7 @@ static void new_irk_callback(uint16_t index, uint16_t length,
 	if (!persistent)
 		return;
 
-	store_irk(adapter, &addr->bdaddr, addr->type, irk->val);
+	store_irk(adapter, &addr->bdaddr, addr_type, irk->val);
 
 	btd_device_set_temporary(device, false);
 }
