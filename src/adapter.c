@@ -8502,6 +8502,25 @@ static void disconnect_notify(struct btd_device *dev, uint8_t reason)
 	}
 }
 
+static void adapter_cancel_service_auth(struct btd_adapter *adapter,
+					struct btd_device *device)
+{
+	struct service_auth *auth;
+	GList *l;
+
+	auth = NULL;
+	for (l = adapter->auths->head; l != NULL; l = l->next) {
+		auth = l->data;
+		if (auth->device == device)
+			break;
+	}
+	if (auth != NULL) {
+		DBG("Cancel pending auth: %s", auth->uuid);
+		g_queue_remove(auth->adapter->auths, auth);
+		service_auth_cancel(auth);
+	}
+}
+
 static void dev_disconnected(struct btd_adapter *adapter,
 					const struct mgmt_addr_info *addr,
 					uint8_t reason)
@@ -8516,6 +8535,7 @@ static void dev_disconnected(struct btd_adapter *adapter,
 	device = btd_adapter_find_device(adapter, &addr->bdaddr, addr->type);
 	if (device) {
 		adapter_remove_connection(adapter, device, addr->type);
+		adapter_cancel_service_auth(adapter, device);
 		disconnect_notify(device, reason);
 	}
 
