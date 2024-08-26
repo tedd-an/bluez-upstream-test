@@ -296,3 +296,9 @@ static inline void put_be64(uint64_t val, void *dst)
 {
 	put_unaligned(cpu_to_be64(val), (uint64_t *) dst);
 }
+
+static inline const char *bluez_basename(const char *path)
+{
+	const char *base = strrchr(path, '/');
+	return base ? base + 1 : path;
+}

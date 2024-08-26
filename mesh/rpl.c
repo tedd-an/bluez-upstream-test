@@ -24,6 +24,7 @@
 
 #include <ell/ell.h>
 
+#include "shared/util.h"
 #include "mesh/mesh-defs.h"
 
 #include "mesh/node.h"
@@ -146,7 +147,7 @@ static void get_entries(const char *iv_path, struct l_queue *rpl_list)
 	if (!dir)
 		return;
 
-	iv_txt = basename(iv_path);
+	iv_txt = bluez_basename(iv_path);
 	if (sscanf(iv_txt, "%08x", &iv_index) != 1) {
 		closedir(dir);
 		return;
