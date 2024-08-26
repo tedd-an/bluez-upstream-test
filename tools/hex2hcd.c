@@ -24,6 +24,7 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <sys/stat.h>
+#include "shared/util.h"
 
 static ssize_t process_record(int fd, const char *line, uint16_t *upper_addr)
 {
@@ -302,7 +303,7 @@ static void ver_parse_entry(const char *pathname)
 	}
 
 	if (S_ISREG(st.st_mode)) {
-		ver_parse_file(basename(pathname));
+		ver_parse_file(bluez_basename(pathname));
 		goto done;
 	}
 
