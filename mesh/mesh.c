@@ -266,9 +266,6 @@ bool mesh_init(const char *config_dir, const char *mesh_conf_fname,
 	mesh_model_init();
 	mesh_agent_init();
 
-	mesh.prov_timeout = DEFAULT_PROV_TIMEOUT;
-	mesh.algorithms = DEFAULT_ALGORITHMS;
-
 	storage_dir = config_dir ? config_dir : MESH_STORAGEDIR;
 
 	l_info("Loading node configuration from %s", storage_dir);
