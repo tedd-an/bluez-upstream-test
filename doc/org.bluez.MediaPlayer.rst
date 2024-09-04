@@ -237,6 +237,10 @@ dict Track [readonly]
 
 		Track duration in milliseconds
 
+	:string ImgHandle:
+
+		Track image handle
+
 object Device [readonly]
 ````````````````````````
 
