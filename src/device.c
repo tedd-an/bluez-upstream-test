@@ -1003,6 +1003,32 @@ static gboolean dev_property_exists_class(const GDBusPropertyTable *property,
 	return device->class != 0;
 }
 
+static gboolean
+dev_property_get_connection_type(const GDBusPropertyTable *property,
+				 DBusMessageIter *iter, void *data)
+{
+	struct btd_device *device = data;
+	const char *str;
+
+	if (device->le && device->bredr)
+		str = "dual";
+	else if (device->le)
+		str = "le";
+	else
+		str = "bredr";
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_STRING, &str);
+	return TRUE;
+}
+
+static gboolean
+dev_property_exists_connection_type(const GDBusPropertyTable *property,
+				    void *data)
+{
+	struct btd_device *device = data;
+
+	return device->bredr || device->le;
+}
+
 static gboolean dev_property_get_class(const GDBusPropertyTable *property,
 					DBusMessageIter *iter, void *data)
 {
@@ -3234,6 +3260,8 @@ static const GDBusPropertyTable device_properties[] = {
 	{ "Alias", "s", dev_property_get_alias, dev_property_set_alias },
 	{ "Class", "u", dev_property_get_class, NULL,
 					dev_property_exists_class },
+	{ "ConnectionType", "s", dev_property_get_connection_type, NULL,
+					dev_property_exists_connection_type },
 	{ "Appearance", "q", dev_property_get_appearance, NULL,
 					dev_property_exists_appearance },
 	{ "Icon", "s", dev_property_get_icon, NULL,
