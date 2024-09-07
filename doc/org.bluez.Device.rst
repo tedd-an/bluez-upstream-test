@@ -161,6 +161,16 @@ string AddressType [readonly]
 
 		Random address
 
+string ConnectionType [readonly]
+````````````````````````````````
+	The Bluetooth device connection type.
+
+	Possible values:
+
+	:"bredr":
+	:"le":
+	:"dual":
+
 string Name [readonly, optional]
 ````````````````````````````````
 
