@@ -245,6 +245,10 @@ static void parse_settings(const char *mesh_conf_fname)
 	if (l_settings_get_uint(settings, "General", "ProvTimeout", &value))
 		mesh.prov_timeout = value;
 
+	if (l_settings_get_uint(settings, "General", "Algorithms", &value) &&
+								value <= 65535)
+		mesh.algorithms = value;
+
 done:
 	l_settings_free(settings);
 }
@@ -262,7 +266,6 @@ bool mesh_init(const char *config_dir, const char *mesh_conf_fname,
 	mesh_model_init();
 	mesh_agent_init();
 
-	/* TODO: read mesh.conf */
 	mesh.prov_timeout = DEFAULT_PROV_TIMEOUT;
 	mesh.algorithms = DEFAULT_ALGORITHMS;
 
