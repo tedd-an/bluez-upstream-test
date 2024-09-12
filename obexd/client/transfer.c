@@ -57,6 +57,7 @@ struct obc_transfer {
 	GObex *obex;
 	uint8_t status;
 	GObexApparam *apparam;
+	GSList *headers;
 	guint8 op;
 	struct transfer_callback *callback;
 	DBusConnection *conn;
@@ -820,6 +821,16 @@ static gboolean transfer_start_get(struct obc_transfer *transfer, GError **err)
 		g_obex_packet_add_bytes(req, G_OBEX_HDR_TYPE, transfer->type,
 						strlen(transfer->type) + 1);
 
+	if (transfer->headers != NULL) {
+		GSList *l;
+
+		for (l = transfer->headers; l != NULL; l = g_slist_next(l)) {
+			GObexHeader *hdr = l->data;
+
+			g_obex_packet_add_header(req, hdr);
+		}
+	}
+
 	if (transfer->apparam != NULL) {
 		hdr = g_obex_header_new_apparam(transfer->apparam);
 		g_obex_packet_add_header(req, hdr);
@@ -973,4 +984,9 @@ const char *obc_transfer_get_path(struct obc_transfer *transfer)
 gint64 obc_transfer_get_size(struct obc_transfer *transfer)
 {
 	return transfer->size;
+}
+
+void obc_transfer_add_header(struct obc_transfer *transfer, void *data)
+{
+	transfer->headers = g_slist_append(transfer->headers, data);
 }
