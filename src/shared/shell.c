@@ -1324,9 +1324,7 @@ void bt_shell_init(int argc, char **argv, const struct bt_shell_opt *opt)
 			return;
 		case 'h':
 			usage(argc, argv, opt);
-			data.argc = 1;
-			data.argv = &cmplt;
-			data.mode = 1;
+			exit(EXIT_SUCCESS);
 			goto done;
 		case 's':
 			if (optarg && data.init_fd < 0) {
@@ -1669,4 +1667,9 @@ void *bt_shell_get_env(const char *name)
 		return NULL;
 
 	return env->value;
+}
+
+int bt_shell_get_timeout(void)
+{
+	return data.timeout;
 }
