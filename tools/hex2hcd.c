@@ -303,7 +303,10 @@ static void ver_parse_entry(const char *pathname)
 	}
 
 	if (S_ISREG(st.st_mode)) {
-		ver_parse_file(basename(pathname));
+		const char *bname = strrchr(pathname, '/');
+		if (!bname++)
+			bname = pathname;
+		ver_parse_file(bname);
 		goto done;
 	}
 
