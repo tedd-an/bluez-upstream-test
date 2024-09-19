@@ -2708,7 +2708,9 @@ void mesh_config_destroy_nvm(struct mesh_config *cfg)
 	if (!hex2str(cfg->uuid, 16, uuid, sizeof(uuid)))
 		return;
 
-	node_name = basename(node_dir);
+	node_name = strrchr(node_dir, '/');
+	if (!node_name++)
+		node_name = node_dir;
 
 	/* Make sure path name of node follows expected guidelines */
 	if (strcmp(node_name, uuid))
