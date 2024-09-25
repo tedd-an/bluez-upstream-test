@@ -3492,8 +3492,18 @@ void device_remove_connection(struct btd_device *device, uint8_t bdaddr_type,
 		DBusMessage *msg = device->disconnects->data;
 
 		if (dbus_message_is_method_call(msg, ADAPTER_INTERFACE,
-								"RemoveDevice"))
+							"RemoveDevice")) {
+
+			/* Don't handle the RemoveDevice msg if device is
+			 * connected. For a dual mode remote, both BR/EDR
+			 * and BLE may be connected, RemoveDevice should
+			 * be handled after all bearers are disconnects.
+			*/
+			if (device->bredr_state.connected ||
+					device->le_state.connected)
+				break;
 			remove_device = true;
+		}
 
 		g_dbus_send_reply(dbus_conn, msg, DBUS_TYPE_INVALID);
 		device->disconnects = g_slist_remove(device->disconnects, msg);
