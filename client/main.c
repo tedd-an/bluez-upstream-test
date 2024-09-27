@@ -768,6 +768,29 @@ static GDBusProxy *find_proxy_by_address(GList *source, const char *address)
 	return NULL;
 }
 
+static GList *find_all_proxy_by_address(GList *source, const char *address)
+{
+	GList *list;
+	GList *all_proxy = NULL;
+
+	for (list = g_list_first(source); list; list = g_list_next(list)) {
+		GDBusProxy *proxy = list->data;
+		DBusMessageIter iter;
+		const char *str;
+
+		if (g_dbus_proxy_get_property(proxy, "Address", &iter) == FALSE)
+			continue;
+
+		dbus_message_iter_get_basic(&iter, &str);
+
+		if (!strcasecmp(str, address))
+			all_proxy = g_list_append(all_proxy, proxy);
+	}
+
+	return all_proxy;
+}
+
+
 static gboolean check_default_ctrl(void)
 {
 	if (!default_ctrl) {
@@ -2051,7 +2074,9 @@ static void cmd_disconn(int argc, char *argv[])
 
 static void cmd_list_attributes(int argc, char *argv[])
 {
-	GDBusProxy *proxy;
+	GList *all_proxy = NULL;
+	GList *list;
+	GDBusProxy *proxy = NULL;
 	const char *path;
 
 	if (argc > 1 && !strcmp(argv[1], "local")) {
@@ -2059,11 +2084,33 @@ static void cmd_list_attributes(int argc, char *argv[])
 		goto done;
 	}
 
-	proxy = find_device(argc, argv);
-	if (!proxy)
+	if (argc < 2 || !strlen(argv[1])) {
+		if (default_dev) {
+			proxy = default_dev;
+			path = g_dbus_proxy_get_path(proxy);
+			goto done;
+		}
+		bt_shell_printf("Missing device address argument\n");
 		return bt_shell_noninteractive_quit(EXIT_FAILURE);
+	} else {
+		if (check_default_ctrl() == FALSE)
+			return bt_shell_noninteractive_quit(EXIT_FAILURE);
 
-	path = g_dbus_proxy_get_path(proxy);
+		all_proxy = find_all_proxy_by_address(default_ctrl->devices,
+								argv[1]);
+		if (!all_proxy) {
+			bt_shell_printf("Device %s not available\n", argv[1]);
+			return bt_shell_noninteractive_quit(EXIT_FAILURE);
+		}
+		for (list = g_list_first(all_proxy); list;
+						list = g_list_next(list)) {
+			proxy = list->data;
+			path = g_dbus_proxy_get_path(proxy);
+			gatt_list_attributes(path);
+		}
+		g_list_free(all_proxy);
+		return bt_shell_noninteractive_quit(EXIT_SUCCESS);
+	}
 
 done:
 	gatt_list_attributes(path);
