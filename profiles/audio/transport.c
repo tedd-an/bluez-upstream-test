@@ -705,13 +705,16 @@ static DBusMessage *try_acquire(DBusConnection *conn, DBusMessage *msg,
 	return NULL;
 }
 
+static void transport_update_playing(struct media_transport *transport,
+							gboolean playing);
+
 static void bap_stop_complete(struct bt_bap_stream *stream,
 					uint8_t code, uint8_t reason,
 					void *user_data)
 {
-	struct media_owner *owner = user_data;
 	struct media_request *req;
-	struct media_transport *transport;
+	struct media_transport *transport = user_data;
+	struct media_owner *owner = transport->owner;
 
 	if (!owner)
 		return;
@@ -731,6 +734,11 @@ static void bap_stop_complete(struct bt_bap_stream *stream,
 		transport_set_state(transport, TRANSPORT_STATE_IDLE);
 		media_transport_remove_owner(transport);
 	}
+	if (bt_bap_stream_get_state(stream) == BT_BAP_STREAM_STATE_PENDING)
+		/* Transports with streams in this state should be reaquired as
+		 * part of a multiple BIS sync.
+		 */
+		transport_update_playing(transport, TRUE);
 }
 
 static void bap_disable_complete(struct bt_bap_stream *stream,
@@ -1707,7 +1715,8 @@ static guint transport_bap_suspend(struct media_transport *transport,
 
 	if (bt_bap_stream_get_type(bap->stream) == BT_BAP_STREAM_TYPE_BCAST) {
 		if (transport->owner == owner)
-			bap_disable_complete(bap->stream, 0x00, 0x00, owner);
+			bap_disable_complete(bap->stream, 0x00, 0x00,
+				transport);
 		return 0;
 	}
 
