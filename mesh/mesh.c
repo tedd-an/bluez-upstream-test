@@ -95,6 +95,41 @@ static struct l_queue *pending_queue;
 
 static const char *storage_dir;
 
+struct mesh_sar_transmitter {
+	uint8_t	seg_int_step;
+	uint8_t	unicast_rtx_cnt;
+	uint8_t	unicast_rtx_without_prog_cnt;
+	uint8_t	unicast_rtx_int_step;
+	uint8_t	unicast_rtx_int_inc;
+	uint8_t	multicast_rtx_cnt;
+	uint8_t	multicast_rtx_int_step;
+};
+
+struct mesh_sar_receiver {
+	uint8_t	seg_threshold;
+	uint8_t	ack_delay_inc;
+	uint8_t	ack_rtx_cnt;
+	uint8_t	discard_timeout;
+	uint8_t	receiver_seg_int_step;
+};
+
+static struct mesh_sar_transmitter mesh_sar_txr = {
+	.seg_int_step = 5,
+	.unicast_rtx_cnt = 2,
+	.unicast_rtx_without_prog_cnt = 2,
+	.unicast_rtx_int_step = 7,
+	.unicast_rtx_int_inc = 1,
+	.multicast_rtx_cnt = 2,
+	.multicast_rtx_int_step = 8
+};
+static struct mesh_sar_receiver mesh_sar_rxr = {
+	.seg_threshold = 3,
+	.ack_delay_inc = 1,
+	.ack_rtx_cnt = 0,
+	.discard_timeout = 1,
+	.receiver_seg_int_step = 5
+};
+
 /* Forward static decalrations */
 static void def_attach(struct l_timeout *timeout, void *user_data);
 static void def_leave(struct l_timeout *timeout, void *user_data);
@@ -203,15 +238,20 @@ uint8_t mesh_get_friend_queue_size(void)
 	return mesh.friend_queue_sz;
 }
 
-static void parse_settings(const char *mesh_conf_fname)
+void mesh_get_sar_transmitter(void *sar_txr)
 {
-	struct l_settings *settings;
+	memcpy(sar_txr, &mesh_sar_txr, sizeof(struct mesh_sar_transmitter));
+}
+
+void mesh_get_sar_receiver(void *sar_rxr)
+{
+	memcpy(sar_rxr, &mesh_sar_rxr, sizeof(struct mesh_sar_receiver));
+}
+
+static void parse_mesh_general(const struct l_settings *settings)
+{
 	char *str;
 	uint32_t value;
-
-	settings = l_settings_new();
-	if (!l_settings_load_from_file(settings, mesh_conf_fname))
-		goto done;
 
 	str = l_settings_get_string(settings, "General", "Beacon");
 	if (str) {
@@ -244,6 +284,79 @@ static void parse_settings(const char *mesh_conf_fname)
 
 	if (l_settings_get_uint(settings, "General", "ProvTimeout", &value))
 		mesh.prov_timeout = value;
+
+}
+
+static void parse_mesh_sar(const struct l_settings *settings)
+{
+	uint32_t value;
+
+	if (l_settings_get_uint(settings, "SARTransmitter", "SegIntervalStep",
+							&value) && value <= 15)
+		mesh_sar_txr.seg_int_step = value;
+
+	if (l_settings_get_uint(settings, "SARTransmitter",
+							"UnicastRetransCount",
+							&value) && value <= 15)
+		mesh_sar_txr.unicast_rtx_cnt = value;
+
+	if (l_settings_get_uint(settings, "SARTransmitter",
+					"UnicastRetransWithoutProgressCount",
+							&value) && value <= 15)
+		mesh_sar_txr.unicast_rtx_without_prog_cnt = value;
+
+	if (l_settings_get_uint(settings, "SARTransmitter",
+						"UnicastRetransIntervalStep",
+							&value) && value <= 15)
+		mesh_sar_txr.unicast_rtx_int_step = value;
+
+	if (l_settings_get_uint(settings, "SARTransmitter",
+					"UnicastRetransIntervalIncrement",
+							&value) && value <= 15)
+		mesh_sar_txr.unicast_rtx_int_inc = value;
+
+	if (l_settings_get_uint(settings, "SARTransmitter",
+							"MulticastRetransCount",
+							&value) && value <= 15)
+		mesh_sar_txr.multicast_rtx_cnt = value;
+
+	if (l_settings_get_uint(settings, "SARTransmitter",
+						"MulticastRetransIntervalStep",
+							&value) && value <= 15)
+		mesh_sar_txr.multicast_rtx_int_step = value;
+
+	if (l_settings_get_uint(settings, "SARReceiver", "SegmentsThreshold",
+							&value) && value <= 31)
+		mesh_sar_rxr.seg_threshold = value;
+
+	if (l_settings_get_uint(settings, "SARReceiver", "AckDelayIncrement",
+							&value) && value <= 7)
+		mesh_sar_rxr.ack_delay_inc = value;
+
+	if (l_settings_get_uint(settings, "SARReceiver", "AckRetransCount",
+							&value) && value <= 3)
+		mesh_sar_rxr.ack_rtx_cnt = value;
+
+	if (l_settings_get_uint(settings, "SARReceiver", "DiscardTimeout",
+							&value) && value <= 15)
+		mesh_sar_rxr.discard_timeout = value;
+
+	if (l_settings_get_uint(settings, "SARReceiver",
+						"ReceiverSegIntervalStep",
+							&value) && value <= 15)
+		mesh_sar_rxr.receiver_seg_int_step = value;
+}
+
+static void parse_settings(const char *mesh_conf_fname)
+{
+	struct l_settings *settings;
+
+	settings = l_settings_new();
+	if (!l_settings_load_from_file(settings, mesh_conf_fname))
+		goto done;
+
+	parse_mesh_general(settings);
+	parse_mesh_sar(settings);
 
 done:
 	l_settings_free(settings);

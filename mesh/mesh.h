@@ -43,3 +43,5 @@ bool mesh_relay_supported(void);
 bool mesh_friendship_supported(void);
 uint16_t mesh_get_crpl(void);
 uint8_t mesh_get_friend_queue_size(void);
+void mesh_get_sar_transmitter(void *sar_txr);
+void mesh_get_sar_receiver(void *sar_rxr);
