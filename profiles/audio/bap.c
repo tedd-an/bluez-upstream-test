@@ -994,6 +994,30 @@ static DBusMessage *set_configuration(DBusConnection *conn, DBusMessage *msg,
 	return NULL;
 }
 
+static int get_bis_from_stream(struct bt_bap_stream *stream)
+{
+	char *path;
+	int bis_index = 1;
+	int s_err;
+	const char *strbis = NULL;
+
+	path = bt_bap_stream_get_user_data(stream);
+
+	strbis = strstr(path, "/bis");
+	if (strbis == NULL) {
+		DBG("bis index cannot be found");
+		return 0;
+	}
+
+	s_err = sscanf(strbis, "/bis%d", &bis_index);
+	if (s_err == -1) {
+		DBG("sscanf error");
+		return 0;
+	}
+
+	return bis_index;
+}
+
 static void iso_bcast_confirm_cb(GIOChannel *io, GError *err, void *user_data)
 {
 	struct bap_bcast_pa_req *req = user_data;
@@ -3055,10 +3079,7 @@ static void iso_do_big_sync(GIOChannel *io, void *user_data)
 	struct bap_data *data = btd_service_get_user_data(btd_service);
 	struct sockaddr_iso_bc iso_bc_addr;
 	struct bt_iso_qos qos;
-	char *path;
-	int bis_index = 1;
-	int s_err;
-	const char *strbis = NULL;
+	int bis_index = get_bis_from_stream(setup->stream);
 
 	DBG("PA Sync done");
 
@@ -3078,19 +3099,6 @@ static void iso_do_big_sync(GIOChannel *io, void *user_data)
 	 * transports in the same BIG to be acquired or tell when to do the
 	 * bt_io_bcast_accept by other means
 	 */
-	path = bt_bap_stream_get_user_data(setup->stream);
-
-	strbis = strstr(path, "/bis");
-	if (strbis == NULL) {
-		DBG("bis index cannot be found");
-		return;
-	}
-
-	s_err = sscanf(strbis, "/bis%d", &bis_index);
-	if (s_err == -1) {
-		DBG("sscanf error");
-		return;
-	}
 
 	DBG("Do BIG Sync with BIS %d", bis_index);
 
