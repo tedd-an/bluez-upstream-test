@@ -1031,20 +1031,21 @@ static void iso_bcast_confirm_cb(GIOChannel *io, GError *err, void *user_data)
 
 	DBG("BIG Sync completed");
 
-	if (setup->io) {
-		g_io_channel_unref(setup->io);
-		g_io_channel_shutdown(setup->io, TRUE, NULL);
-		setup->io = NULL;
+	req->iso_bc_addr.bc_num_bis--;
+	if (req->iso_bc_addr.bc_num_bis == 0) {
+		if (setup->io) {
+			g_io_channel_unref(setup->io);
+			g_io_channel_shutdown(setup->io, TRUE, NULL);
+			setup->io = NULL;
+		}
+		/* This device is no longer needed */
+		btd_service_connecting_complete(bap_data->service, 0);
+		queue_remove(bap_data->adapter->bcast_pa_requests, req);
+		queue_destroy(req->setups, NULL);
+		free(req);
 	}
 
-	/* This device is no longer needed */
-	btd_service_connecting_complete(bap_data->service, 0);
-
 	fd = g_io_channel_unix_get_fd(io);
-
-	queue_remove(bap_data->adapter->bcast_pa_requests, req);
-	queue_destroy(req->setups, NULL);
-	free(req);
 
 	if (bt_bap_stream_set_io(setup->stream, fd)) {
 		bt_bap_stream_start(setup->stream, NULL, NULL);
@@ -2289,38 +2290,72 @@ static gboolean pa_idle_timer(gpointer user_data)
 	return TRUE;
 }
 
+static void find_pending_req(void *data, void *user_data)
+{
+	struct bap_setup *setup = data;
+	bool *pending = user_data;
+
+	if (bt_bap_stream_get_state(setup->stream) ==
+		BT_BAP_STREAM_STATE_PENDING ||
+		bt_bap_stream_get_state(setup->stream) ==
+		BT_BAP_STREAM_STATE_RELEASING)
+		*pending = TRUE;
+}
+
+static void count_pending(void *data, void *user_data)
+{
+	struct bap_setup *setup = data;
+	struct bap_bcast_pa_req *req = user_data;
+
+	if (bt_bap_stream_get_state(setup->stream) ==
+				BT_BAP_STREAM_STATE_ENABLING) {
+		req->iso_bc_addr.bc_bis[req->iso_bc_addr.bc_num_bis] =
+				get_bis_from_stream(setup->stream);
+		req->iso_bc_addr.bc_num_bis++;
+		DBG("pushing setup for BIS %d",
+				get_bis_from_stream(setup->stream));
+		queue_push_tail(req->setups, setup);
+	}
+}
+
 static void setup_accept_io_broadcast(struct bap_data *data,
 					struct bap_setup *setup)
 {
-	struct bap_bcast_pa_req *req = new0(struct bap_bcast_pa_req, 1);
+	struct bap_bcast_pa_req *req;
+	bool pending = FALSE;
 	struct bap_adapter *adapter = data->adapter;
 
-	req->setups = queue_new();
-	req->iso_bc_addr.bc_bdaddr_type =
-			btd_device_get_bdaddr_type(data->device);
-	memcpy(&req->iso_bc_addr.bc_bdaddr,
-			device_get_address(data->device), sizeof(bdaddr_t));
-	req->iso_bc_addr.bc_bis[req->iso_bc_addr.bc_num_bis] =
-			get_bis_from_stream(setup->stream);
-	req->iso_bc_addr.bc_num_bis++;
-	queue_push_tail(req->setups, setup);
-
-	/* Timer could be stopped if all other requests were treated.
-	 * Check the state of the timer and turn it on so that this request
-	 * can also be treated.
+	/* Search for requests to sync to the same BIG.
+	 * If any, merge the current request with it.
 	 */
-	if (adapter->pa_timer_id == 0)
-		adapter->pa_timer_id = g_timeout_add_seconds(PA_IDLE_TIMEOUT,
+	queue_foreach(data->bcast_snks, find_pending_req, &pending);
+	if (!pending) {
+		req = new0(struct bap_bcast_pa_req, 1);
+		req->iso_bc_addr.bc_bdaddr_type =
+			btd_device_get_bdaddr_type(data->device);
+		memcpy(&req->iso_bc_addr.bc_bdaddr,
+			device_get_address(data->device), sizeof(bdaddr_t));
+		req->setups = queue_new();
+		queue_foreach(data->bcast_snks, count_pending, req);
+
+		/* Timer could be stopped if all other requests were treated.
+		 * Check the state of the timer and turn it on so that this
+		 * request can also be treated.
+		 */
+		if (adapter->pa_timer_id == 0)
+			adapter->pa_timer_id = g_timeout_add_seconds(
+								PA_IDLE_TIMEOUT,
 								pa_idle_timer,
 								adapter);
 
-	/* Add this request to the PA queue.
-	 * We don't need to check the queue here, as we cannot have
-	 * BAP_PA_BIG_SYNC_REQ before a short PA (BAP_PA_SHORT_REQ)
-	 */
-	req->type = BAP_PA_BIG_SYNC_REQ;
-	req->in_progress = FALSE;
-	queue_push_tail(adapter->bcast_pa_requests, req);
+		/* Add this request to the PA queue.
+		 * We don't need to check the queue here, as we cannot have
+		 * BAP_PA_BIG_SYNC_REQ before a short PA (BAP_PA_SHORT_REQ)
+		 */
+		req->type = BAP_PA_BIG_SYNC_REQ;
+		req->in_progress = FALSE;
+		queue_push_tail(adapter->bcast_pa_requests, req);
+	}
 }
 
 static void setup_create_ucast_io(struct bap_data *data,
