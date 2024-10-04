@@ -136,6 +136,7 @@ struct bap_bcast_pa_req {
 	bool in_progress;
 	struct btd_service *service;
 	struct queue *setups;
+	struct sockaddr_iso_bc iso_bc_addr;
 	unsigned int io_id;	/* io_id for BIG Info watch */
 };
 
@@ -2295,6 +2296,13 @@ static void setup_accept_io_broadcast(struct bap_data *data,
 	struct bap_adapter *adapter = data->adapter;
 
 	req->setups = queue_new();
+	req->iso_bc_addr.bc_bdaddr_type =
+			btd_device_get_bdaddr_type(data->device);
+	memcpy(&req->iso_bc_addr.bc_bdaddr,
+			device_get_address(data->device), sizeof(bdaddr_t));
+	req->iso_bc_addr.bc_bis[req->iso_bc_addr.bc_num_bis] =
+			get_bis_from_stream(setup->stream);
+	req->iso_bc_addr.bc_num_bis++;
 	queue_push_tail(req->setups, setup);
 
 	/* Timer could be stopped if all other requests were treated.
@@ -3087,12 +3095,8 @@ static void iso_do_big_sync(GIOChannel *io, void *user_data)
 	struct bap_bcast_pa_req *req = user_data;
 	/* Only the last setup in the queue will hold the listen io */
 	struct bap_setup *setup = queue_peek_tail(req->setups);
-	struct bt_bap *bt_bap = bt_bap_stream_get_session(setup->stream);
-	struct btd_service *btd_service = bt_bap_get_user_data(bt_bap);
-	struct bap_data *data = btd_service_get_user_data(btd_service);
-	struct sockaddr_iso_bc iso_bc_addr;
 	struct bt_iso_qos qos;
-	int bis_index = get_bis_from_stream(setup->stream);
+	int i;
 
 	DBG("PA Sync done");
 
@@ -3103,23 +3107,16 @@ static void iso_do_big_sync(GIOChannel *io, void *user_data)
 		g_io_channel_ref(setup->io);
 	}
 
-	/* TODO
-	 * We can only synchronize with a single BIS to a BIG.
-	 * In order to have multiple BISes targeting this BIG we need to have
-	 * all the BISes before doing bt_io_bcast_accept.
-	 * This request comes from a transport "Acquire" call.
-	 * For multiple BISes in the same BIG we need to either wait for all
-	 * transports in the same BIG to be acquired or tell when to do the
-	 * bt_io_bcast_accept by other means
+	/* In order to synchronize to multiple BISes from this BIG their
+	 * index will be stored in the bc_bis field of iso_bc_addr. This
+	 * way,the kernel will receive all the required BISes via the
+	 * bt_io_bcast_accept call and will issue the LE_BIG_Create_Sync
+	 * with all the required BISes.
 	 */
 
-	DBG("Do BIG Sync with BIS %d", bis_index);
-
-	iso_bc_addr.bc_bdaddr_type = btd_device_get_bdaddr_type(data->device);
-	memcpy(&iso_bc_addr.bc_bdaddr, device_get_address(data->device),
-			sizeof(bdaddr_t));
-	iso_bc_addr.bc_bis[0] = bis_index;
-	iso_bc_addr.bc_num_bis = 1;
+	DBG("Do BIG Sync with BIS:");
+	for (i = 0; i < req->iso_bc_addr.bc_num_bis; i++)
+		DBG("%d", req->iso_bc_addr.bc_bis[i]);
 
 	/* Refresh qos stored in setup */
 	queue_foreach(req->setups, setup_refresh_qos, NULL);
@@ -3154,8 +3151,8 @@ static void iso_do_big_sync(GIOChannel *io, void *user_data)
 			iso_bcast_confirm_cb,
 			req, NULL, &err,
 			BT_IO_OPT_ISO_BC_NUM_BIS,
-			iso_bc_addr.bc_num_bis, BT_IO_OPT_ISO_BC_BIS,
-			iso_bc_addr.bc_bis, BT_IO_OPT_INVALID)) {
+			req->iso_bc_addr.bc_num_bis, BT_IO_OPT_ISO_BC_BIS,
+			req->iso_bc_addr.bc_bis, BT_IO_OPT_INVALID)) {
 		error("bt_io_bcast_accept: %s", err->message);
 		g_error_free(err);
 	}
