@@ -26,13 +26,32 @@ struct mesh_node;
 #define KEY_CACHE_SIZE	64
 #define FRND_CACHE_MAX	32
 
-#define MAX_UNSEG_LEN	15 /* msg_len == 11 + sizeof(MIC) */
-#define MAX_SEG_LEN	12 /* UnSeg length - 3 octets overhead */
-#define SEG_MAX(seg, len) ((!seg && len <= MAX_UNSEG_LEN) ? 0 : \
-						(((len) - 1) / MAX_SEG_LEN))
+#define MAX_CTL_UNSEG_LEN	11 /* msg_len == 7 + sizeof(MIC) */
+#define MAX_CTL_SEG_LEN	8 /* UnSeg length - 3 octets overhead */
+#define CTL_SEG_MAX(seg, len) ((!(seg) && (len) <= MAX_CTL_UNSEG_LEN) ? 0 : \
+						(((len) - 1) / MAX_CTL_SEG_LEN))
 
-#define SEG_OFF(seg)	((seg) * MAX_SEG_LEN)
-#define MAX_SEG_TO_LEN(seg)	((seg) ? SEG_OFF((seg) + 1) : MAX_UNSEG_LEN)
+#define MAX_ACC_UNSEG_LEN	15 /* msg_len == 11 + sizeof(MIC) */
+#define MAX_ACC_SEG_LEN	12 /* UnSeg length - 3 octets overhead */
+#define ACC_SEG_MAX(seg, len) ((!(seg) && (len) <= MAX_ACC_UNSEG_LEN) ? 0 : \
+						(((len) - 1) / MAX_ACC_SEG_LEN))
+
+#define MAX_UNSEG_LEN(ctl)	((ctl) ? MAX_CTL_UNSEG_LEN : MAX_ACC_UNSEG_LEN)
+#define MAX_SEG_LEN(ctl)	((ctl) ? MAX_CTL_SEG_LEN : MAX_ACC_SEG_LEN)
+#define SEG_MAX(ctl, seg, len)	((ctl) ? CTL_SEG_MAX((seg), (len)) : \
+						ACC_SEG_MAX((seg), (len)))
+
+#define CTL_SEG_OFF(seg)	((seg) * MAX_CTL_SEG_LEN)
+#define MAX_CTL_SEG_TO_LEN(seg)	((seg) ? CTL_SEG_OFF((seg) + 1) : \
+							MAX_CTL_UNSEG_LEN)
+
+#define ACC_SEG_OFF(seg)	((seg) * MAX_ACC_SEG_LEN)
+#define MAX_ACC_SEG_TO_LEN(seg)	((seg) ? ACC_SEG_OFF((seg) + 1) : \
+							MAX_ACC_UNSEG_LEN)
+
+#define SEG_OFF(ctl, seg)	((ctl) ? CTL_SEG_OFF(seg) : ACC_SEG_OFF(seg))
+#define MAX_SEG_TO_LEN(ctl, seg)	((ctl) ? MAX_CTL_SEG_TO_LEN(seg) : \
+							MAX_ACC_SEG_TO_LEN(seg))
 
 #define SEGMENTED	0x80
 #define UNSEGMENTED	0x00

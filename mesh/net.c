@@ -179,12 +179,20 @@ struct mesh_sar {
 	uint16_t src;
 	uint16_t remote;
 	uint16_t len;
-	bool szmic;
 	bool segmented;
+	bool ctl;
 	bool frnd;
 	bool frnd_cred;
 	uint8_t ttl;
-	uint8_t key_aid;
+	union {
+		struct {
+			uint8_t key_aid;
+			bool szmic;
+		}; /* Access message */
+		struct {
+			uint8_t opcode;
+		}; /* Transport Control message */
+	};
 	uint8_t buf[4]; /* Large enough for ACK-Flags and MIC */
 };
 
@@ -1964,7 +1972,7 @@ static bool msg_rxed(struct mesh_net *net, bool frnd, uint32_t iv_index,
 			hdr |= (uint32_t) 0x01 << SEG_HDR_SHIFT;
 			hdr |= szmic << SZMIC_HDR_SHIFT;
 			hdr |= (seqZero & SEQ_ZERO_MASK) << SEQ_ZERO_HDR_SHIFT;
-			hdr |= SEG_MAX(true, size) << SEGN_HDR_SHIFT;
+			hdr |= SEG_MAX(false, true, size) << SEGN_HDR_SHIFT;
 		}
 
 		if (friend_packet_queue(net, iv_index, false, frnd_ttl,
@@ -2141,11 +2149,18 @@ static void friend_seg_rxed(struct mesh_net *net,
 	frnd_msg->cnt_in++;
 }
 
+static bool ctl_rxed(struct mesh_net *net, uint32_t net_key_id,
+						uint32_t iv_index, uint8_t ttl,
+						uint32_t seq, uint16_t src,
+						uint16_t dst, uint8_t opcode,
+						int8_t rssi, const uint8_t *pkt,
+						uint8_t len);
+
 static bool seg_rxed(struct mesh_net *net, bool frnd, uint32_t iv_index,
 					uint8_t ttl, uint32_t seq,
 					uint16_t net_idx,
-					uint16_t src, uint16_t dst,
-					uint8_t key_aid,
+					uint16_t src, uint16_t dst, bool ctl,
+					uint8_t opcode, uint8_t key_aid,
 					bool szmic, uint16_t seqZero,
 					uint8_t segO, uint8_t segN,
 					const uint8_t *data, uint8_t size)
@@ -2194,9 +2209,14 @@ static bool seg_rxed(struct mesh_net *net, bool frnd, uint32_t iv_index,
 		l_debug("RXed (old: %04x %06x size:%d) %d of %d",
 					seqZero, seq, size, segO, segN);
 		/* Sanity Check--> certain things must match */
-		if (SEG_MAX(true, sar->len) != segN ||
-				sar->key_aid != key_aid)
+		if (SEG_MAX(ctl, true, sar->len) != segN)
 			return false;
+
+		if (!ctl && sar->key_aid != key_aid) {
+			return false;
+		} else if (ctl && sar->opcode != opcode) {
+			return false;
+		}
 
 		if (sar->flags == expected) {
 			/*
@@ -2217,7 +2237,7 @@ static bool seg_rxed(struct mesh_net *net, bool frnd, uint32_t iv_index,
 			return true;
 		}
 	} else {
-		uint16_t len = MAX_SEG_TO_LEN(segN);
+		uint16_t len = MAX_SEG_TO_LEN(ctl, segN);
 
 		l_debug("RXed (new: %04x %06x size: %d len: %d) %d of %d",
 				seqZero, seq, size, len, segO, segN);
@@ -2228,9 +2248,13 @@ static bool seg_rxed(struct mesh_net *net, bool frnd, uint32_t iv_index,
 		sar->src = dst;
 		sar->remote = src;
 		sar->seqZero = seqZero;
-		sar->key_aid = key_aid;
 		sar->len = len;
 		sar->net_idx = net_idx;
+		if (ctl) {
+			sar->opcode = opcode;
+		} else {
+			sar->key_aid = key_aid;
+		}
 
 		sar_in = mesh_sar_rx_new();
 		sar_in->sar = sar;
@@ -2270,14 +2294,14 @@ static bool seg_rxed(struct mesh_net *net, bool frnd, uint32_t iv_index,
 	l_timeout_remove(sar_in->msg_timeout);
 	sar_in->msg_timeout = NULL;
 
-	seg_off = segO * MAX_SEG_LEN;
+	seg_off = segO * MAX_SEG_LEN(ctl);
 	memcpy(sar->buf + seg_off, data, size);
 	sar->flags |= this_seg_flag;
 	sar->ttl = ttl;
 
 	/* Msg length only definitive on last segment */
 	if (segO == segN)
-		sar->len = segN * MAX_SEG_LEN + size;
+		sar->len = segN * MAX_SEG_LEN(ctl) + size;
 
 	/* Send ACK only if DST is unicast address. */
 	if(IS_UNICAST(dst)) {
@@ -2290,9 +2314,21 @@ static bool seg_rxed(struct mesh_net *net, bool frnd, uint32_t iv_index,
 		/* Got it all */
 		send_net_ack(net, sar, expected);
 
-		msg_rxed(net, frnd, iv_index, ttl, seq, net_idx,
-				sar->remote, dst, key_aid, true, szmic,
-				sar->seqZero, sar->buf, sar->len);
+		if (!ctl) {
+			msg_rxed(net, frnd, iv_index, ttl, seq, net_idx,
+					sar->remote, dst, key_aid, true, szmic,
+					sar->seqZero, sar->buf, sar->len);
+		} else {
+			struct mesh_subnet *subnet = l_queue_find(net->subnets,
+							match_key_index,
+							L_UINT_TO_PTR(net_idx));
+			if (!subnet)
+				return false;
+
+			ctl_rxed(net, subnet->net_key_tx, iv_index, ttl,
+					seq, sar->remote, dst,
+					opcode, 0, sar->buf, sar->len);
+		}
 
 		/*
 		 * Delay SAR removal to be able to acknowledge a transaction
@@ -2312,7 +2348,7 @@ static bool seg_rxed(struct mesh_net *net, bool frnd, uint32_t iv_index,
 	return false;
 }
 
-static bool ctl_received(struct mesh_net *net, uint32_t net_key_id,
+static bool ctl_rxed(struct mesh_net *net, uint32_t net_key_id,
 						uint32_t iv_index, uint8_t ttl,
 						uint32_t seq,
 						uint16_t src, uint16_t dst,
@@ -2324,7 +2360,11 @@ static bool ctl_received(struct mesh_net *net, uint32_t net_key_id,
 	uint8_t n = 0;
 	uint16_t net_idx;
 
-	if (ttl > 1) {
+	/* TODO: If length is greater than 11, it must be segmented, so it must
+	 * be able to handle Segmented Control messages when acting as a friend
+	 * node.
+	 */
+	if (ttl > 1 && len <= 11) {
 		uint32_t hdr = opcode << OPCODE_HDR_SHIFT;
 		uint8_t frnd_ttl = ttl - 1;
 
@@ -2625,8 +2665,15 @@ static enum _relay_advice packet_received(void *user_data,
 					ack_rxed(net, net_src, net_dst,
 							net_seqZero,
 							l_get_be32(msg + 3));
+			} else if (net_segmented) {
+				seg_rxed(net, false, iv_index, net_ttl,
+						net_seq, net_idx, net_src,
+						net_dst, net_ctl, net_opcode,
+						key_aid, net_szmic, net_seqZero,
+						net_segO, net_segN,
+						msg, app_msg_len);
 			} else {
-				ctl_received(net, net_key_id, iv_index, net_ttl,
+				ctl_rxed(net, net_key_id, iv_index, net_ttl,
 						net_seq, net_src, net_dst,
 						net_opcode, rssi, msg,
 								app_msg_len);
@@ -2651,8 +2698,9 @@ static enum _relay_advice packet_received(void *user_data,
 			} else {
 				seg_rxed(net, false, iv_index, net_ttl,
 						net_seq, net_idx, net_src,
-						net_dst, key_aid, net_szmic,
-						net_seqZero, net_segO, net_segN,
+						net_dst, net_ctl, net_opcode,
+						key_aid, net_szmic, net_seqZero,
+						net_segO, net_segN,
 						msg, app_msg_len);
 			}
 
@@ -3371,16 +3419,16 @@ static bool send_seg(struct mesh_net *net, uint8_t cnt, uint16_t interval,
 	uint8_t gatt_data[30];
 	uint8_t *packet = gatt_data;
 	uint8_t packet_len;
-	uint8_t segN = SEG_MAX(msg->segmented, msg->len);
-	uint16_t seg_off = SEG_OFF(segO);
+	uint8_t segN = SEG_MAX(msg->ctl, msg->segmented, msg->len);
+	uint16_t seg_off = SEG_OFF(msg->ctl, segO);
 	uint32_t seq_num;
 
 	if (msg->segmented) {
 		/* Send each segment on unique seq_num */
 		seq_num = mesh_net_next_seq_num(net);
 
-		if (msg->len - seg_off > SEG_OFF(1))
-			seg_len = SEG_OFF(1);
+		if (msg->len - seg_off > SEG_OFF(msg->ctl, 1))
+			seg_len = SEG_OFF(msg->ctl, 1);
 		else
 			seg_len = msg->len - seg_off;
 	} else {
@@ -3396,12 +3444,12 @@ static bool send_seg(struct mesh_net *net, uint8_t cnt, uint16_t interval,
 	l_debug("segN %d segment %d seg_off %d", segN, segO, seg_off);
 
 	/* TODO: Are we RXing on an LPN's behalf? Then set RLY bit */
-	if (!mesh_crypto_packet_build(false, msg->ttl, seq_num, msg->src,
-					msg->remote, 0, msg->segmented,
-					msg->key_aid, msg->szmic, false,
-					msg->seqZero, segO, segN,
-					msg->buf + seg_off, seg_len,
-					packet + 1, &packet_len)) {
+	if (!mesh_crypto_packet_build(msg->ctl, msg->ttl, seq_num, msg->src,
+					msg->remote, msg->opcode,
+					msg->segmented, msg->key_aid,
+					msg->szmic, false, msg->seqZero,
+					segO, segN, msg->buf + seg_off,
+					seg_len, packet + 1, &packet_len)) {
 		l_error("Failed to build packet");
 		return false;
 	}
@@ -3422,6 +3470,61 @@ static bool send_seg(struct mesh_net *net, uint8_t cnt, uint16_t interval,
 	send_msg_pkt(net, cnt, interval, packet, packet_len + 1);
 
 	return true;
+}
+
+static bool mesh_net_send(struct mesh_net *net, struct mesh_sar *payload,
+								uint8_t segN)
+{
+	bool result = false;
+
+	if (payload->segmented) {
+		struct mesh_sar_tx *drop_sar_tx;
+		payload->flags = 0xffffffff >> (31 - segN);
+		payload->seqZero = payload->seqAuth & SEQ_ZERO_MASK;
+
+		/* Single thread SAR messages to same Unicast DST */
+		drop_sar_tx = l_queue_find(net->sar_out, match_sar_tx_remote,
+						L_UINT_TO_PTR(payload->remote));
+		if (drop_sar_tx) {
+			/* Cancel incomplete prior SAR on the same dst */
+			l_debug("Cancel incompleted SAR: SeqZero %4.4x",
+					drop_sar_tx->sar->seqZero);
+			l_queue_remove(net->sar_out, drop_sar_tx);
+			mesh_sar_tx_free(drop_sar_tx);
+		}
+	}
+
+	result = send_seg(net, net->tx_cnt, net->tx_interval, payload, 0);
+
+	/*
+	 * Set the timeout to send the next seg or retransmit if the payload is
+	 * segmented. Flush if it is not segmented or if the transmission
+	 * failed.
+	 */
+	if (result && payload->segmented) {
+		struct mesh_sar_tx *sar_tx = mesh_sar_tx_new();
+		bool is_unicast = IS_UNICAST(payload->remote);
+		sar_tx->ack_received = false;
+		sar_tx->int_ms = sar_tx_seg_int_ms(net->sar_txr);
+		sar_tx->attempt_left = sar_tx_retrans_cnt(net->sar_txr,
+							is_unicast, false);
+		sar_tx->attempt_left_no_progress = sar_tx_retrans_cnt(
+							net->sar_txr,
+							is_unicast, true);
+		sar_tx->retrans_ms = sar_tx_retrans_timeout_ms(net->sar_txr,
+								is_unicast,
+								payload->ttl);
+		sar_tx->sar = payload;
+		l_queue_push_head(net->sar_out, sar_tx);
+		sar_tx->seg_timeout = l_timeout_create_ms(sar_tx->int_ms,
+						send_next_seg_to, net, NULL);
+		sar_tx->segO = 1;	/* The 0th seg is already sent. */
+		sar_tx->segN = segN;
+	} else {
+		mesh_sar_free(payload);
+	}
+
+	return result;
 }
 
 void mesh_net_send_seg(struct mesh_net *net, uint32_t net_key_id,
@@ -3497,7 +3600,7 @@ bool mesh_net_app_send(struct mesh_net *net, bool frnd_cred, uint16_t src,
 
 	/* Long and sizmic messages *require* segmenting */
 	segmented |= szmic;
-	seg_max = SEG_MAX(segmented, msg_len);
+	seg_max = SEG_MAX(false, segmented, msg_len);
 	segmented |= !!(seg_max);
 
 	/* First enqueue to any Friends and internal models */
@@ -3524,6 +3627,7 @@ bool mesh_net_app_send(struct mesh_net *net, bool frnd_cred, uint16_t src,
 	payload = mesh_sar_new(msg_len);
 	memcpy(payload->buf, msg, msg_len);
 	payload->len = msg_len;
+	payload->ctl = false;
 	payload->src = src;
 	payload->remote = dst;
 	payload->ttl = ttl;
@@ -3535,52 +3639,7 @@ bool mesh_net_app_send(struct mesh_net *net, bool frnd_cred, uint16_t src,
 	payload->seqAuth = seq;
 	payload->segmented = segmented;
 
-	if (segmented) {
-		struct mesh_sar_tx *drop_sar_tx;
-		payload->flags = 0xffffffff >> (31 - seg_max);
-		payload->seqZero = seq & SEQ_ZERO_MASK;
-
-		/* Single thread SAR messages to same Unicast DST */
-		drop_sar_tx = l_queue_find(net->sar_out, match_sar_tx_remote,
-							L_UINT_TO_PTR(dst));
-		if (drop_sar_tx) {
-			/* Cancel incomplete prior SAR on the same dst */
-			l_debug("Cancel incompleted SAR: SeqZero %4.4x",
-					drop_sar_tx->sar->seqZero);
-			l_queue_remove(net->sar_out, drop_sar_tx);
-			mesh_sar_tx_free(drop_sar_tx);
-		}
-	}
-
-	result = send_seg(net, cnt, interval, payload, 0);
-
-	/*
-	 * Set the timeout to send the next seg or retransmit if the payload is
-	 * segmented. Flush if it is not segmented or if the transmission
-	 * failed.
-	 */
-	if (result && segmented) {
-		struct mesh_sar_tx *sar_tx = mesh_sar_tx_new();
-		bool is_unicast = IS_UNICAST(dst);
-		sar_tx->ack_received = false;
-		sar_tx->int_ms = sar_tx_seg_int_ms(net->sar_txr);
-		sar_tx->attempt_left = sar_tx_retrans_cnt(net->sar_txr,
-							is_unicast, false);
-		sar_tx->attempt_left_no_progress = sar_tx_retrans_cnt(
-							net->sar_txr,
-							is_unicast, true);
-		sar_tx->retrans_ms = sar_tx_retrans_timeout_ms(net->sar_txr,
-								is_unicast,
-								ttl);
-		sar_tx->sar = payload;
-		l_queue_push_head(net->sar_out, sar_tx);
-		sar_tx->seg_timeout = l_timeout_create_ms(sar_tx->int_ms,
-						send_next_seg_to, net, NULL);
-		sar_tx->segO = 1;	/* The 0th seg is already sent. */
-		sar_tx->segN = seg_max;
-	} else {
-		mesh_sar_free(payload);
-	}
+	result = mesh_net_send(net, payload, seg_max);
 
 	return result;
 }
@@ -3639,10 +3698,17 @@ void mesh_net_transport_send(struct mesh_net *net, uint32_t net_key_id,
 				uint16_t dst, const uint8_t *msg,
 				uint16_t msg_len)
 {
-	uint32_t use_seq = seq;
-	uint8_t pkt_len;
-	uint8_t pkt[30];
+	struct mesh_sar *payload;
+	uint8_t opcode, seg_max;
+	bool segmented = false;
 	bool result = false;
+
+	/*
+	 * Check maximum message length:
+	 *	Parameter length(8) * Maximum # of segments(32) + Header size(1)
+	 */
+	if (!net || msg_len > 257)
+		return;
 
 	if (!net->src_addr)
 		return;
@@ -3656,9 +3722,18 @@ void mesh_net_transport_send(struct mesh_net *net, uint32_t net_key_id,
 	if (ttl == DEFAULT_TTL)
 		ttl = net->default_ttl;
 
-	/* Range check the Opcode and msg length*/
-	if (*msg & 0xc0 || (9 + msg_len + 8 > 29))
+	/*
+	 * Mesh Protocol v1.1: An unassigned address shall not be used in the
+	 * SRC field or the DST field of a Network PDU.
+	 */
+	if (IS_UNASSIGNED(src) || IS_UNASSIGNED(dst))
 		return;
+
+	segmented |= msg[0] & SEGMENTED;
+	seg_max = SEG_MAX(true, segmented, msg_len - 1);
+	segmented |= !!(seg_max);
+
+	opcode = msg[0] & OPCODE_MASK;
 
 	/*
 	 * MshPRFv1.0.1 section 3.4.5.2, Interface output filter:
@@ -3680,36 +3755,38 @@ void mesh_net_transport_send(struct mesh_net *net, uint32_t net_key_id,
 
 	/* Deliver to Local entities if applicable */
 	if (!(dst & 0x8000) && src >= net->src_addr && src <= net->last_addr)
-		result = ctl_received(net, net_key_id, iv_index, ttl,
+		result = ctl_rxed(net, net_key_id, iv_index, ttl,
 					mesh_net_next_seq_num(net), src, dst,
 					msg[0], 0, msg + 1, msg_len - 1);
 
 	if (!net_key_id) {
-		struct mesh_subnet *subnet = l_queue_find(net->subnets,
-				match_key_index, L_UINT_TO_PTR(net_idx));
-		if (!subnet)
-			return;
-
-		net_key_id = subnet->net_key_tx;
-		use_seq = mesh_net_next_seq_num(net);
+		seq = mesh_net_next_seq_num(net);
 
 		if (result || (dst >= net->src_addr && dst <= net->last_addr))
 			return;
+	} else {
+		struct mesh_subnet *subnet = l_queue_find(net->subnets,
+				match_key_id, L_UINT_TO_PTR(net_key_id));
+		if (!subnet)
+			return;
+
+		net_idx = subnet->idx;
 	}
 
-	if (!mesh_crypto_packet_build(true, ttl, use_seq, src, dst, msg[0],
-				false, 0, false, false, 0, 0, 0, msg + 1,
-				msg_len - 1, pkt + 1, &pkt_len))
-		return;
+	payload = mesh_sar_new(msg_len - 1);
+	memcpy(payload->buf, msg + 1, msg_len - 1);
+	payload->len = msg_len - 1;
+	payload->ctl = true;
+	payload->ttl = ttl;
+	payload->src = src;
+	payload->remote = dst;
+	payload->opcode = opcode;
+	payload->net_idx = net_idx;
+	payload->iv_index = iv_index;
+	payload->seqAuth = seq;
+	payload->segmented = segmented;
 
-	if (!net_key_encrypt(net_key_id, iv_index, pkt + 1, pkt_len)) {
-		l_error("Failed to encode packet");
-		return;
-	}
-
-	if (!(IS_UNASSIGNED(dst)))
-		send_msg_pkt(net, net->tx_cnt, net->tx_interval, pkt,
-								pkt_len + 1);
+	mesh_net_send(net, payload, seg_max);
 }
 
 int mesh_net_key_refresh_phase_set(struct mesh_net *net, uint16_t idx,
