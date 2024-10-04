@@ -2098,8 +2098,10 @@ static void bap_bcast_set_state(struct bt_bap_stream *stream, uint8_t state)
 			stream->ops->detach(stream);
 		break;
 	case BT_ASCS_ASE_STATE_RELEASING:
-		bap_stream_io_detach(stream);
-		stream_set_state(stream, BT_BAP_STREAM_STATE_IDLE);
+		if (bt_bap_stream_io_dir(stream) == BT_BAP_BCAST_SINK) {
+			bap_stream_io_detach(stream);
+			stream_set_state(stream, BT_BAP_STREAM_STATE_IDLE);
+		}
 		break;
 	}
 }
@@ -2114,7 +2116,7 @@ static unsigned int bap_bcast_sink_enable(struct bt_bap_stream *stream,
 					bt_bap_stream_func_t func,
 					void *user_data)
 {
-	stream_set_state(stream, BT_BAP_STREAM_STATE_CONFIG);
+	stream_set_state(stream, BT_BAP_STREAM_STATE_ENABLING);
 
 	return 1;
 }
@@ -2144,7 +2146,13 @@ static unsigned int bap_bcast_disable(struct bt_bap_stream *stream,
 					void *user_data)
 {
 	bap_stream_io_detach(stream);
-	stream_set_state(stream, BT_BAP_STREAM_STATE_CONFIG);
+	if (bt_bap_stream_get_state(stream) == BT_BAP_STREAM_STATE_RELEASING)
+		/* Change state to PENDING, signifying that the transport for
+		 * this stream should be reacquired.
+		 */
+		stream_set_state(stream, BT_BAP_STREAM_STATE_PENDING);
+	else
+		stream_set_state(stream, BT_BAP_STREAM_STATE_CONFIG);
 
 	return 1;
 }
@@ -5198,6 +5206,8 @@ const char *bt_bap_stream_statestr(uint8_t state)
 		return "disabling";
 	case BT_BAP_STREAM_STATE_RELEASING:
 		return "releasing";
+	case BT_BAP_STREAM_STATE_PENDING:
+		return "pending";
 	}
 
 	return "unknown";

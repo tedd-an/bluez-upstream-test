@@ -705,13 +705,16 @@ static DBusMessage *try_acquire(DBusConnection *conn, DBusMessage *msg,
 	return NULL;
 }
 
+static void transport_update_playing(struct media_transport *transport,
+							gboolean playing);
+
 static void bap_stop_complete(struct bt_bap_stream *stream,
 					uint8_t code, uint8_t reason,
 					void *user_data)
 {
-	struct media_owner *owner = user_data;
 	struct media_request *req;
-	struct media_transport *transport;
+	struct media_transport *transport = user_data;
+	struct media_owner *owner = transport->owner;
 
 	if (!owner)
 		return;
@@ -731,6 +734,11 @@ static void bap_stop_complete(struct bt_bap_stream *stream,
 		transport_set_state(transport, TRANSPORT_STATE_IDLE);
 		media_transport_remove_owner(transport);
 	}
+	if (bt_bap_stream_get_state(stream) == BT_BAP_STREAM_STATE_PENDING)
+		/* Transports with streams in this state should be reaquired as
+		 * part of a multiple BIS sync.
+		 */
+		transport_update_playing(transport, TRUE);
 }
 
 static void bap_disable_complete(struct bt_bap_stream *stream,
@@ -1366,6 +1374,7 @@ static DBusMessage *select_transport(DBusConnection *conn, DBusMessage *msg,
 					void *data)
 {
 	struct media_transport *transport = data;
+	GSList *l;
 
 	if (transport->owner != NULL)
 		return btd_error_not_authorized(msg);
@@ -1375,6 +1384,29 @@ static DBusMessage *select_transport(DBusConnection *conn, DBusMessage *msg,
 
 	if (!strcmp(media_endpoint_get_uuid(transport->endpoint),
 						BAA_SERVICE_UUID)) {
+		/* Check if there are any ACTIVE transports, from the same
+		 * device. If there are, it means that this is a request to add
+		 * a new BIS to the active BIG sync. This is done by releasing
+		 * the ACTIVE transports, and then reaquiring them along with
+		 * the new transport that needs to be added to the sync. To
+		 * release the transports, bt_bap_stream_release is called,
+		 * which will set the stream's state to
+		 * BT_BAP_STREAM_STATE_RELEASING. On bap_state_changed, this
+		 * will be detected and transport_update_playing will be called,
+		 * with playing set to FALSE. This will move the transport to
+		 * IDLE, prompting the audio server to release it.
+		 */
+		for (l = transports; l; l = g_slist_next(l)) {
+			struct media_transport *tr = l->data;
+			struct bap_transport *bap_temp = tr->data;
+
+			if (tr->device == transport->device &&
+					tr->state == TRANSPORT_STATE_ACTIVE) {
+				bt_bap_stream_release(bap_temp->stream,
+								NULL, NULL);
+			}
+		}
+
 		transport_update_playing(transport, TRUE);
 	}
 
@@ -1385,9 +1417,22 @@ static DBusMessage *unselect_transport(DBusConnection *conn, DBusMessage *msg,
 					void *data)
 {
 	struct media_transport *transport = data;
+	GSList *l;
 
 	if (!strcmp(media_endpoint_get_uuid(transport->endpoint),
 						BAA_SERVICE_UUID)) {
+		for (l = transports; l; l = g_slist_next(l)) {
+			struct media_transport *tr = l->data;
+			struct bap_transport *bap_temp = tr->data;
+
+			if (tr->device == transport->device &&
+					tr->state == TRANSPORT_STATE_ACTIVE  &&
+				tr != transport) {
+				bt_bap_stream_release(bap_temp->stream,
+								NULL, NULL);
+			}
+		}
+
 		transport_update_playing(transport, FALSE);
 	}
 
@@ -1670,7 +1715,8 @@ static guint transport_bap_suspend(struct media_transport *transport,
 
 	if (bt_bap_stream_get_type(bap->stream) == BT_BAP_STREAM_TYPE_BCAST) {
 		if (transport->owner == owner)
-			bap_disable_complete(bap->stream, 0x00, 0x00, owner);
+			bap_disable_complete(bap->stream, 0x00, 0x00,
+				transport);
 		return 0;
 	}
 
@@ -1768,6 +1814,10 @@ static void bap_state_changed(struct bt_bap_stream *stream, uint8_t old_state,
 			bap_update_bcast_qos(transport);
 		break;
 	case BT_BAP_STREAM_STATE_RELEASING:
+		if (bt_bap_stream_io_dir(stream) == BT_BAP_BCAST_SOURCE) {
+			transport_update_playing(transport, FALSE);
+			return;
+		}
 		if (bt_bap_stream_io_dir(stream) == BT_BAP_BCAST_SINK)
 			return;
 		break;
