@@ -2749,11 +2749,13 @@ static void bap_state_bcast_sink(struct bt_bap_stream *stream,
 		if (!setup)
 			break;
 		if (old_state ==
-				BT_BAP_STREAM_STATE_CONFIG)
-			setup_create_io(data, setup, stream, defer);
-		if (old_state ==
 				BT_BAP_STREAM_STATE_STREAMING)
 			setup_io_close(setup, NULL);
+		break;
+	case BT_BAP_STREAM_STATE_ENABLING:
+		if (!setup)
+			break;
+		setup_create_io(data, setup, stream, defer);
 		break;
 	}
 }
