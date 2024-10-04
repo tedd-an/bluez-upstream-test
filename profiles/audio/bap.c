@@ -134,10 +134,8 @@ enum {
 struct bap_bcast_pa_req {
 	uint8_t type;
 	bool in_progress;
-	union {
-		struct btd_service *service;
-		struct bap_setup *setup;
-	} data;
+	struct btd_service *service;
+	struct queue *setups;
 	unsigned int io_id;	/* io_id for BIG Info watch */
 };
 
@@ -1021,7 +1019,10 @@ static int get_bis_from_stream(struct bt_bap_stream *stream)
 static void iso_bcast_confirm_cb(GIOChannel *io, GError *err, void *user_data)
 {
 	struct bap_bcast_pa_req *req = user_data;
-	struct bap_setup *setup = req->data.setup;
+	/* All confirm callbacks will arrive in the same order as the
+	 * setups were enqueued.
+	 */
+	struct bap_setup *setup = queue_pop_head(req->setups);
 	int fd;
 	struct bt_bap *bt_bap = bt_bap_stream_get_session(setup->stream);
 	struct btd_service *btd_service = bt_bap_get_user_data(bt_bap);
@@ -1041,6 +1042,7 @@ static void iso_bcast_confirm_cb(GIOChannel *io, GError *err, void *user_data)
 	fd = g_io_channel_unix_get_fd(io);
 
 	queue_remove(bap_data->adapter->bcast_pa_requests, req);
+	queue_destroy(req->setups, NULL);
 	free(req);
 
 	if (bt_bap_stream_set_io(setup->stream, fd)) {
@@ -1273,7 +1275,7 @@ static gboolean big_info_report_cb(GIOChannel *io, GIOCondition cond,
 {
 	GError *err = NULL;
 	struct bap_bcast_pa_req *req = user_data;
-	struct bap_data *data = btd_service_get_user_data(req->data.service);
+	struct bap_data *data = btd_service_get_user_data(req->service);
 	struct bt_iso_base base;
 	struct bt_iso_qos qos;
 
@@ -1317,10 +1319,11 @@ static gboolean big_info_report_cb(GIOChannel *io, GIOCondition cond,
 	 */
 	parse_base(data, &base, &qos, bap_debug);
 
-	service_set_connecting(req->data.service);
+	service_set_connecting(req->service);
 
 	queue_remove(data->adapter->bcast_pa_requests, req);
 	req->io_id = 0;
+	queue_destroy(req->setups, NULL);
 	free(req);
 
 	return FALSE;
@@ -2291,6 +2294,9 @@ static void setup_accept_io_broadcast(struct bap_data *data,
 	struct bap_bcast_pa_req *req = new0(struct bap_bcast_pa_req, 1);
 	struct bap_adapter *adapter = data->adapter;
 
+	req->setups = queue_new();
+	queue_push_tail(req->setups, setup);
+
 	/* Timer could be stopped if all other requests were treated.
 	 * Check the state of the timer and turn it on so that this request
 	 * can also be treated.
@@ -2306,7 +2312,6 @@ static void setup_accept_io_broadcast(struct bap_data *data,
 	 */
 	req->type = BAP_PA_BIG_SYNC_REQ;
 	req->in_progress = FALSE;
-	req->data.setup = setup;
 	queue_push_tail(adapter->bcast_pa_requests, req);
 }
 
@@ -3037,7 +3042,7 @@ static void bap_detached(struct bt_bap *bap, void *user_data)
 
 static int pa_sync(struct bap_bcast_pa_req *req)
 {
-	struct btd_service *service = req->data.service;
+	struct btd_service *service = req->service;
 	struct bap_data *data = btd_service_get_user_data(service);
 	GError *err = NULL;
 
@@ -3069,11 +3074,19 @@ static int pa_sync(struct bap_bcast_pa_req *req)
 	return 0;
 }
 
+static void setup_refresh_qos(void *data, void *user_data)
+{
+	struct bap_setup *setup = data;
+
+	setup->qos = *bt_bap_stream_get_qos(setup->stream);
+}
+
 static void iso_do_big_sync(GIOChannel *io, void *user_data)
 {
 	GError *err = NULL;
 	struct bap_bcast_pa_req *req = user_data;
-	struct bap_setup *setup = req->data.setup;
+	/* Only the last setup in the queue will hold the listen io */
+	struct bap_setup *setup = queue_peek_tail(req->setups);
 	struct bt_bap *bt_bap = bt_bap_stream_get_session(setup->stream);
 	struct btd_service *btd_service = bt_bap_get_user_data(bt_bap);
 	struct bap_data *data = btd_service_get_user_data(btd_service);
@@ -3109,7 +3122,7 @@ static void iso_do_big_sync(GIOChannel *io, void *user_data)
 	iso_bc_addr.bc_num_bis = 1;
 
 	/* Refresh qos stored in setup */
-	setup->qos = *bt_bap_stream_get_qos(setup->stream);
+	queue_foreach(req->setups, setup_refresh_qos, NULL);
 	/* Set the user requested QOS */
 	memset(&qos, 0, sizeof(qos));
 	qos.bcast.big = setup->qos.bcast.big;
@@ -3151,7 +3164,8 @@ static void iso_do_big_sync(GIOChannel *io, void *user_data)
 static void pa_and_big_sync(struct bap_bcast_pa_req *req)
 {
 	GError *err = NULL;
-	struct bap_setup *setup = req->data.setup;
+	/* Only the last setup in the queue will hold the listen io */
+	struct bap_setup *setup = queue_peek_tail(req->setups);
 	struct bt_bap *bt_bap = bt_bap_stream_get_session(setup->stream);
 	struct btd_service *btd_service = bt_bap_get_user_data(bt_bap);
 	struct bap_data *bap_data = btd_service_get_user_data(btd_service);
@@ -3282,7 +3296,7 @@ static int bap_bcast_probe(struct btd_service *service)
 	req = new0(struct bap_bcast_pa_req, 1);
 	req->type = type;
 	req->in_progress = FALSE;
-	req->data.service = service;
+	req->service = service;
 	queue_push_tail(data->adapter->bcast_pa_requests, req);
 
 	return 0;
@@ -3292,7 +3306,7 @@ static bool match_service(const void *data, const void *match_data)
 {
 	struct bap_bcast_pa_req *req = (struct bap_bcast_pa_req *)data;
 
-	return req->data.service == match_data;
+	return req->service == match_data;
 }
 
 static void bap_bcast_remove(struct btd_service *service)
@@ -3320,6 +3334,7 @@ static void bap_bcast_remove(struct btd_service *service)
 		g_source_remove(req->io_id);
 		req->io_id = 0;
 	}
+	queue_destroy(req->setups, NULL);
 	free(req);
 
 	/* Notify the BASS plugin about the removed session. */
