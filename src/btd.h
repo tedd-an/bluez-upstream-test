@@ -104,6 +104,12 @@ struct btd_avdtp_opts {
 	uint8_t  stream_mode;
 };
 
+struct btd_avrcp_opts {
+	bool		volume_without_target;
+	bool		volume_category;
+	bool		volume_version;
+};
+
 struct btd_advmon_opts {
 	uint8_t		rssi_sampling_period;
 };
@@ -145,6 +151,7 @@ struct btd_opts {
 	enum mps_mode_t	mps;
 
 	struct btd_avdtp_opts avdtp;
+	struct btd_avrcp_opts avrcp;
 
 	uint8_t		key_size;
 

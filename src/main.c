@@ -165,6 +165,13 @@ static const char *avdtp_options[] = {
 	NULL
 };
 
+static const char *avrcp_options[] = {
+	"VolumeWithoutTarget",
+	"VolumeCategory",
+	"VolumeVersion",
+	NULL
+};
+
 static const char *advmon_options[] = {
 	"RSSISamplingPeriod",
 	NULL
@@ -181,6 +188,7 @@ static const struct group_table {
 	{ "GATT",	gatt_options },
 	{ "CSIS",	csip_options },
 	{ "AVDTP",	avdtp_options },
+	{ "AVRCP",	avrcp_options },
 	{ "AdvMon",	advmon_options },
 	{ }
 };
@@ -1140,6 +1148,19 @@ static void parse_avdtp(GKeyFile *config)
 	parse_avdtp_stream_mode(config);
 }
 
+static void parse_avrcp(GKeyFile *config)
+{
+	parse_config_bool(config, "AVRCP",
+		"VolumeWithoutTarget",
+		&btd_opts.avrcp.volume_without_target);
+	parse_config_bool(config, "AVRCP",
+		"VolumeCategory",
+		&btd_opts.avrcp.volume_category);
+	parse_config_bool(config, "AVRCP",
+		"VolumeVersion",
+		&btd_opts.avrcp.volume_version);
+}
+
 static void parse_advmon(GKeyFile *config)
 {
 	parse_config_u8(config, "AdvMon", "RSSISamplingPeriod",
@@ -1163,6 +1184,7 @@ static void parse_config(GKeyFile *config)
 	parse_gatt(config);
 	parse_csis(config);
 	parse_avdtp(config);
+	parse_avrcp(config);
 	parse_advmon(config);
 }
 
@@ -1204,6 +1226,10 @@ static void init_defaults(void)
 
 	btd_opts.avdtp.session_mode = BT_IO_MODE_BASIC;
 	btd_opts.avdtp.stream_mode = BT_IO_MODE_BASIC;
+
+	btd_opts.avrcp.volume_without_target = false;
+	btd_opts.avrcp.volume_category = true;
+	btd_opts.avrcp.volume_version = false;
 
 	btd_opts.advmon.rssi_sampling_period = 0xFF;
 	btd_opts.csis.encrypt = true;
