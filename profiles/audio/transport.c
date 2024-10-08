@@ -377,13 +377,22 @@ static gboolean media_transport_set_fd(struct media_transport *transport,
 	return TRUE;
 }
 
+static struct avdtp_stream *
+transport_a2dp_get_stream(struct media_transport *transport)
+{
+	struct media_endpoint *endpoint = transport->endpoint;
+	struct a2dp_sep *sep = media_endpoint_get_sep(endpoint);
+	struct avdtp_stream *stream = a2dp_sep_get_stream(sep);
+
+	return stream;
+}
+
 static void a2dp_resume_complete(struct avdtp *session, int err,
 							void *user_data)
 {
 	struct media_owner *owner = user_data;
 	struct media_request *req = owner->pending;
 	struct media_transport *transport = owner->transport;
-	struct a2dp_sep *sep = media_endpoint_get_sep(transport->endpoint);
 	struct avdtp_stream *stream;
 	int fd;
 	uint16_t imtu, omtu;
@@ -394,7 +403,7 @@ static void a2dp_resume_complete(struct avdtp *session, int err,
 	if (err)
 		goto fail;
 
-	stream = a2dp_sep_get_stream(sep);
+	stream = transport_a2dp_get_stream(transport);
 	if (stream == NULL)
 		goto fail;
 
@@ -852,9 +861,13 @@ static gboolean delay_reporting_exists(const GDBusPropertyTable *property,
 							void *data)
 {
 	struct media_transport *transport = data;
-	struct a2dp_transport *a2dp = transport->data;
+	struct avdtp_stream *stream;
 
-	return a2dp->delay != 0;
+	stream = media_transport_get_stream(transport);
+	if (stream == NULL)
+		return FALSE;
+
+	return avdtp_stream_has_delay_reporting(stream);
 }
 
 static gboolean get_delay_reporting(const GDBusPropertyTable *property,
@@ -2023,7 +2036,7 @@ static void *transport_asha_init(struct media_transport *transport, void *data)
 #define A2DP_OPS(_uuid, _init, _set_volume, _destroy) \
 	TRANSPORT_OPS(_uuid, transport_a2dp_properties, NULL, NULL, _init, \
 			transport_a2dp_resume, transport_a2dp_suspend, \
-			transport_a2dp_cancel, NULL, NULL, \
+			transport_a2dp_cancel, NULL, transport_a2dp_get_stream, \
 			transport_a2dp_get_volume, _set_volume, \
 			_destroy)
 
