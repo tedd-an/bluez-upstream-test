@@ -532,7 +532,8 @@ bool mesh_crypto_packet_build(bool ctl, uint8_t ttl,
 				uint8_t *packet, uint8_t *packet_len)
 {
 	uint32_t hdr;
-	size_t n;
+	size_t hdr_offset = 9;
+	size_t payload_offset = 10;
 
 	if (seq > SEQ_MASK)
 		return false;
@@ -543,49 +544,43 @@ bool mesh_crypto_packet_build(bool ctl, uint8_t ttl,
 
 	l_put_be16(src, packet + 5);
 	l_put_be16(dst, packet + 7);
-	n = 9;
+
+	hdr = (segmented ? 0x1 : 0) << SEG_HDR_SHIFT;
+
+	if (segmented) {
+		hdr |= (seqZero & SEQ_ZERO_MASK) << SEQ_ZERO_HDR_SHIFT;
+		hdr |= (segO & SEG_MASK) << SEGO_HDR_SHIFT;
+		hdr |= (segN & SEG_MASK) << SEGN_HDR_SHIFT;
+		payload_offset += 3;
+	}
 
 	if (!ctl) {
-		uint32_t tmp = segmented ? 0x1 : 0;
-
-		hdr = tmp << SEG_HDR_SHIFT;
 		hdr |= (key_aid & KEY_ID_MASK) << KEY_HDR_SHIFT;
 
 		if (segmented) {
 			hdr |= szmic << SZMIC_HDR_SHIFT;
-			hdr |= (seqZero & SEQ_ZERO_MASK) << SEQ_ZERO_HDR_SHIFT;
-			hdr |= (segO & SEG_MASK) << SEGO_HDR_SHIFT;
-			hdr |= (segN & SEG_MASK) << SEGN_HDR_SHIFT;
 		}
-		l_put_be32(hdr, packet + n);
-
-		/* Only first octet is valid for unsegmented messages */
-		if (segmented)
-			n += 4;
-		else
-			n += 1;
-
-		memcpy(packet + n, payload, payload_len);
-
-		l_put_be32(0x00000000, packet + payload_len + n);
-		if (packet_len)
-			*packet_len = payload_len + n + 4;
 	} else {
 		if ((opcode & OPCODE_MASK) != opcode)
 			return false;
 
-		hdr = opcode << KEY_HDR_SHIFT;
-		l_put_be32(hdr, packet + n);
-		n += 1;
-
-		memcpy(packet + n, payload, payload_len);
-		n += payload_len;
-
-		l_put_be64(0x0000000000000000, packet + n);
-		if (packet_len)
-			*packet_len = n + 8;
+		hdr |= opcode << OPCODE_HDR_SHIFT;
 	}
 
+	l_put_be32(hdr, packet + hdr_offset);
+
+	memcpy(packet + payload_offset, payload, payload_len);
+
+	if (!ctl) {
+		l_put_be32(0x00000000, packet + payload_offset + payload_len);
+		if (packet_len)
+			*packet_len = payload_offset + payload_len + 4;
+	} else {
+		l_put_be64(0x0000000000000000, packet + payload_offset +
+								payload_len);
+		if (packet_len)
+			*packet_len = payload_offset + payload_len + 8;
+	}
 
 	return true;
 }
@@ -665,6 +660,22 @@ bool mesh_crypto_packet_parse(const uint8_t *packet, uint8_t packet_len,
 
 			if (payload_len)
 				*payload_len = packet_len - 9;
+		} else if (is_segmented) {
+			if (seqZero)
+				*seqZero = (hdr >> SEQ_ZERO_HDR_SHIFT) &
+								SEQ_ZERO_MASK;
+
+			if (segO)
+				*segO = (hdr >> SEGO_HDR_SHIFT) & SEG_MASK;
+
+			if (segN)
+				*segN = (hdr >> SEGN_HDR_SHIFT) & SEG_MASK;
+
+			if (payload)
+				*payload = packet + 13;
+
+			if (payload_len)
+				*payload_len = packet_len - 13;
 		} else {
 			if (payload)
 				*payload = packet + 10;

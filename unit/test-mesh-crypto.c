@@ -1087,7 +1087,7 @@ static void check_encrypt(const struct mesh_crypto_test *keys)
 		app_msg = l_util_from_hexstring(keys->app_msg, &app_msg_len);
 
 		if (keys->szmic) {
-			seg_max = SEG_MAX(keys->segmented, app_msg_len + 8);
+			seg_max = SEG_MAX(false, keys->segmented, app_msg_len + 8);
 			enc_msg = l_malloc(app_msg_len + 8);
 
 			status = mesh_crypto_payload_encrypt(aad, app_msg,
@@ -1097,7 +1097,7 @@ static void check_encrypt(const struct mesh_crypto_test *keys)
 					keys->szmic,
 					keys->akf ? app_key : dev_key);
 		} else {
-			seg_max = SEG_MAX(keys->segmented, app_msg_len + 4);
+			seg_max = SEG_MAX(false, keys->segmented, app_msg_len + 4);
 			enc_msg = l_malloc(app_msg_len + 4);
 
 			status = mesh_crypto_payload_encrypt(aad, app_msg,
