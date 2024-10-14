@@ -95,6 +95,41 @@ static struct l_queue *pending_queue;
 
 static const char *storage_dir;
 
+struct mesh_sar_transmitter {
+	uint8_t	seg_int_step;
+	uint8_t	unicast_rtx_cnt;
+	uint8_t	unicast_rtx_without_prog_cnt;
+	uint8_t	unicast_rtx_int_step;
+	uint8_t	unicast_rtx_int_inc;
+	uint8_t	multicast_rtx_cnt;
+	uint8_t	multicast_rtx_int_step;
+};
+
+struct mesh_sar_receiver {
+	uint8_t	seg_threshold;
+	uint8_t	ack_delay_inc;
+	uint8_t	ack_rtx_cnt;
+	uint8_t	discard_timeout;
+	uint8_t	receiver_seg_int_step;
+};
+
+static struct mesh_sar_transmitter mesh_sar_txr = {
+	.seg_int_step = 5,
+	.unicast_rtx_cnt = 2,
+	.unicast_rtx_without_prog_cnt = 2,
+	.unicast_rtx_int_step = 7,
+	.unicast_rtx_int_inc = 1,
+	.multicast_rtx_cnt = 2,
+	.multicast_rtx_int_step = 8
+};
+static struct mesh_sar_receiver mesh_sar_rxr = {
+	.seg_threshold = 3,
+	.ack_delay_inc = 1,
+	.ack_rtx_cnt = 0,
+	.discard_timeout = 1,
+	.receiver_seg_int_step = 5
+};
+
 /* Forward static decalrations */
 static void def_attach(struct l_timeout *timeout, void *user_data);
 static void def_leave(struct l_timeout *timeout, void *user_data);
@@ -201,6 +236,16 @@ uint16_t mesh_get_crpl(void)
 uint8_t mesh_get_friend_queue_size(void)
 {
 	return mesh.friend_queue_sz;
+}
+
+void mesh_get_sar_transmitter(void *sar_txr)
+{
+	memcpy(sar_txr, &mesh_sar_txr, sizeof(struct mesh_sar_transmitter));
+}
+
+void mesh_get_sar_receiver(void *sar_rxr)
+{
+	memcpy(sar_rxr, &mesh_sar_rxr, sizeof(struct mesh_sar_receiver));
 }
 
 static void parse_settings(const char *mesh_conf_fname)
