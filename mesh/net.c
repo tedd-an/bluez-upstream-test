@@ -2649,7 +2649,7 @@ static enum _relay_advice packet_received(void *user_data,
 						msg, app_msg_len);
 				}
 			} else {
-				seg_rxed(net, NULL, iv_index, net_ttl,
+				seg_rxed(net, false, iv_index, net_ttl,
 						net_seq, net_idx, net_src,
 						net_dst, key_aid, net_szmic,
 						net_seqZero, net_segO, net_segN,
@@ -2657,10 +2657,10 @@ static enum _relay_advice packet_received(void *user_data,
 			}
 
 		} else {
-			msg_rxed(net, NULL, iv_index, net_ttl, net_seq, net_idx,
-					net_src, net_dst, key_aid, false,
-					false, net_seq & SEQ_ZERO_MASK, msg,
-					app_msg_len);
+			msg_rxed(net, false, iv_index, net_ttl, net_seq,
+					net_idx, net_src, net_dst, key_aid,
+					false, false, net_seq & SEQ_ZERO_MASK,
+					msg, app_msg_len);
 		}
 
 		/* If this is one of our Unicast addresses, disallow relay */
