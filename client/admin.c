@@ -191,7 +191,7 @@ static void proxy_removed(GDBusProxy *proxy, void *user_data)
 		admin_policy_status_removed(proxy);
 }
 
-static GDBusClient *client;
+static GDBusClient *client = NULL;
 
 static void disconnect_handler(DBusConnection *connection, void *user_data)
 {
@@ -215,6 +215,5 @@ void admin_add_submenu(void)
 
 void admin_remove_submenu(void)
 {
-	g_dbus_client_unref(client);
-	client = NULL;
+	g_clear_pointer(&client, g_dbus_client_unref);
 }

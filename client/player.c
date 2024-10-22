@@ -5694,7 +5694,7 @@ static const struct bt_shell_menu transport_menu = {
 	{} },
 };
 
-static GDBusClient *client;
+static GDBusClient *client = NULL;
 
 void player_add_submenu(void)
 {
@@ -5715,6 +5715,6 @@ void player_add_submenu(void)
 
 void player_remove_submenu(void)
 {
-	g_dbus_client_unref(client);
+	g_clear_pointer(&client, g_dbus_client_unref);
 	queue_destroy(ios, transport_free);
 }
