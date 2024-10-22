@@ -3187,7 +3187,13 @@ int main(int argc, char *argv[])
 	bt_shell_add_submenu(&advertise_monitor_menu);
 	bt_shell_add_submenu(&scan_menu);
 	bt_shell_add_submenu(&gatt_menu);
+	admin_add_submenu();
+	player_add_submenu();
+	mgmt_add_submenu();
+	assistant_add_submenu();
 	bt_shell_set_prompt(PROMPT_OFF, NULL);
+
+	bt_shell_handle_non_interactive_help();
 
 	if (agent_option)
 		auto_register_agent = g_strdup(agent_option);
@@ -3203,10 +3209,10 @@ int main(int argc, char *argv[])
 		bt_shell_set_env("AUTO_REGISTER_ENDPOINT",
 					(void *)endpoint_option);
 
-	admin_add_submenu();
-	player_add_submenu();
-	mgmt_add_submenu();
-	assistant_add_submenu();
+	admin_enable_submenu();
+	player_enable_submenu();
+	mgmt_enable_submenu();
+	assistant_enable_submenu();
 
 	client = g_dbus_client_new(dbus_conn, "org.bluez", "/org/bluez");
 

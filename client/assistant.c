@@ -390,12 +390,15 @@ static const struct bt_shell_menu assistant_menu = {
 	{} },
 };
 
-static GDBusClient * client;
+static GDBusClient * client = NULL;
 
 void assistant_add_submenu(void)
 {
 	bt_shell_add_submenu(&assistant_menu);
+}
 
+void assistant_enable_submenu(void)
+{
 	dbus_conn = bt_shell_get_env("DBUS_CONNECTION");
 	if (!dbus_conn || client)
 		return;
@@ -409,7 +412,6 @@ void assistant_add_submenu(void)
 
 void assistant_remove_submenu(void)
 {
-	g_dbus_client_unref(client);
-	client = NULL;
+	g_clear_pointer(&client, g_dbus_client_unref);
 }
 

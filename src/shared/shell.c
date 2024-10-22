@@ -71,7 +71,7 @@ static struct {
 	char history[256];
 	int argc;
 	char **argv;
-	bool mode;
+	bool mode; /* whether non-interactive */
 	bool zsh;
 	bool monitor;
 	int timeout;
@@ -1696,4 +1696,14 @@ void *bt_shell_get_env(const char *name)
 int bt_shell_get_timeout(void)
 {
 	return data.timeout;
+}
+
+void bt_shell_handle_non_interactive_help(void)
+{
+	if (!data.mode)
+		return;
+	if (data.argv[0] != cmplt)
+		return;
+	print_cmds();
+	exit(EXIT_SUCCESS);
 }

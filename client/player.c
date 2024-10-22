@@ -5694,14 +5694,17 @@ static const struct bt_shell_menu transport_menu = {
 	{} },
 };
 
-static GDBusClient *client;
+static GDBusClient *client = NULL;
 
 void player_add_submenu(void)
 {
 	bt_shell_add_submenu(&player_menu);
 	bt_shell_add_submenu(&endpoint_menu);
 	bt_shell_add_submenu(&transport_menu);
+}
 
+void player_enable_submenu(void)
+{
 	dbus_conn = bt_shell_get_env("DBUS_CONNECTION");
 	if (!dbus_conn || client)
 		return;
@@ -5715,6 +5718,6 @@ void player_add_submenu(void)
 
 void player_remove_submenu(void)
 {
-	g_dbus_client_unref(client);
+	g_clear_pointer(&client, g_dbus_client_unref);
 	queue_destroy(ios, transport_free);
 }

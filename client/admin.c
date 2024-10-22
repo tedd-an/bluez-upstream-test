@@ -191,7 +191,7 @@ static void proxy_removed(GDBusProxy *proxy, void *user_data)
 		admin_policy_status_removed(proxy);
 }
 
-static GDBusClient *client;
+static GDBusClient *client = NULL;
 
 static void disconnect_handler(DBusConnection *connection, void *user_data)
 {
@@ -202,7 +202,10 @@ static void disconnect_handler(DBusConnection *connection, void *user_data)
 void admin_add_submenu(void)
 {
 	bt_shell_add_submenu(&admin_menu);
+}
 
+void admin_enable_submenu(void)
+{
 	dbus_conn = bt_shell_get_env("DBUS_CONNECTION");
 	if (!dbus_conn || client)
 		return;
@@ -215,6 +218,5 @@ void admin_add_submenu(void)
 
 void admin_remove_submenu(void)
 {
-	g_dbus_client_unref(client);
-	client = NULL;
+	g_clear_pointer(&client, g_dbus_client_unref);
 }
