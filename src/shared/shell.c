@@ -1697,3 +1697,13 @@ int bt_shell_get_timeout(void)
 {
 	return data.timeout;
 }
+
+void bt_shell_handle_non_interactive_help(void)
+{
+	if (!data.mode)
+		return;
+	if (data.argv[0] != cmplt)
+		return;
+	print_cmds();
+	exit(EXIT_SUCCESS);
+}
