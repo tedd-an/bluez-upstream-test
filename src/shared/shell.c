@@ -71,7 +71,7 @@ static struct {
 	char history[256];
 	int argc;
 	char **argv;
-	bool mode;
+	bool mode; /* whether non-interactive */
 	bool zsh;
 	bool monitor;
 	int timeout;
