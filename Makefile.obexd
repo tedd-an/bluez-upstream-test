@@ -2,6 +2,19 @@
 if OBEX
 
 if SYSTEMD
+
+if USE_SYSTEMBUS_FOR_OBEXD
+
+systemdsystemunit_DATA += obexd/src/obex.service
+dbussystembus_DATA += obexd/src/org.bluez.obex.service
+
+obexd-add-service-symlink:
+	$(LN_S) -f obex.service $(DESTDIR)$(SYSTEMD_SYSTEMUNITDIR)/dbus-org.bluez.obex.service
+
+obexd-remove-service-symlink:
+	rm -f $(DESTDIR)$(SYSTEMD_SYSTEMUNITDIR)/dbus-org.bluez.obex.service
+else
+
 systemduserunit_DATA += obexd/src/obex.service
 
 dbussessionbusdir = $(DBUS_SESSIONBUSDIR)
@@ -12,6 +25,7 @@ obexd-add-service-symlink:
 
 obexd-remove-service-symlink:
 	rm -f $(DESTDIR)$(SYSTEMD_USERUNITDIR)/dbus-org.bluez.obex.service
+endif
 else
 obexd-add-service-symlink:
 obexd-remove-service-symlink:
