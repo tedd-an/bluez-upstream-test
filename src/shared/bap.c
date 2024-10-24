@@ -252,9 +252,17 @@ struct bt_bap_stream_ops {
 	unsigned int (*release)(struct bt_bap_stream *stream,
 				bt_bap_stream_func_t func, void *user_data);
 	void (*detach)(struct bt_bap_stream *stream);
+	bool (*set_io)(struct bt_bap_stream *stream, int fd);
+	struct bt_bap_stream_io* (*get_io)(struct bt_bap_stream *stream);
+	uint8_t (*io_dir)(struct bt_bap_stream *stream);
+	int (*io_link)(struct bt_bap_stream *stream,
+					struct bt_bap_stream *link);
+	int (*io_unlink)(struct bt_bap_stream *stream,
+					struct bt_bap_stream *link);
 };
 
 struct bt_bap_stream {
+	int ref_count;
 	struct bt_bap *bap;
 	struct bt_bap_endpoint *ep;
 	struct bt_bap_pac *lpac;
@@ -262,7 +270,7 @@ struct bt_bap_stream {
 	struct iovec *cc;
 	struct iovec *meta;
 	struct bt_bap_qos qos;
-	struct bt_bap_stream *link;
+	struct queue *links;
 	struct bt_bap_stream_io *io;
 	const struct bt_bap_stream_ops *ops;
 	uint8_t old_state;
@@ -323,6 +331,13 @@ struct bt_bis {
 static struct queue *bap_db;
 static struct queue *bap_cbs;
 static struct queue *sessions;
+
+static void bap_stream_set_io(void *data, void *user_data);
+static void stream_find_io(void *data, void *user_data);
+static void bap_stream_get_dir(void *data, void *user_data);
+static struct bt_bap_stream_io *stream_io_ref(struct bt_bap_stream_io *io);
+static int bap_bcast_io_unlink(struct bt_bap_stream *stream,
+				struct bt_bap_stream *link);
 
 static bool bap_db_match(const void *data, const void *match_data)
 {
@@ -1101,6 +1116,14 @@ static void stream_io_unref(struct bt_bap_stream_io *io)
 	stream_io_free(io);
 }
 
+static void bap_stream_unlink(void *data, void *user_data)
+{
+	struct bt_bap_stream *stream = data;
+	struct bt_bap_stream *link = user_data;
+
+	queue_remove(stream->links, link);
+}
+
 static void bap_stream_free(void *data)
 {
 	struct bt_bap_stream *stream = data;
@@ -1110,8 +1133,8 @@ static void bap_stream_free(void *data)
 	if (stream->ep)
 		stream->ep->stream = NULL;
 
-	if (stream->link)
-		stream->link->link = NULL;
+	queue_foreach(stream->links, bap_stream_unlink, stream);
+	queue_destroy(stream->links, NULL);
 
 	stream_io_unref(stream->io);
 	util_iov_free(stream->cc, 1);
@@ -1182,6 +1205,17 @@ static void bap_abort_stream_req(struct bt_bap *bap,
 	queue_remove_all(bap->reqs, match_req_stream, stream, bap_req_abort);
 }
 
+static void bt_bap_stream_unref(struct bt_bap_stream *stream)
+{
+	if (!stream)
+		return;
+
+	if (__sync_sub_and_fetch(&stream->ref_count, 1))
+		return;
+
+	bap_stream_free(stream);
+}
+
 static void bap_ucast_detach(struct bt_bap_stream *stream)
 {
 	struct bt_bap_endpoint *ep = stream->ep;
@@ -1198,7 +1232,7 @@ static void bap_ucast_detach(struct bt_bap_stream *stream)
 
 	stream->ep = NULL;
 	ep->stream = NULL;
-	bap_stream_free(stream);
+	bt_bap_stream_unref(stream);
 }
 
 static void bap_bcast_src_detach(struct bt_bap_stream *stream)
@@ -1216,7 +1250,7 @@ static void bap_bcast_src_detach(struct bt_bap_stream *stream)
 	stream->ep = NULL;
 	ep->stream = NULL;
 
-	bap_stream_free(stream);
+	bt_bap_stream_unref(stream);
 }
 
 static void bap_bcast_sink_detach(struct bt_bap_stream *stream)
@@ -1226,7 +1260,7 @@ static void bap_bcast_sink_detach(struct bt_bap_stream *stream)
 	queue_remove(stream->bap->streams, stream);
 	bap_stream_clear_cfm(stream);
 
-	bap_stream_free(stream);
+	bt_bap_stream_unref(stream);
 }
 
 static bool bap_stream_io_link(const void *data, const void *user_data)
@@ -1246,6 +1280,17 @@ static void bap_stream_update_io_links(struct bt_bap_stream *stream)
 	queue_find(bap->streams, bap_stream_io_link, stream);
 }
 
+static bool match_stream_io(const void *data, const void *user_data)
+{
+	const struct bt_bap_stream *stream = data;
+	const struct bt_bap_stream_io *io = user_data;
+
+	if (!stream->io)
+		return false;
+
+	return stream->io == io;
+}
+
 static bool bap_stream_io_detach(struct bt_bap_stream *stream)
 {
 	struct bt_bap_stream *link;
@@ -1259,7 +1304,7 @@ static bool bap_stream_io_detach(struct bt_bap_stream *stream)
 	io = stream->io;
 	stream->io = NULL;
 
-	link = stream->link;
+	link = queue_find(stream->links, match_stream_io, io);
 	if (link) {
 		/* Detach link if in QoS state */
 		if (link->ep->state == BT_ASCS_ASE_STATE_QOS)
@@ -1803,6 +1848,14 @@ static unsigned int bap_bcast_config(struct bt_bap_stream *stream,
 	return 1;
 }
 
+static void bap_stream_enable_link(void *data, void *user_data)
+{
+	struct bt_bap_stream *stream = data;
+	struct iovec *metadata = user_data;
+
+	bap_stream_metadata(stream, BT_ASCS_ENABLE, metadata, NULL, NULL);
+}
+
 static unsigned int bap_ucast_enable(struct bt_bap_stream *stream,
 					bool enable_links, struct iovec *data,
 					bt_bap_stream_func_t func,
@@ -1821,9 +1874,7 @@ static unsigned int bap_ucast_enable(struct bt_bap_stream *stream,
 	if (!ret || !enable_links)
 		return ret;
 
-	if (stream->link)
-		bap_stream_metadata(stream->link, BT_ASCS_ENABLE, data,
-					NULL, NULL);
+	queue_foreach(stream->links, bap_stream_enable_link, data);
 
 	return ret;
 }
@@ -1872,6 +1923,13 @@ static unsigned int bap_ucast_start(struct bt_bap_stream *stream,
 	return req->id;
 }
 
+static void bap_stream_disable_link(void *data, void *user_data)
+{
+	struct bt_bap_stream *stream = data;
+
+	bt_bap_stream_disable(stream, false, NULL, NULL);
+}
+
 static unsigned int bap_ucast_disable(struct bt_bap_stream *stream,
 					bool disable_links,
 					bt_bap_stream_func_t func,
@@ -1895,7 +1953,7 @@ static unsigned int bap_ucast_disable(struct bt_bap_stream *stream,
 	}
 
 	if (disable_links)
-		bt_bap_stream_disable(stream->link, false, NULL, NULL);
+		queue_foreach(stream->links, bap_stream_disable_link, NULL);
 
 	return req->id;
 }
@@ -2069,6 +2127,16 @@ static unsigned int bap_ucast_release(struct bt_bap_stream *stream,
 	return req->id;
 }
 
+static struct bt_bap_stream *bt_bap_stream_ref(struct bt_bap_stream *stream)
+{
+	if (!stream)
+		return NULL;
+
+	__sync_fetch_and_add(&stream->ref_count, 1);
+
+	return stream;
+}
+
 static void bap_bcast_set_state(struct bt_bap_stream *stream, uint8_t state)
 {
 	struct bt_bap *bap = stream->bap;
@@ -2076,6 +2144,8 @@ static void bap_bcast_set_state(struct bt_bap_stream *stream, uint8_t state)
 
 	stream->old_state = stream->state;
 	stream->state = state;
+
+	bt_bap_stream_ref(stream);
 
 	DBG(bap, "stream %p dir 0x%02x: %s -> %s", stream,
 			bt_bap_stream_get_dir(stream),
@@ -2092,7 +2162,7 @@ static void bap_bcast_set_state(struct bt_bap_stream *stream, uint8_t state)
 	}
 
 	/* Post notification updates */
-	switch (state) {
+	switch (stream->state) {
 	case BT_ASCS_ASE_STATE_IDLE:
 		if (stream->ops && stream->ops->detach)
 			stream->ops->detach(stream);
@@ -2101,7 +2171,15 @@ static void bap_bcast_set_state(struct bt_bap_stream *stream, uint8_t state)
 		bap_stream_io_detach(stream);
 		stream_set_state(stream, BT_BAP_STREAM_STATE_IDLE);
 		break;
+	case BT_ASCS_ASE_STATE_ENABLING:
+		if (bt_bap_stream_get_io(stream))
+			/* Start stream if fd has already been set */
+			bt_bap_stream_start(stream, NULL, NULL);
+
+		break;
 	}
+
+	bt_bap_stream_unref(stream);
 }
 
 static unsigned int bap_bcast_get_state(struct bt_bap_stream *stream)
@@ -2109,12 +2187,41 @@ static unsigned int bap_bcast_get_state(struct bt_bap_stream *stream)
 	return stream->state;
 }
 
+static bool bcast_sink_stream_enabled(const void *data, const void *match_data)
+{
+	struct bt_bap_stream *stream = (struct bt_bap_stream *)data;
+	struct bt_bap_stream *match = (struct bt_bap_stream *)match_data;
+	uint8_t state = bt_bap_stream_get_state(stream);
+
+	if (stream == match)
+		return false;
+
+	if (queue_find(stream->links, NULL, match))
+		return false;
+
+	/* Ignore streams that are not Broadcast Sink */
+	if (bt_bap_pac_get_type(stream->lpac) != BT_BAP_BCAST_SINK)
+		return false;
+
+	return ((state == BT_BAP_STREAM_STATE_ENABLING) ||
+			bt_bap_stream_get_io(stream));
+}
+
 static unsigned int bap_bcast_sink_enable(struct bt_bap_stream *stream,
 					bool enable_links, struct iovec *data,
 					bt_bap_stream_func_t func,
 					void *user_data)
 {
-	stream_set_state(stream, BT_BAP_STREAM_STATE_CONFIG);
+	struct bt_bap *bap = stream->bap;
+
+	/* The stream cannot be enabled if there is any other
+	 * unlinked stream for the same source that is in the
+	 * process of enabling or that has already been started.
+	 */
+	if (queue_find(bap->streams, bcast_sink_stream_enabled, stream))
+		return 0;
+
+	stream_set_state(stream, BT_BAP_STREAM_STATE_ENABLING);
 
 	return 1;
 }
@@ -2206,9 +2313,194 @@ static unsigned int bap_bcast_release(struct bt_bap_stream *stream,
 	return 1;
 }
 
+static bool bap_ucast_set_io(struct bt_bap_stream *stream, int fd)
+{
+	if (!stream || (fd >= 0 && stream->io && !stream->io->connecting))
+		return false;
+
+	bap_stream_set_io(stream, INT_TO_PTR(fd));
+
+	queue_foreach(stream->links, bap_stream_set_io, INT_TO_PTR(fd));
+
+	return true;
+}
+
+static bool bap_bcast_set_io(struct bt_bap_stream *stream, int fd)
+{
+	if (!stream || (fd >= 0 && stream->io && !stream->io->connecting))
+		return false;
+
+	bap_stream_set_io(stream, INT_TO_PTR(fd));
+
+	return true;
+}
+
+static struct bt_bap_stream_io *bap_ucast_get_io(struct bt_bap_stream *stream)
+{
+	struct bt_bap_stream_io *io = NULL;
+
+	if (!stream)
+		return NULL;
+
+	if (stream->io)
+		return stream->io;
+
+	queue_foreach(stream->links, stream_find_io, &io);
+
+	return io;
+}
+
+static struct bt_bap_stream_io *bap_bcast_get_io(struct bt_bap_stream *stream)
+{
+	if (!stream)
+		return NULL;
+
+	return stream->io;
+}
+
+static uint8_t bap_ucast_io_dir(struct bt_bap_stream *stream)
+{
+	uint8_t dir;
+
+	if (!stream)
+		return 0x00;
+
+	dir = stream->ep->dir;
+
+	queue_foreach(stream->links, bap_stream_get_dir, &dir);
+
+	return dir;
+}
+
+static uint8_t bap_bcast_io_dir(struct bt_bap_stream *stream)
+{
+	uint8_t dir;
+	uint8_t pac_type = bt_bap_pac_get_type(stream->lpac);
+
+	if (!stream)
+		return 0x00;
+
+	if (pac_type == BT_BAP_BCAST_SINK)
+		dir = BT_BAP_BCAST_SOURCE;
+	else
+		dir = BT_BAP_BCAST_SINK;
+
+	return dir;
+}
+
+static int bap_ucast_io_link(struct bt_bap_stream *stream,
+				struct bt_bap_stream *link)
+{
+	struct bt_bap *bap;
+
+	if (!stream || !link || stream == link)
+		return -EINVAL;
+
+	bap = stream->bap;
+
+	if (queue_find(stream->links, NULL, link) ||
+		queue_find(link->links, NULL, stream))
+		return -EALREADY;
+
+	if (stream->client != link->client ||
+			stream->qos.ucast.cig_id != link->qos.ucast.cig_id ||
+			stream->qos.ucast.cis_id != link->qos.ucast.cis_id ||
+			stream->ep->dir == link->ep->dir)
+		return -EINVAL;
+
+	if (!stream->links)
+		stream->links = queue_new();
+
+	if (!link->links)
+		link->links = queue_new();
+
+	queue_push_tail(stream->links, link);
+	queue_push_tail(link->links, stream);
+
+	/* Link IOs if already set on stream/link */
+	if (stream->io && !link->io)
+		link->io = stream_io_ref(stream->io);
+	else if (link->io && !stream->io)
+		stream->io = stream_io_ref(link->io);
+
+	DBG(bap, "stream %p link %p", stream, link);
+
+	return 0;
+}
+
+static void stream_link(void *data, void *user_data)
+{
+	struct bt_bap_stream *stream = (void *)data;
+	struct bt_bap_stream *link = (void *)user_data;
+
+	bt_bap_stream_io_link(stream, link);
+}
+
+static int bap_bcast_io_link(struct bt_bap_stream *stream,
+				struct bt_bap_stream *link)
+{
+	struct bt_bap *bap;
+
+	if (!stream || !link || stream == link)
+		return -EINVAL;
+
+	bap = stream->bap;
+
+	if (queue_find(stream->links, NULL, link) ||
+		queue_find(link->links, NULL, stream))
+		return -EALREADY;
+
+	if (!stream->links)
+		stream->links = queue_new();
+
+	if (!link->links)
+		link->links = queue_new();
+
+	queue_push_tail(stream->links, link);
+	queue_push_tail(link->links, stream);
+
+	DBG(bap, "stream %p link %p", stream, link);
+
+	queue_foreach(stream->links, stream_link, link);
+
+	return 0;
+}
+
+static void stream_unlink(void *data, void *user_data)
+{
+	struct bt_bap_stream *stream = (void *)data;
+	struct bt_bap_stream *link = (void *)user_data;
+
+	bap_bcast_io_unlink(stream, link);
+}
+
+static int bap_bcast_io_unlink(struct bt_bap_stream *stream,
+				struct bt_bap_stream *link)
+{
+	struct bt_bap *bap;
+
+	if (!stream || !link || stream == link)
+		return -EINVAL;
+
+	bap = stream->bap;
+
+	if (!queue_find(stream->links, NULL, link) ||
+		!queue_find(link->links, NULL, stream))
+		return -EALREADY;
+
+	queue_remove(stream->links, link);
+	queue_remove(link->links, stream);
+
+	DBG(bap, "stream %p unlink %p", stream, link);
+
+	queue_foreach(stream->links, stream_unlink, link);
+
+	return 0;
+}
+
 #define STREAM_OPS(_type, _set_state, _get_state, _config, _qos, _enable, \
 	_start, _disable, _stop, _metadata, _get_dir, _get_loc, _release, \
-	_detach) \
+	_detach, _set_io, _get_io, _io_dir, _io_link, _io_unlink) \
 { \
 	.type = _type, \
 	.set_state = _set_state, \
@@ -2224,6 +2516,11 @@ static unsigned int bap_bcast_release(struct bt_bap_stream *stream,
 	.get_loc = _get_loc, \
 	.release = _release, \
 	.detach = _detach, \
+	.set_io = _set_io, \
+	.get_io = _get_io, \
+	.io_dir = _io_dir, \
+	.io_link = _io_link, \
+	.io_unlink = _io_unlink, \
 }
 
 static const struct bt_bap_stream_ops stream_ops[] = {
@@ -2233,28 +2530,40 @@ static const struct bt_bap_stream_ops stream_ops[] = {
 			bap_ucast_start, bap_ucast_disable, bap_ucast_stop,
 			bap_ucast_metadata, bap_ucast_get_dir,
 			bap_ucast_get_location,
-			bap_ucast_release, bap_ucast_detach),
+			bap_ucast_release, bap_ucast_detach,
+			bap_ucast_set_io, bap_ucast_get_io,
+			bap_ucast_io_dir, bap_ucast_io_link,
+			NULL),
 	STREAM_OPS(BT_BAP_SOURCE, bap_ucast_set_state,
 			bap_ucast_get_state,
 			bap_ucast_config, bap_ucast_qos, bap_ucast_enable,
 			bap_ucast_start, bap_ucast_disable, bap_ucast_stop,
 			bap_ucast_metadata, bap_ucast_get_dir,
 			bap_ucast_get_location,
-			bap_ucast_release, bap_ucast_detach),
+			bap_ucast_release, bap_ucast_detach,
+			bap_ucast_set_io, bap_ucast_get_io,
+			bap_ucast_io_dir, bap_ucast_io_link,
+			NULL),
 	STREAM_OPS(BT_BAP_BCAST_SINK, bap_bcast_set_state,
 			bap_bcast_get_state,
 			bap_bcast_config, bap_bcast_qos, bap_bcast_sink_enable,
 			bap_bcast_start, bap_bcast_disable, NULL,
 			bap_bcast_metadata, bap_bcast_sink_get_dir,
 			bap_bcast_get_location,
-			bap_bcast_release, bap_bcast_sink_detach),
+			bap_bcast_release, bap_bcast_sink_detach,
+			bap_bcast_set_io, bap_bcast_get_io,
+			bap_bcast_io_dir, bap_bcast_io_link,
+			bap_bcast_io_unlink),
 	STREAM_OPS(BT_BAP_BCAST_SOURCE, bap_bcast_set_state,
 			bap_bcast_get_state,
 			bap_bcast_config, bap_bcast_qos, bap_bcast_src_enable,
 			bap_bcast_start, bap_bcast_disable, NULL,
 			bap_bcast_metadata, bap_bcast_src_get_dir,
 			bap_bcast_get_location,
-			bap_bcast_release, bap_bcast_src_detach),
+			bap_bcast_release, bap_bcast_src_detach,
+			bap_bcast_set_io, bap_bcast_get_io,
+			bap_bcast_io_dir, bap_bcast_io_link,
+			bap_bcast_io_unlink),
 };
 
 static const struct bt_bap_stream_ops *
@@ -2296,7 +2605,7 @@ static struct bt_bap_stream *bap_stream_new(struct bt_bap *bap,
 
 	queue_push_tail(bap->streams, stream);
 
-	return stream;
+	return bt_bap_stream_ref(stream);
 }
 
 static struct bt_bap_stream_io *stream_io_ref(struct bt_bap_stream_io *io)
@@ -2327,18 +2636,38 @@ static struct bt_bap_stream_io *stream_io_new(struct bt_bap *bap, int fd)
 	return stream_io_ref(sio);
 }
 
+static void stream_find_io(void *data, void *user_data)
+{
+	struct bt_bap_stream *stream = data;
+	struct bt_bap_stream_io **io = user_data;
+
+	if (*io)
+		return;
+
+	*io = stream->io;
+}
+
 static struct bt_bap_stream_io *stream_get_io(struct bt_bap_stream *stream)
 {
-	if (!stream)
+	struct bt_bap_stream_io *io;
+	struct bt_bap *bap;
+
+	if (!bap_stream_valid(stream))
 		return NULL;
 
-	if (stream->io)
-		return stream->io;
+	if (!stream->ops || !stream->ops->get_io)
+		return NULL;
 
-	if (stream->link)
-		return stream->link->io;
+	if (!bt_bap_ref_safe(stream->bap))
+		return NULL;
 
-	return NULL;
+	bap = stream->bap;
+
+	io = stream->ops->get_io(stream);
+
+	bt_bap_unref(bap);
+
+	return io;
 }
 
 static bool stream_io_disconnected(struct io *io, void *user_data);
@@ -3877,6 +4206,13 @@ static void bap_detached(void *data, void *user_data)
 	cb->detached(bap, cb->user_data);
 }
 
+static void bap_stream_unref(void *data)
+{
+	struct bt_bap_stream *stream = data;
+
+	bt_bap_stream_unref(stream);
+}
+
 static void bap_free(void *data)
 {
 	struct bt_bap *bap = data;
@@ -3895,7 +4231,7 @@ static void bap_free(void *data)
 
 	queue_destroy(bap->reqs, bap_req_free);
 	queue_destroy(bap->notify, NULL);
-	queue_destroy(bap->streams, bap_stream_free);
+	queue_destroy(bap->streams, bap_stream_unref);
 
 	free(bap);
 }
@@ -5841,15 +6177,25 @@ static bool stream_io_disconnected(struct io *io, void *user_data)
 
 bool bt_bap_stream_set_io(struct bt_bap_stream *stream, int fd)
 {
-	if (!stream || (fd >= 0 && stream->io && !stream->io->connecting))
+	bool ret;
+	struct bt_bap *bap;
+
+	if (!bap_stream_valid(stream))
 		return false;
 
-	bap_stream_set_io(stream, INT_TO_PTR(fd));
+	if (!stream->ops || !stream->ops->set_io)
+		return false;
 
-	if (stream->link)
-		bap_stream_set_io(stream->link, INT_TO_PTR(fd));
+	if (!bt_bap_ref_safe(stream->bap))
+		return false;
 
-	return true;
+	bap = stream->bap;
+
+	ret = stream->ops->set_io(stream, fd);
+
+	bt_bap_unref(bap);
+
+	return ret;
 }
 
 static bool match_req_id(const void *data, const void *match_data)
@@ -5895,42 +6241,57 @@ int bt_bap_stream_cancel(struct bt_bap_stream *stream, unsigned int id)
 int bt_bap_stream_io_link(struct bt_bap_stream *stream,
 				struct bt_bap_stream *link)
 {
+	int ret;
 	struct bt_bap *bap;
 
-	if (!stream || !link || stream == link)
+	if (!bap_stream_valid(stream))
+		return -EINVAL;
+
+	if (!stream->ops || !stream->ops->io_link)
+		return -EINVAL;
+
+	if (!bt_bap_ref_safe(stream->bap))
 		return -EINVAL;
 
 	bap = stream->bap;
 
-	if (stream->link || link->link)
-		return -EALREADY;
+	ret = stream->ops->io_link(stream, link);
 
-	if (stream->client != link->client ||
-			stream->qos.ucast.cig_id != link->qos.ucast.cig_id ||
-			stream->qos.ucast.cis_id != link->qos.ucast.cis_id ||
-			stream->ep->dir == link->ep->dir)
-		return -EINVAL;
+	bt_bap_unref(bap);
 
-	stream->link = link;
-	link->link = stream;
-
-	/* Link IOs if already set on stream/link */
-	if (stream->io && !link->io)
-		link->io = stream_io_ref(stream->io);
-	else if (link->io && !stream->io)
-		stream->io = stream_io_ref(link->io);
-
-	DBG(bap, "stream %p link %p", stream, link);
-
-	return 0;
+	return ret;
 }
 
-struct bt_bap_stream *bt_bap_stream_io_get_link(struct bt_bap_stream *stream)
+int bt_bap_stream_io_unlink(struct bt_bap_stream *stream,
+				struct bt_bap_stream *link)
+{
+	int ret;
+	struct bt_bap *bap;
+
+	if (!bap_stream_valid(stream))
+		return -EINVAL;
+
+	if (!stream->ops || !stream->ops->io_unlink)
+		return -EINVAL;
+
+	if (!bt_bap_ref_safe(stream->bap))
+		return -EINVAL;
+
+	bap = stream->bap;
+
+	ret = stream->ops->io_unlink(stream, link);
+
+	bt_bap_unref(bap);
+
+	return ret;
+}
+
+struct queue *bt_bap_stream_io_get_links(struct bt_bap_stream *stream)
 {
 	if (!stream)
 		return NULL;
 
-	return stream->link;
+	return stream->links;
 }
 
 static void bap_stream_get_in_qos(void *data, void *user_data)
@@ -5973,11 +6334,11 @@ bool bt_bap_stream_io_get_qos(struct bt_bap_stream *stream,
 	switch (stream->ep->dir) {
 	case BT_BAP_SOURCE:
 		bap_stream_get_in_qos(stream, in);
-		bap_stream_get_out_qos(stream->link, out);
+		queue_foreach(stream->links, bap_stream_get_out_qos, out);
 		break;
 	case BT_BAP_SINK:
 		bap_stream_get_out_qos(stream, out);
-		bap_stream_get_in_qos(stream->link, in);
+		queue_foreach(stream->links, bap_stream_get_in_qos, in);
 		break;
 	default:
 		return false;
@@ -5988,27 +6349,33 @@ bool bt_bap_stream_io_get_qos(struct bt_bap_stream *stream,
 	return in && out;
 }
 
+static void bap_stream_get_dir(void *data, void *user_data)
+{
+	struct bt_bap_stream *stream = data;
+	uint8_t *dir = user_data;
+
+	*dir |= stream->ep->dir;
+}
+
 uint8_t bt_bap_stream_io_dir(struct bt_bap_stream *stream)
 {
 	uint8_t dir;
+	struct bt_bap *bap;
 
-	if (!stream)
-		return 0x00;
+	if (!bap_stream_valid(stream))
+		return 0;
 
-	if (stream->ep)
-		dir = stream->ep->dir;
-	else {
-		uint8_t pac_type = bt_bap_pac_get_type(stream->lpac);
+	if (!stream->ops || !stream->ops->set_io)
+		return 0;
 
-		if (pac_type == BT_BAP_BCAST_SINK)
-			dir = BT_BAP_BCAST_SOURCE;
-		else
-			dir = BT_BAP_BCAST_SINK;
+	if (!bt_bap_ref_safe(stream->bap))
+		return 00;
 
-	}
+	bap = stream->bap;
 
-	if (stream->link)
-		dir |= stream->link->ep->dir;
+	dir = stream->ops->io_dir(stream);
+
+	bt_bap_unref(bap);
 
 	return dir;
 }
@@ -6043,7 +6410,8 @@ int bt_bap_stream_io_connecting(struct bt_bap_stream *stream, int fd)
 		return -EINVAL;
 
 	bap_stream_io_connecting(stream, INT_TO_PTR(fd));
-	bap_stream_io_connecting(stream->link, INT_TO_PTR(fd));
+
+	queue_foreach(stream->links, bap_stream_io_connecting, INT_TO_PTR(fd));
 
 	return 0;
 }
