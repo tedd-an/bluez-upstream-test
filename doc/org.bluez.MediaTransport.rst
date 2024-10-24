@@ -149,6 +149,9 @@ array{object} Links [readonly, optional, ISO only, experimental]
 
 	Linked transport objects which the transport is associated with.
 
+	For Broadcast transports, the property is writable and it is
+	not optional.
+
 dict QoS [readwrite, optional, ISO only, experimental]
 ``````````````````````````````````````````````````````
 
