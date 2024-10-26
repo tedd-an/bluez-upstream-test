@@ -115,11 +115,17 @@ string State [readonly]
 		created by a broadcast sink
 	:"active": streaming and acquired
 
+boolean DelayReporting [readonly]
+
+	Indicates if the endpoint associated with the transport supports Delay
+	Reporting.
+
 uint16 Delay [readwrite, optional]
 ``````````````````````````````````
 
-	Transport delay in 1/10 of millisecond, this property is only writeable
-	when the transport was acquired by the sender.
+	Transport delay in 1/10 of millisecond.
+	This property is available only if the DelayReporting is true and is
+	writeable only when the transport was acquired by the sender.
 
 uint16 Volume [readwrite, optional]
 ```````````````````````````````````

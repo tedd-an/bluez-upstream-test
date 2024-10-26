@@ -860,6 +860,22 @@ static gboolean get_state(const GDBusPropertyTable *property,
 	return TRUE;
 }
 
+static gboolean get_delay_reporting(const GDBusPropertyTable *property,
+					DBusMessageIter *iter, void *data)
+{
+	struct media_transport *transport = data;
+	struct avdtp_stream *stream;
+
+	stream = media_transport_get_stream(transport);
+	if (stream == NULL)
+		return FALSE;
+
+	gboolean value = avdtp_stream_has_delay_reporting(stream);
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_BOOLEAN, &value);
+
+	return TRUE;
+}
+
 static gboolean delay_reporting_exists(const GDBusPropertyTable *property,
 							void *data)
 {
@@ -873,7 +889,7 @@ static gboolean delay_reporting_exists(const GDBusPropertyTable *property,
 	return avdtp_stream_has_delay_reporting(stream);
 }
 
-static gboolean get_delay_reporting(const GDBusPropertyTable *property,
+static gboolean get_delay_report(const GDBusPropertyTable *property,
 					DBusMessageIter *iter, void *data)
 {
 	struct media_transport *transport = data;
@@ -1019,7 +1035,8 @@ static const GDBusPropertyTable transport_a2dp_properties[] = {
 	{ "Codec", "y", get_codec },
 	{ "Configuration", "ay", get_configuration },
 	{ "State", "s", get_state },
-	{ "Delay", "q", get_delay_reporting, NULL, delay_reporting_exists },
+	{ "DelayReporting", "b", get_delay_reporting },
+	{ "Delay", "q", get_delay_report, NULL, delay_reporting_exists },
 	{ "Volume", "q", get_volume, set_volume, volume_exists },
 	{ "Endpoint", "o", get_endpoint, NULL, endpoint_exists,
 				G_DBUS_PROPERTY_FLAG_EXPERIMENTAL },
@@ -1359,6 +1376,14 @@ static const GDBusPropertyTable transport_bap_bc_properties[] = {
 	{ }
 };
 
+static gboolean get_asha_delay_reporting(const GDBusPropertyTable *property,
+					DBusMessageIter *iter, void *data)
+{
+	gboolean value = TRUE;
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_BOOLEAN, &value);
+	return TRUE;
+}
+
 static gboolean get_asha_delay(const GDBusPropertyTable *property,
 					DBusMessageIter *iter, void *data)
 {
@@ -1380,6 +1405,7 @@ static const GDBusPropertyTable transport_asha_properties[] = {
 	{ "UUID", "s", get_uuid },
 	{ "Codec", "y", get_codec },
 	{ "State", "s", get_state },
+	{ "DelayReporting", "b", get_asha_delay_reporting },
 	{ "Delay", "q", get_asha_delay },
 	{ "Volume", "q", get_volume, set_volume, volume_exists },
 	{ }
