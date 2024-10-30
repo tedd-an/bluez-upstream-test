@@ -17,6 +17,7 @@
 #include "gdbus/gdbus.h"
 
 #include "obexd/src/log.h"
+#include "obexd/src/obexd.h"
 
 #include "transfer.h"
 #include "session.h"
@@ -178,7 +179,11 @@ int opp_init(void)
 
 	DBG("");
 
-	conn = dbus_bus_get(DBUS_BUS_SESSION, NULL);
+	if (obex_option_system_bus())
+		conn = dbus_bus_get(DBUS_BUS_SYSTEM, NULL);
+	else
+		conn = dbus_bus_get(DBUS_BUS_SESSION, NULL);
+
 	if (!conn)
 		return -EIO;
 

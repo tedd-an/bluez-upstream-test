@@ -27,6 +27,7 @@
 #include "gdbus/gdbus.h"
 
 #include "obexd/src/log.h"
+#include "obexd/src/obexd.h"
 #include "obexd/src/map_ap.h"
 #include "map-event.h"
 
@@ -2063,7 +2064,11 @@ int map_init(void)
 
 	DBG("");
 
-	conn = dbus_bus_get(DBUS_BUS_SESSION, NULL);
+	if (obex_option_system_bus())
+		conn = dbus_bus_get(DBUS_BUS_SYSTEM, NULL);
+	else
+		conn = dbus_bus_get(DBUS_BUS_SESSION, NULL);
+
 	if (!conn)
 		return -EIO;
 
