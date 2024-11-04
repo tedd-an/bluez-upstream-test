@@ -511,7 +511,23 @@ static int pbap_get(struct obex_session *os, void *user_data)
 		rsize = 0;
 	}
 
-	/* Workaround for PTS client not sending mandatory apparams */
+	/*
+	 * Workaround for PTS client not sending mandatory apparams
+	 *
+	 * Add MaxListCount attribute, description as per PBAP spec
+	 *
+	 * 5.1.4.3 MaxListCount :
+	 * This header is used to indicate the maximum number of
+	 * entries of the <x-bt/phonebook> object that the PCE
+	 * can handle. The value 65535 means that the number of
+	 * entries is not restricted. The maximum number of entries
+	 * shall be 65,535 if this header is not specified.
+	 *
+	 * 0x04 - Tag id
+	 * 0x02 - length
+	 * next 2 bytes are value - 0xffff
+	 */
+
 	if (!rsize && g_ascii_strcasecmp(type, VCARDLISTING_TYPE) == 0) {
 		static const uint8_t default_apparams[] = {
 			0x04, 0x02, 0xff, 0xff
@@ -521,6 +537,12 @@ static int pbap_get(struct obex_session *os, void *user_data)
 	} else if (!rsize && g_ascii_strcasecmp(type, VCARDENTRY_TYPE) == 0) {
 		static const uint8_t default_apparams[] = {
 			0x07, 0x01, 0x00
+		};
+		buffer = default_apparams;
+		rsize = sizeof(default_apparams);
+	} else if (!rsize && g_ascii_strcasecmp(type, PHONEBOOK_TYPE) == 0) {
+		static const uint8_t default_apparams[] = {
+			0x04, 0x02, 0xff, 0xff
 		};
 		buffer = default_apparams;
 		rsize = sizeof(default_apparams);
