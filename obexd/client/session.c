@@ -27,6 +27,7 @@
 #include "gobex/gobex.h"
 
 #include "obexd/src/log.h"
+#include "obexd/src/obexd.h"
 #include "transfer.h"
 #include "session.h"
 #include "driver.h"
@@ -591,7 +592,7 @@ struct obc_session *obc_session_create(const char *source,
 	if (driver == NULL)
 		return NULL;
 
-	conn = dbus_bus_get(DBUS_BUS_SESSION, NULL);
+	conn = get_dbus_connection(obex_option_system_bus());
 	if (conn == NULL)
 		return NULL;
 

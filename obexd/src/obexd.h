@@ -8,6 +8,8 @@
  *
  */
 
+#include "gdbus/gdbus.h"
+
 #define OBEX_OPP	(1 << 1)
 #define OBEX_FTP	(1 << 2)
 #define OBEX_BIP	(1 << 3)
@@ -28,3 +30,4 @@ gboolean obex_option_auto_accept(void);
 const char *obex_option_root_folder(void);
 gboolean obex_option_symlinks(void);
 const char *obex_option_capability(void);
+gboolean obex_option_system_bus(void);

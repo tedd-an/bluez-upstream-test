@@ -40,6 +40,11 @@ DBusConnection *g_dbus_setup_bus(DBusBusType type, const char *name,
 DBusConnection *g_dbus_setup_private(DBusBusType type, const char *name,
 							DBusError *error);
 
+DBusConnection *get_dbus_connection(gboolean bus_type);
+
+DBusConnection *setup_dbus_connection(gboolean bus_type, const char *name,
+							DBusError *error);
+
 gboolean g_dbus_request_name(DBusConnection *connection, const char *name,
 							DBusError *error);
 

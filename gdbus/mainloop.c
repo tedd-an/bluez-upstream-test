@@ -293,6 +293,31 @@ DBusConnection *g_dbus_setup_bus(DBusBusType type, const char *name,
 	return conn;
 }
 
+DBusConnection *get_dbus_connection(gboolean bus_type)
+{
+	DBusConnection *conn = NULL;
+
+	if (bus_type)
+		conn = dbus_bus_get(DBUS_BUS_SYSTEM, NULL);
+	else
+		conn = dbus_bus_get(DBUS_BUS_SESSION, NULL);
+
+	return conn;
+}
+
+DBusConnection *setup_dbus_connection(gboolean bus_type, const char *name,
+							DBusError *error)
+{
+	DBusConnection *conn = NULL;
+
+	if (bus_type)
+		conn = g_dbus_setup_bus(DBUS_BUS_SYSTEM, name, error);
+	else
+		conn = g_dbus_setup_bus(DBUS_BUS_SESSION, name, error);
+
+	return conn;
+}
+
 DBusConnection *g_dbus_setup_private(DBusBusType type, const char *name,
 							DBusError *error)
 {
