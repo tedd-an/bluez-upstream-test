@@ -168,6 +168,10 @@ static const char *avdtp_options[] = {
 static const char *avrcp_options[] = {
 	"VolumeWithoutTarget",
 	"VolumeCategory",
+};
+
+static const char *a2dp_options[] = {
+	"Channels",
 	NULL
 };
 
@@ -188,6 +192,7 @@ static const struct group_table {
 	{ "CSIS",	csip_options },
 	{ "AVDTP",	avdtp_options },
 	{ "AVRCP",	avrcp_options },
+	{ "A2DP",	a2dp_options },
 	{ "AdvMon",	advmon_options },
 	{ }
 };
@@ -1157,6 +1162,13 @@ static void parse_avrcp(GKeyFile *config)
 		&btd_opts.avrcp.volume_category);
 }
 
+static void parse_a2dp(GKeyFile *config)
+{
+	parse_config_u8(config, "A2DP", "Channels",
+				&btd_opts.a2dp.channels,
+				0, UINT8_MAX);
+}
+
 static void parse_advmon(GKeyFile *config)
 {
 	parse_config_u8(config, "AdvMon", "RSSISamplingPeriod",
@@ -1181,6 +1193,7 @@ static void parse_config(GKeyFile *config)
 	parse_csis(config);
 	parse_avdtp(config);
 	parse_avrcp(config);
+	parse_a2dp(config);
 	parse_advmon(config);
 }
 
@@ -1225,6 +1238,8 @@ static void init_defaults(void)
 
 	btd_opts.avrcp.volume_without_target = false;
 	btd_opts.avrcp.volume_category = true;
+
+	btd_opts.a2dp.channels = 0;
 
 	btd_opts.advmon.rssi_sampling_period = 0xFF;
 	btd_opts.csis.encrypt = true;

@@ -109,6 +109,10 @@ struct btd_avrcp_opts {
 	bool		volume_category;
 };
 
+struct btd_a2dp_opts {
+	uint8_t  channels;
+};
+
 struct btd_advmon_opts {
 	uint8_t		rssi_sampling_period;
 };
@@ -151,6 +155,8 @@ struct btd_opts {
 
 	struct btd_avdtp_opts avdtp;
 	struct btd_avrcp_opts avrcp;
+
+	struct btd_a2dp_opts a2dp;
 
 	uint8_t		key_size;
 
