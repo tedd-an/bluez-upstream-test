@@ -33,6 +33,7 @@
 #include "src/dbus-common.h"
 #include "src/profile.h"
 #include "src/service.h"
+#include "src/btd.h"
 
 #include "src/uuid-helper.h"
 #include "src/log.h"
@@ -134,6 +135,7 @@ struct media_player {
 };
 
 static GSList *adapters = NULL;
+static unsigned int active_streams;
 
 static void endpoint_request_free(struct endpoint_request *request)
 {
@@ -302,6 +304,9 @@ done:
 
 static void clear_endpoint(struct media_endpoint *endpoint)
 {
+	if (active_streams > 0)
+		active_streams--;
+
 	media_endpoint_cancel_all(endpoint);
 
 	while (endpoint->transports != NULL)
@@ -658,6 +663,12 @@ static int set_config(struct a2dp_sep *sep, uint8_t *configuration,
 {
 	struct media_endpoint *endpoint = user_data;
 	struct a2dp_config_data *data;
+
+	active_streams++;
+	if (active_streams > btd_opts.a2dp.channels) {
+		DBG("A2DP channel limit (%u) exceeded", btd_opts.a2dp.channels);
+		return -1;
+	}
 
 	data = g_new0(struct a2dp_config_data, 1);
 	data->setup = setup;

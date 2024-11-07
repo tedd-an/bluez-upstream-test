@@ -716,6 +716,15 @@ static gboolean endpoint_setconf_ind(struct avdtp *session,
 			return TRUE;
 		}
 
+		if (ret == -1) {
+			/* Reject connection from SEP
+			* and clear configuration.
+			*/
+			DBG("Reject connection from %s", device_get_path(setup->chan->device));
+			a2dp_sep->endpoint->clear_configuration(a2dp_sep, a2dp_sep->user_data);
+			device_request_disconnect(setup->chan->device, NULL);
+		}
+
 		setup_error_init(setup, AVDTP_MEDIA_CODEC,
 					AVDTP_UNSUPPORTED_CONFIGURATION);
 		setup_unref(setup);
