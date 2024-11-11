@@ -2149,16 +2149,42 @@ static void property_changed(GDBusProxy *proxy, const char *name,
 		session_property_changed(proxy, name, iter);
 }
 
+static const char * const help[] = {
+		"Configures either session or system bus.By Default session bus is used",
+};
+
+static const char *bustype_option;
+
+static const char **optargs[] = {
+		&bustype_option
+};
+
+static const struct option options[] = {
+		{ "bustype", required_argument, 0, 'b' },
+		{ 0, 0, 0, 0 }
+};
+
+static const struct bt_shell_opt opt = {
+		.options = options,
+		.optno = sizeof(options) / sizeof(struct option),
+		.optstr = "b",
+		.optarg = optargs,
+		.help = help,
+};
+
 int main(int argc, char *argv[])
 {
 	GDBusClient *client;
 	int status;
 
-	bt_shell_init(argc, argv, NULL);
+	bt_shell_init(argc, argv, &opt);
 	bt_shell_set_menu(&main_menu);
 	bt_shell_set_prompt(PROMPT, NULL);
 
-	dbus_conn = g_dbus_setup_bus(DBUS_BUS_SESSION, NULL, NULL);
+	if (bustype_option && !(strcmp(bustype_option, "system")))
+		dbus_conn = g_dbus_setup_bus(DBUS_BUS_SYSTEM, NULL, NULL);
+	else
+		dbus_conn = g_dbus_setup_bus(DBUS_BUS_SESSION, NULL, NULL);
 
 	client = g_dbus_client_new(dbus_conn, "org.bluez.obex",
 							"/org/bluez/obex");
