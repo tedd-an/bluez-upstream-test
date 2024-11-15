@@ -29,6 +29,7 @@
 
 #include "lib/bluetooth.h"
 #include "lib/uuid.h"
+#include "lib/iso.h"
 
 #include "src/dbus-common.h"
 #include "src/shared/util.h"
@@ -42,6 +43,7 @@
 #include "src/shared/bap.h"
 #include "src/shared/ad.h"
 
+#include "btio/btio.h"
 #include "src/plugin.h"
 #include "src/gatt-database.h"
 #include "src/device.h"
@@ -101,12 +103,16 @@ struct bass_assistant {
 
 struct bass_delegator {
 	struct btd_device *device;	/* Broadcast source device */
+	struct btd_service *service;
 	struct bt_bcast_src *src;
 	struct bt_bap *bap;
 	unsigned int state_id;
 	uint8_t *bcode;
 	unsigned int timeout;
 	struct queue *bcode_reqs;
+	struct queue *streams;
+	unsigned int io_id;
+	GIOChannel *io;
 };
 
 struct bass_bcode_req {
@@ -218,18 +224,58 @@ static bool delegator_match_device(const void *data, const void *match_data)
 	return dg->device == device;
 }
 
-bool bass_check_bis(struct btd_device *device, uint8_t bis)
+static int stream_get_bis(struct bt_bap_stream *stream)
 {
-	struct bass_delegator *dg;
+	char *path = bt_bap_stream_get_user_data(stream);
+	const char *strbis;
+	int bis;
 
-	dg = queue_find(delegators, delegator_match_device, device);
-	if (!dg)
-		return true;
+	strbis = strstr(path, "/bis");
+	if (!strbis)
+		return 0;
 
-	if (!bt_bass_check_bis(dg->src, bis))
-		return false;
+	if (sscanf(strbis, "/bis%d", &bis) < 0)
+		return 0;
 
-	return true;
+	return bis;
+}
+
+static void append_stream(void *data, void *user_data)
+{
+	struct bt_bap_stream *stream = data;
+	struct sockaddr_iso_bc *addr = user_data;
+	uint8_t bis = stream_get_bis(stream);
+
+	DBG("%d", bis);
+
+	addr->bc_bis[addr->bc_num_bis] = bis;
+	addr->bc_num_bis++;
+}
+
+static bool link_io_unset(const void *data, const void *match_data)
+{
+	struct bt_bap_stream *link = (struct bt_bap_stream *)data;
+
+	return !bt_bap_stream_get_io(link);
+}
+
+static void connect_cb(GIOChannel *io, GError *err, void *user_data)
+{
+	struct bt_bap_stream *stream = user_data;
+	struct queue *links = bt_bap_stream_io_get_links(stream);
+	int fd;
+
+	DBG("");
+
+	/* Set fds for the stream and all its links. */
+	if (bt_bap_stream_get_io(stream))
+		stream = queue_find(links, link_io_unset, NULL);
+
+	fd = g_io_channel_unix_get_fd(io);
+
+	if (bt_bap_stream_set_io(stream, fd)) {
+		g_io_channel_set_close_on_unref(io, FALSE);
+	}
 }
 
 static void bap_state_changed(struct bt_bap_stream *stream, uint8_t old_state,
@@ -237,31 +283,54 @@ static void bap_state_changed(struct bt_bap_stream *stream, uint8_t old_state,
 {
 	struct bass_delegator *dg = user_data;
 	int bis;
-	char *path = bt_bap_stream_get_user_data(stream);
 	struct bt_bap *bap = bt_bap_stream_get_session(stream);
-	const char *strbis;
-	int err;
+	struct sockaddr_iso_bc iso_bc_addr = {0};
+	struct queue *links;
+	GError *gerr = NULL;
+	struct bt_bap_qos *bap_qos = bt_bap_stream_get_qos(stream);
+	struct bt_iso_qos qos;
 
 	if (dg->bap != bap)
 		return;
 
-	strbis = strstr(path, "/bis");
-	if (strbis == NULL) {
-		DBG("bis index cannot be found");
-		return;
-	}
-
-	err = sscanf(strbis, "/bis%d", &bis);
-	if (err < 0) {
-		DBG("sscanf error");
-		return;
-	}
+	bis = stream_get_bis(stream);
 
 	DBG("stream %p: %s(%u) -> %s(%u)", stream,
 			bt_bap_stream_statestr(old_state), old_state,
 			bt_bap_stream_statestr(new_state), new_state);
 
 	switch (new_state) {
+	case BT_BAP_STREAM_STATE_ENABLING:
+		iso_bc_addr.bc_bdaddr_type =
+				btd_device_get_bdaddr_type(dg->device);
+		memcpy(&iso_bc_addr.bc_bdaddr, device_get_address(dg->device),
+				sizeof(bdaddr_t));
+
+		append_stream(stream, &iso_bc_addr);
+
+		links = bt_bap_stream_io_get_links(stream);
+
+		queue_foreach(links, append_stream, &iso_bc_addr);
+
+		bap_qos_to_iso_qos(bap_qos, &qos);
+
+		if (!bt_io_set(dg->io, &gerr,
+				BT_IO_OPT_QOS, &qos,
+				BT_IO_OPT_INVALID)) {
+			error("bt_io_set: %s", gerr->message);
+			g_error_free(gerr);
+			break;
+		}
+
+		if (!bt_io_bcast_accept(dg->io,
+				connect_cb, stream, NULL, &gerr,
+				BT_IO_OPT_ISO_BC_NUM_BIS,
+				iso_bc_addr.bc_num_bis, BT_IO_OPT_ISO_BC_BIS,
+				iso_bc_addr.bc_bis, BT_IO_OPT_INVALID)) {
+			error("bt_io_bcast_accept: %s", gerr->message);
+			g_error_free(gerr);
+		}
+		break;
 	case BT_BAP_STREAM_STATE_STREAMING:
 		/* BAP stream was started. Mark BIS index as synced inside the
 		 * Broadcast Receive State characteristic and notify peers about
@@ -280,17 +349,79 @@ static void bap_state_changed(struct bt_bap_stream *stream, uint8_t old_state,
 	}
 }
 
-bool bass_bcast_probe(struct btd_device *device, struct bt_bap *bap)
+static void bis_handler(uint8_t bis, uint8_t sgrp, struct iovec *caps,
+	struct iovec *meta, struct bt_iso_qos *qos, void *user_data)
 {
-	struct bass_delegator *dg;
+	struct bass_delegator *dg = user_data;
+	struct bt_bap_pac *lpac;
+	char *path;
+	struct bt_bap_stream *stream;
+	struct bt_bap_qos bap_qos = {0};
 
-	dg = queue_find(delegators, delegator_match_device, device);
-	if (!dg)
-		return false;
+	/* Only handle streams required by the Brodcast Assistant. */
+	if (!bt_bass_check_bis(dg->src, bis))
+		return;
 
-	DBG("%p", dg);
+	/* Check if this stream caps match any local PAC */
+	bt_bap_verify_bis(dg->bap, bis, caps, &lpac);
+	if (!lpac)
+		return;
 
-	dg->bap = bap;
+	if (asprintf(&path, "%s/bis%d", device_get_path(dg->device), bis) < 0)
+		return;
+
+	bap_iso_qos_to_bap_qos(qos, &bap_qos);
+
+	stream = bt_bap_stream_new(dg->bap, lpac, NULL, &bap_qos, caps);
+	if (!stream)
+		return;
+
+	queue_push_tail(dg->streams, stream);
+
+	bt_bap_stream_set_user_data(stream, path);
+	bt_bap_stream_config(stream, &bap_qos,
+			caps, NULL, NULL);
+	bt_bap_stream_metadata(stream, meta,
+			NULL, NULL);
+}
+
+static gboolean big_info_cb(GIOChannel *io, GIOCondition cond,
+							gpointer user_data)
+{
+	struct bass_delegator *dg = user_data;
+	GError *err = NULL;
+	struct bt_iso_base base;
+	struct bt_iso_qos qos;
+
+	dg->io_id = 0;
+
+	bt_io_get(io, &err,
+			BT_IO_OPT_BASE, &base,
+			BT_IO_OPT_QOS, &qos,
+			BT_IO_OPT_INVALID);
+	if (err) {
+		error("%s", err->message);
+		g_error_free(err);
+		return FALSE;
+	}
+
+	parse_base(&base, &qos, bass_debug, bis_handler, dg);
+
+	return FALSE;
+}
+
+static void confirm_cb(GIOChannel *io, void *user_data)
+{
+	struct bass_delegator *dg = user_data;
+
+	DBG("");
+
+	/* Close the listen io */
+	g_io_channel_shutdown(dg->io, TRUE, NULL);
+	g_io_channel_unref(dg->io);
+
+	g_io_channel_ref(io);
+	dg->io = io;
 
 	/* Update Broadcast Receive State characteristic value and notify
 	 * peers.
@@ -298,13 +429,62 @@ bool bass_bcast_probe(struct btd_device *device, struct bt_bap *bap)
 	if (bt_bass_set_pa_sync(dg->src, BT_BASS_SYNCHRONIZED_TO_PA))
 		DBG("Failed to update Broadcast Receive State characteristic");
 
-	/* Register BAP stream state changed callback, to keep up to
-	 * date with BIG/PA sync state.
-	 */
-	dg->state_id = bt_bap_state_register(bap, bap_state_changed,
+	/* Register BAP stream state changed callback. */
+	dg->state_id = bt_bap_state_register(dg->bap, bap_state_changed,
 			NULL, dg, NULL);
 
+	dg->io_id = g_io_add_watch(io, G_IO_OUT, big_info_cb, dg);
+}
+
+bool bass_bcast_probe(struct btd_service *service, int *ret)
+{
+	struct btd_device *device = btd_service_get_device(service);
+	struct btd_adapter *adapter = device_get_adapter(device);
+	struct bass_delegator *dg;
+	GError *err = NULL;
+
+	dg = queue_find(delegators, delegator_match_device, device);
+	if (!dg)
+		/* Only probe devices added via Broadcast Assistants */
+		return false;
+
+	if (dg->service) {
+		/* Service has already been probed */
+		*ret = -EINVAL;
+		return true;
+	}
+
+	dg->service = service;
+	dg->bap = bap_get_session(device);
+
+	dg->io = bt_io_listen(NULL, confirm_cb, dg,
+		NULL, &err,
+		BT_IO_OPT_SOURCE_BDADDR,
+		btd_adapter_get_address(adapter),
+		BT_IO_OPT_SOURCE_TYPE,
+		btd_adapter_get_address_type(adapter),
+		BT_IO_OPT_DEST_BDADDR,
+		device_get_address(device),
+		BT_IO_OPT_DEST_TYPE,
+		btd_device_get_bdaddr_type(device),
+		BT_IO_OPT_MODE, BT_IO_MODE_ISO,
+		BT_IO_OPT_QOS, &bap_sink_pa_qos,
+		BT_IO_OPT_INVALID);
+	if (!dg->io) {
+		error("%s", err->message);
+		*ret = -err->code;
+		g_error_free(err);
+	}
+
 	return true;
+}
+
+static void stream_clear(void *data, void *user_data)
+{
+	struct bt_bap_stream *stream = data;
+	struct bass_delegator *dg = user_data;
+
+	bt_bass_clear_bis_sync(dg->src, stream_get_bis(stream));
 }
 
 bool bass_bcast_remove(struct btd_device *device)
@@ -316,6 +496,17 @@ bool bass_bcast_remove(struct btd_device *device)
 		return false;
 
 	DBG("%p", dg);
+
+	if (dg->io_id)
+		g_source_remove(dg->io_id);
+
+	if (dg->io) {
+		g_io_channel_shutdown(dg->io, TRUE, NULL);
+		g_io_channel_unref(dg->io);
+	}
+
+	queue_foreach(dg->streams, stream_clear, dg);
+	queue_destroy(dg->streams, NULL);
 
 	/* Update Broadcast Receive State characteristic value and notify
 	 * peers.
@@ -895,6 +1086,7 @@ probe:
 	dg->device = device;
 	dg->src = bcast_src;
 	dg->bcode_reqs = queue_new();
+	dg->streams = queue_new();
 
 	if (!delegators)
 		delegators = queue_new();
@@ -903,8 +1095,10 @@ probe:
 
 	DBG("delegator %p", dg);
 
-	/* Probe device with BAP. */
-	bap_scan_delegator_probe(device);
+	/* Add Broadcast Audio Announcement Service UUID
+	 * to device and probe service.
+	 */
+	btd_device_add_uuid(device, BCAAS_UUID_STR);
 
 	return 0;
 }
