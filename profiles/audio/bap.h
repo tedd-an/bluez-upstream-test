@@ -19,3 +19,8 @@ void bap_scan_delegator_probe(struct btd_device *device);
 bool parse_base(struct bt_iso_base *base, struct bt_iso_qos *qos,
 		util_debug_func_t func, bap_stream_cb_t handler,
 		void *user_data);
+
+void bap_iso_qos_to_bap_qos(struct bt_iso_qos *iso_qos,
+				struct bt_bap_qos *bap_qos);
+void bap_qos_to_iso_qos(struct bt_bap_qos *bap_qos,
+				struct bt_iso_qos *iso_qos);
