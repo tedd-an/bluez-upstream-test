@@ -191,8 +191,10 @@ static int hog_accept(struct btd_service *service)
 			return -ECONNREFUSED;
 
 		client = btd_device_get_gatt_client(device);
-		if (!bt_gatt_client_set_security(client,
-						BT_ATT_SECURITY_MEDIUM))
+		if (BT_ATT_SECURITY_MEDIUM !=
+			bt_gatt_client_get_security(client) &&
+		    !bt_gatt_client_set_security(client,
+						 BT_ATT_SECURITY_MEDIUM))
 			return -ECONNREFUSED;
 	}
 
