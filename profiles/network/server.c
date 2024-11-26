@@ -326,6 +326,32 @@ static gboolean bnep_setup(GIOChannel *chan,
 	}
 
 	/*
+	 * When benp_control_type is between 0x07 and 0xFF,
+	 * a reply is also required.
+	 * However, since the command size is only 2 bytes,
+	 * it needs to be processed before determining
+	 * if it is a valid command.
+	 */
+	if (req->type == BNEP_CONTROL &&
+		req->ctrl > BNEP_FILTER_MULT_ADDR_RSP) {
+		error("bnep: cmd not understood");
+		int err;
+		struct bnep_ctrl_cmd_not_understood_cmd rsp;
+
+		rsp.type = BNEP_CONTROL;
+		rsp.ctrl = BNEP_CMD_NOT_UNDERSTOOD;
+		rsp.unkn_ctrl = (uint8_t) req->ctrl;
+
+		err = send(sk, &rsp, sizeof(rsp), 0);
+
+		if (err < 0)
+			error("send not understood ctrl rsp error: %s (%d)",
+				  strerror(errno), errno);
+
+		return FALSE;
+	}
+
+	/*
 	 * Initial received data packet is BNEP_SETUP_CONNECTION_REQUEST_MSG
 	 * minimal size of this frame is 3 octets: 1 byte of BNEP Type +
 	 * 1 byte of BNEP Control Type + 1 byte of BNEP services UUID size.
