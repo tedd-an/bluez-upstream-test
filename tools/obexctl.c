@@ -1265,7 +1265,7 @@ static void map_ls_messages(GDBusProxy *proxy, int argc, char *argv[])
 
 static void map_ls(GDBusProxy *proxy, int argc, char *argv[])
 {
-	if (argc > 1) {
+	if (argc > 1 && strcmp(".", argv[1]) != 0) {
 		map_ls_messages(proxy, argc, argv);
 		return;
 	}
