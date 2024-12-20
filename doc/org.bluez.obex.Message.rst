@@ -137,3 +137,42 @@ boolean Protected [readonly]
 ````````````````````````````
 
 	Message protected flag
+
+string DeliveryStatus [readonly]
+````````````````````````````````
+
+	Message delivery status
+
+	Possible values:
+
+	:"delivered":
+	:"sent":
+	:"unknown":
+
+uint64 ConversationId [readonly]
+````````````````````````````````
+
+	Message conversation id
+	Identification of the conversation
+
+string ConversationName [readonly]
+````````````````````````````````
+
+	Human readable name of the conversation
+
+string Direction [readonly]
+````````````````````````````````
+
+	Indicate the direction of the message
+
+	Possible values:
+
+	:"incoming":
+	:"outgoing":
+	:"outgoingdraft":
+	:"outgoingpending":
+
+string AttachmentMimeTypes [readonly]
+````````````````````````````````
+
+	MIME type of the attachment
