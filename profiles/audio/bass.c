@@ -118,9 +118,11 @@ struct bass_delegator {
 struct bass_setup {
 	struct bass_delegator *dg;
 	struct bt_bap_stream *stream;
+	uint8_t bis;
 	struct bt_bap_qos qos;
 	struct iovec *meta;
 	struct iovec *config;
+	struct bt_bap_pac *lpac;
 };
 
 struct bass_bcode_req {
@@ -286,13 +288,30 @@ static bool link_io_unset(const void *data, const void *match_data)
 	return !bt_bap_stream_get_io(link);
 }
 
+static bool setup_find_enabling(const void *data, const void *match_data)
+{
+	const struct bass_setup *setup = data;
+
+	return (bt_bap_stream_get_state(setup->stream) ==
+				BT_BAP_STREAM_STATE_ENABLING);
+}
+
 static void connect_cb(GIOChannel *io, GError *err, void *user_data)
 {
-	struct bt_bap_stream *stream = user_data;
-	struct queue *links = bt_bap_stream_io_get_links(stream);
+	struct bass_delegator *dg = user_data;
+	struct bass_setup *setup;
+	struct bt_bap_stream *stream;
+	struct queue *links;
 	int fd;
 
 	DBG("");
+
+	setup = queue_find(dg->setups, setup_find_enabling, NULL);
+	if (!setup || !setup->stream)
+		return;
+
+	stream = setup->stream;
+	links = bt_bap_stream_io_get_links(stream);
 
 	/* Set fds for the stream and all its links. */
 	if (bt_bap_stream_get_io(stream))
@@ -316,6 +335,8 @@ static void bap_state_changed(struct bt_bap_stream *stream, uint8_t old_state,
 	GError *gerr = NULL;
 	struct bt_bap_qos *bap_qos = bt_bap_stream_get_qos(stream);
 	struct bt_iso_qos qos;
+	struct bass_setup *setup = queue_find(dg->setups,
+				match_setup_stream, stream);
 
 	if (dg->bap != bap)
 		return;
@@ -350,7 +371,7 @@ static void bap_state_changed(struct bt_bap_stream *stream, uint8_t old_state,
 		}
 
 		if (!bt_io_bcast_accept(dg->io,
-				connect_cb, stream, NULL, &gerr,
+				connect_cb, dg, NULL, &gerr,
 				BT_IO_OPT_ISO_BC_NUM_BIS,
 				iso_bc_addr.bc_num_bis, BT_IO_OPT_ISO_BC_BIS,
 				iso_bc_addr.bc_bis, BT_IO_OPT_INVALID)) {
@@ -373,7 +394,71 @@ static void bap_state_changed(struct bt_bap_stream *stream, uint8_t old_state,
 			 */
 			bt_bass_clear_bis_sync(dg->src, bis);
 		break;
+	case BT_BAP_STREAM_STATE_IDLE:
+		bt_bass_clear_bis_sync(dg->src, bis);
+		setup->stream = NULL;
+		break;
 	}
+}
+
+static void setup_configure_stream(struct bass_setup *setup)
+{
+	char *path;
+
+	setup->stream = bt_bap_stream_new(setup->dg->bap, setup->lpac, NULL,
+					&setup->qos, setup->config);
+	if (!setup->stream)
+		return;
+
+	if (asprintf(&path, "%s/bis%d",
+			device_get_path(setup->dg->device),
+			setup->bis) < 0)
+		return;
+
+	bt_bap_stream_set_user_data(setup->stream, path);
+
+	bt_bap_stream_config(setup->stream, &setup->qos,
+			setup->config, NULL, NULL);
+	bt_bap_stream_metadata(setup->stream, setup->meta,
+			NULL, NULL);
+}
+
+static void stream_unlink(void *data, void *user_data)
+{
+	struct bt_bap_stream *link = data;
+	struct bt_bap_stream *stream = user_data;
+
+	bt_bap_stream_io_unlink(link, stream);
+}
+
+static void bass_remove_bis(struct bass_setup *setup)
+{
+	struct queue *links = bt_bap_stream_io_get_links(setup->stream);
+
+	queue_foreach(links, stream_unlink, setup->stream);
+	bt_bap_stream_release(setup->stream, NULL, NULL);
+}
+
+static void setup_disable_streaming(void *data, void *user_data)
+{
+	struct bass_setup *setup = data;
+	struct queue *links = bt_bap_stream_io_get_links(setup->stream);
+
+	if (!setup->stream)
+		return;
+
+	if (bt_bap_stream_get_state(setup->stream) !=
+				BT_BAP_STREAM_STATE_STREAMING)
+		return;
+
+	queue_foreach(links, stream_unlink, setup->stream);
+	bt_bap_stream_disable(setup->stream, false, NULL, NULL);
+}
+
+static void bass_add_bis(struct bass_setup *setup)
+{
+	queue_foreach(setup->dg->setups, setup_disable_streaming, NULL);
+	setup_configure_stream(setup);
 }
 
 static void bis_handler(uint8_t bis, uint8_t sgrp, struct iovec *caps,
@@ -381,19 +466,11 @@ static void bis_handler(uint8_t bis, uint8_t sgrp, struct iovec *caps,
 {
 	struct bass_delegator *dg = user_data;
 	struct bt_bap_pac *lpac;
-	char *path;
 	struct bass_setup *setup;
-
-	/* Only handle streams required by the Brodcast Assistant. */
-	if (!bt_bass_check_bis(dg->src, bis))
-		return;
 
 	/* Check if this stream caps match any local PAC */
 	bt_bap_verify_bis(dg->bap, bis, caps, &lpac);
 	if (!lpac)
-		return;
-
-	if (asprintf(&path, "%s/bis%d", device_get_path(dg->device), bis) < 0)
 		return;
 
 	setup = new0(struct bass_setup, 1);
@@ -401,6 +478,8 @@ static void bis_handler(uint8_t bis, uint8_t sgrp, struct iovec *caps,
 		return;
 
 	setup->dg = dg;
+	setup->bis = bis;
+	setup->lpac = lpac;
 
 	setup->qos = *qos;
 	setup->qos.bcast.bcode = util_iov_dup(qos->bcast.bcode, 1);
@@ -408,18 +487,13 @@ static void bis_handler(uint8_t bis, uint8_t sgrp, struct iovec *caps,
 	setup->meta = util_iov_dup(meta, 1);
 	setup->config = util_iov_dup(caps, 1);
 
-	setup->stream = bt_bap_stream_new(dg->bap, lpac, NULL,
-					&setup->qos, setup->config);
-	if (!setup->stream)
+	queue_push_tail(setup->dg->setups, setup);
+
+	/* Only handle streams required by the Brodcast Assistant. */
+	if (!bt_bass_check_bis(dg->src, bis))
 		return;
 
-	queue_push_tail(dg->setups, setup);
-
-	bt_bap_stream_set_user_data(setup->stream, path);
-	bt_bap_stream_config(setup->stream, &setup->qos,
-			setup->config, NULL, NULL);
-	bt_bap_stream_metadata(setup->stream, setup->meta,
-			NULL, NULL);
+	setup_configure_stream(setup);
 }
 
 static gboolean big_info_cb(GIOChannel *io, GIOCondition cond,
@@ -536,8 +610,13 @@ static void setup_free(void *data)
 	util_iov_free(setup->meta, 1);
 	util_iov_free(setup->config, 1);
 
-	bt_bass_clear_bis_sync(setup->dg->src,
+	if (setup->stream) {
+		uint8_t state = bt_bap_stream_get_state(setup->stream);
+
+		if (state == BT_BAP_STREAM_STATE_STREAMING)
+			bt_bass_clear_bis_sync(setup->dg->src,
 					stream_get_bis(setup->stream));
+	}
 }
 
 bool bass_bcast_remove(struct btd_device *device)
@@ -1201,6 +1280,98 @@ static int handle_set_bcode_req(struct bt_bcast_src *bcast_src,
 	return 0;
 }
 
+static bool setup_match_bis(const void *data, const void *match_data)
+{
+	const struct bass_setup *setup = data;
+	const int bis =  PTR_TO_INT(match_data);
+
+	return setup->bis == bis;
+}
+
+static void bass_update_bis_sync(struct bass_delegator *dg,
+				struct bt_bcast_src *bcast_src)
+{
+	for (int bis = 1; bis < ISO_MAX_NUM_BIS; bis++) {
+		struct bass_setup *setup = queue_find(dg->setups,
+				setup_match_bis, INT_TO_PTR(bis));
+		uint8_t state;
+
+		if (!setup)
+			continue;
+
+		state = bt_bap_stream_get_state(setup->stream);
+
+		if (!setup->stream && bt_bass_check_bis(bcast_src, bis))
+			bass_add_bis(setup);
+		else if (setup->stream &&
+				state == BT_BAP_STREAM_STATE_STREAMING &&
+				!bt_bass_check_bis(bcast_src, bis))
+			bass_remove_bis(setup);
+	}
+}
+
+static int handle_mod_src_req(struct bt_bcast_src *bcast_src,
+			struct bt_bass_mod_src_params *params,
+			struct bass_data *data)
+{
+	struct bass_delegator *dg;
+	uint8_t sync_state;
+	int err = 0;
+
+	DBG("");
+
+	dg = queue_find(delegators, delegator_match_src, bcast_src);
+	if (!dg)
+		return -EINVAL;
+
+	err = bt_bass_get_pa_sync(bcast_src, &sync_state);
+	if (err)
+		return err;
+
+	switch (sync_state) {
+	case BT_BASS_SYNCHRONIZED_TO_PA:
+		if (params->pa_sync == PA_SYNC_NO_SYNC) {
+			g_io_channel_shutdown(dg->io, TRUE, NULL);
+			g_io_channel_unref(dg->io);
+			dg->io = NULL;
+
+			bt_bass_set_pa_sync(dg->src,
+				BT_BASS_NOT_SYNCHRONIZED_TO_PA);
+		} else {
+			bass_update_bis_sync(dg, bcast_src);
+		}
+		break;
+	case BT_BASS_NOT_SYNCHRONIZED_TO_PA:
+		if (params->pa_sync == PA_SYNC_NO_PAST) {
+			struct btd_adapter *adapter =
+					device_get_adapter(dg->device);
+			GError *err = NULL;
+
+			dg->io = bt_io_listen(NULL, confirm_cb, dg,
+				NULL, &err,
+				BT_IO_OPT_SOURCE_BDADDR,
+				btd_adapter_get_address(adapter),
+				BT_IO_OPT_SOURCE_TYPE,
+				btd_adapter_get_address_type(adapter),
+				BT_IO_OPT_DEST_BDADDR,
+				device_get_address(dg->device),
+				BT_IO_OPT_DEST_TYPE,
+				btd_device_get_bdaddr_type(dg->device),
+				BT_IO_OPT_MODE, BT_IO_MODE_ISO,
+				BT_IO_OPT_QOS, &bap_sink_pa_qos,
+				BT_IO_OPT_INVALID);
+			if (!dg->io) {
+				error("%s", err->message);
+				g_error_free(err);
+			}
+		}
+
+		break;
+	}
+
+	return 0;
+}
+
 static int cp_handler(struct bt_bcast_src *bcast_src, uint8_t op, void *params,
 		void *user_data)
 {
@@ -1213,6 +1384,9 @@ static int cp_handler(struct bt_bcast_src *bcast_src, uint8_t op, void *params,
 		break;
 	case BT_BASS_SET_BCAST_CODE:
 		err = handle_set_bcode_req(bcast_src, params, data);
+		break;
+	case BT_BASS_MOD_SRC:
+		err = handle_mod_src_req(bcast_src, params, data);
 		break;
 	}
 
