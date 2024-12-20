@@ -6053,7 +6053,12 @@ static int device_browse_gatt(struct btd_device *device, DBusMessage *msg)
 
 static uint16_t get_sdp_flags(struct btd_device *device)
 {
+	size_t i;
 	uint16_t vid, pid;
+	static const uint16_t device_sdp_flags[][3] = {
+		{0x054c, 0x05c4, SDP_LARGE_MTU},
+		{0x054c, 0x09cc, SDP_LARGE_MTU}
+	};
 
 	vid = btd_device_get_vendor(device);
 	pid = btd_device_get_product(device);
@@ -6062,8 +6067,11 @@ static uint16_t get_sdp_flags(struct btd_device *device)
 	 * results in SDP response being dropped by kernel. Workaround this by
 	 * forcing SDP code to use bigger MTU while connecting.
 	 */
-	if (vid == 0x054c && pid == 0x05c4)
-		return SDP_LARGE_MTU;
+	for (i=0; i<G_N_ELEMENTS(device_sdp_flags); i++) {
+		if (vid == device_sdp_flags[i][0] &&
+				pid == device_sdp_flags[i][1])
+			return device_sdp_flags[i][2];
+	}
 
 	if (btd_adapter_ssp_enabled(device->adapter))
 		return 0;
