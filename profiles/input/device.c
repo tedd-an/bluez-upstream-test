@@ -89,7 +89,7 @@ struct input_device {
 };
 
 static int idle_timeout = 0;
-static uhid_state_t uhid_state = UHID_ENABLED;
+static uhid_state_t uhid_state = UHID_DISABLED;
 static bool classic_bonded_only = true;
 
 void input_set_idle_timeout(int timeout)
