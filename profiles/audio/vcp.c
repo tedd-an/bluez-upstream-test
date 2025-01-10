@@ -72,7 +72,16 @@ static void vcp_debug(const char *str, void *user_data)
 
 static int vcp_disconnect(struct btd_service *service)
 {
+	struct vcp_data *data = btd_service_get_user_data(service);
 	DBG("");
+
+	if (!data) {
+		error("VCP service not handled by profile");
+		return -EINVAL;
+	}
+	bt_vcp_detach(data->vcp);
+
+	btd_service_disconnecting_complete(service, 0);
 	return 0;
 }
 
