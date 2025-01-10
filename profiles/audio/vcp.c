@@ -186,7 +186,7 @@ bool bt_audio_vcp_set_volume(struct btd_device *device, int8_t volume)
 	return FALSE;
 }
 
-static void vcp_detached(struct bt_vcp *vcp, void *user_data)
+static void vcp_remote_client_detached(struct bt_vcp *vcp, void *user_data)
 {
 	struct vcp_data *data;
 
@@ -201,7 +201,7 @@ static void vcp_detached(struct bt_vcp *vcp, void *user_data)
 	vcp_data_remove(data);
 }
 
-static void vcp_attached(struct bt_vcp *vcp, void *user_data)
+static void vcp_remote_client_attached(struct bt_vcp *vcp, void *user_data)
 {
 	struct vcp_data *data;
 	struct bt_att *att;
@@ -352,7 +352,8 @@ static int vcp_init(void)
 	if (err)
 		return err;
 
-	vcp_id = bt_vcp_register(vcp_attached, vcp_detached, NULL);
+	vcp_id = bt_vcp_register(vcp_remote_client_attached,
+					    vcp_remote_client_detached, NULL);
 
 	return 0;
 }
