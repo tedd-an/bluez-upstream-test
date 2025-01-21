@@ -147,6 +147,12 @@ struct bt_vcs_ab_vol {
 	uint8_t	vol_set;
 } __packed;
 
+struct bt_vcs_client_ab_vol {
+	uint8_t	op;
+	uint8_t	change_counter;
+	uint8_t	vol_set;
+} __packed;
+
 struct bt_vocs_set_vol_off {
 	uint8_t	change_counter;
 	int16_t set_vol_offset;
@@ -192,6 +198,11 @@ struct bt_vcp {
 
 	bt_vcp_debug_func_t debug_func;
 	bt_vcp_destroy_func_t debug_destroy;
+	bt_vcp_volume_func_t volume_changed;
+
+	uint8_t volume;
+	uint8_t volume_counter;
+
 	void *debug_data;
 	void *user_data;
 };
@@ -368,7 +379,15 @@ static struct bt_aics *vcp_get_aics(struct bt_vcp *vcp)
 	return vcp->rdb->aics;
 }
 
-static void vcp_detached(void *data, void *user_data)
+static void vcp_remote_client_attached(void *data, void *user_data)
+{
+	struct bt_vcp_cb *cb = data;
+	struct bt_vcp *vcp = user_data;
+
+	cb->attached(vcp, cb->user_data);
+}
+
+static void vcp_remote_client_detached(void *data, void *user_data)
 {
 	struct bt_vcp_cb *cb = data;
 	struct bt_vcp *vcp = user_data;
@@ -381,10 +400,10 @@ void bt_vcp_detach(struct bt_vcp *vcp)
 	if (!queue_remove(sessions, vcp))
 		return;
 
-	bt_gatt_client_unref(vcp->client);
-	vcp->client = NULL;
-
-	queue_foreach(vcp_cbs, vcp_detached, vcp);
+	if (vcp->client) {
+		bt_gatt_client_unref(vcp->client);
+		vcp->client = NULL;
+	}
 }
 
 static void vcp_db_free(void *data)
@@ -478,11 +497,13 @@ static void vcp_debug(struct bt_vcp *vcp, const char *format, ...)
 
 static void vcp_disconnected(int err, void *user_data)
 {
+	/* called only when this device is acting a a server */
 	struct bt_vcp *vcp = user_data;
 
 	DBG(vcp, "vcp %p disconnected err %d", vcp, err);
 
 	bt_vcp_detach(vcp);
+	queue_foreach(vcp_cbs, vcp_remote_client_detached, vcp);
 }
 
 static struct bt_vcp *vcp_get_session(struct bt_att *att, struct gatt_db *db)
@@ -497,12 +518,17 @@ static struct bt_vcp *vcp_get_session(struct bt_att *att, struct gatt_db *db)
 			return vcp;
 	}
 
+	/* called only when this device is acting a a server */
 	vcp = bt_vcp_new(db, NULL);
 	vcp->att = att;
 
+	queue_foreach(vcp_cbs, vcp_remote_client_attached, vcp);
+
 	bt_att_register_disconnect(att, vcp_disconnected, vcp, NULL);
 
-	bt_vcp_attach(vcp, NULL);
+	if (!sessions)
+		sessions = queue_new();
+	queue_push_tail(sessions, vcp);
 
 	return vcp;
 
@@ -540,6 +566,10 @@ static uint8_t vcs_rel_vol_down(struct bt_vcs *vcs, struct bt_vcp *vcp,
 
 	vstate->vol_set = MAX((vstate->vol_set - VCP_STEP_SIZE), 0);
 	vstate->counter = -~vstate->counter; /*Increment Change Counter*/
+	vcp->volume = vstate->vol_set;
+
+	if (vcp->volume_changed)
+		vcp->volume_changed(vcp, vcp->volume);
 
 	gatt_db_attribute_notify(vdb->vcs->vs, (void *)vstate,
 				 sizeof(struct vol_state),
@@ -579,6 +609,10 @@ static uint8_t vcs_rel_vol_up(struct bt_vcs *vcs, struct bt_vcp *vcp,
 
 	vstate->vol_set = MIN((vstate->vol_set + VCP_STEP_SIZE), 255);
 	vstate->counter = -~vstate->counter; /*Increment Change Counter*/
+	vcp->volume = vstate->vol_set;
+
+	if (vcp->volume_changed)
+		vcp->volume_changed(vcp, vcp->volume);
 
 	gatt_db_attribute_notify(vdb->vcs->vs, (void *)vstate,
 				 sizeof(struct vol_state),
@@ -619,6 +653,10 @@ static uint8_t vcs_unmute_rel_vol_down(struct bt_vcs *vcs, struct bt_vcp *vcp,
 	vstate->mute = 0x00;
 	vstate->vol_set = MAX((vstate->vol_set - VCP_STEP_SIZE), 0);
 	vstate->counter = -~vstate->counter; /*Increment Change Counter*/
+	vcp->volume = vstate->vol_set;
+
+	if (vcp->volume_changed)
+		vcp->volume_changed(vcp, vcp->volume);
 
 	gatt_db_attribute_notify(vdb->vcs->vs, (void *)vstate,
 				 sizeof(struct vol_state),
@@ -659,6 +697,10 @@ static uint8_t vcs_unmute_rel_vol_up(struct bt_vcs *vcs, struct bt_vcp *vcp,
 	vstate->mute = 0x00;
 	vstate->vol_set = MIN((vstate->vol_set + VCP_STEP_SIZE), 255);
 	vstate->counter = -~vstate->counter; /*Increment Change Counter*/
+	vcp->volume = vstate->vol_set;
+
+	if (vcp->volume_changed)
+		vcp->volume_changed(vcp, vcp->volume);
 
 	gatt_db_attribute_notify(vdb->vcs->vs, (void *)vstate,
 				 sizeof(struct vol_state),
@@ -698,6 +740,10 @@ static uint8_t vcs_set_absolute_vol(struct bt_vcs *vcs, struct bt_vcp *vcp,
 
 	vstate->vol_set = req->vol_set;
 	vstate->counter = -~vstate->counter; /*Increment Change Counter*/
+	vcp->volume = vstate->vol_set;
+
+	if (vcp->volume_changed)
+		vcp->volume_changed(vcp, vcp->volume);
 
 	gatt_db_attribute_notify(vdb->vcs->vs, (void *)vstate,
 				 sizeof(struct vol_state),
@@ -1874,6 +1920,15 @@ bool bt_vcp_set_debug(struct bt_vcp *vcp, bt_vcp_debug_func_t func,
 	return true;
 }
 
+bool bt_vcp_set_volume_callback(struct bt_vcp *vcp,
+				bt_vcp_volume_func_t volume_changed)
+{
+	if (!vcp)
+		return false;
+
+	vcp->volume_changed = volume_changed;
+	return true;
+}
 unsigned int bt_vcp_register(bt_vcp_func_t attached, bt_vcp_func_t detached,
 							void *user_data)
 {
@@ -1959,6 +2014,98 @@ static void vcp_vstate_notify(struct bt_vcp *vcp, uint16_t value_handle,
 	DBG(vcp, "Vol Settings 0x%x", vstate.vol_set);
 	DBG(vcp, "Mute Status 0x%x", vstate.mute);
 	DBG(vcp, "Vol Counter 0x%x", vstate.counter);
+
+	vcp->volume = vstate.vol_set;
+	vcp->volume_counter = vstate.counter;
+
+	if (vcp->volume_changed)
+		vcp->volume_changed(vcp, vcp->volume);
+}
+
+static void vcp_volume_cp_sent(bool success, uint8_t err, void *user_data)
+{
+	struct bt_vcp *vcp = user_data;
+
+	if (!success) {
+		if (err == BT_ATT_ERROR_INVALID_CHANGE_COUNTER)
+			DBG(vcp, "setting volume failed: invalid counter");
+		else
+			DBG(vcp, "setting volume failed: error 0x%x", err);
+	}
+}
+
+uint8_t bt_vcp_get_volume(struct bt_vcp *vcp)
+{
+	return vcp->volume;
+}
+
+static bool vcp_set_volume_client(struct bt_vcp *vcp, uint8_t volume)
+{
+	struct bt_vcs_client_ab_vol req;
+	uint16_t value_handle;
+	struct bt_vcs *vcs = vcp_get_vcs(vcp);
+
+	if (!vcs) {
+		DBG(vcp, "error: vcs not available");
+		return false;
+	}
+
+	if (!vcs->vol_cp) {
+		DBG(vcp, "error: vol_cp characteristics not available");
+		return false;
+	}
+
+	if (!gatt_db_attribute_get_char_data(vcs->vol_cp, NULL, &value_handle,
+							NULL, NULL, NULL)) {
+		DBG(vcp, "error: vol_cp characteristics not available");
+		return false;
+	}
+
+	vcp->volume = volume;
+	req.op = BT_VCS_SET_ABSOLUTE_VOL;
+	req.vol_set = vcp->volume;
+	req.change_counter = vcp->volume_counter;
+
+	if (!bt_gatt_client_write_value(vcp->client, value_handle, (void *) &req,
+		sizeof(struct bt_vcs_client_ab_vol), vcp_volume_cp_sent, vcp,
+									NULL)) {
+		DBG(vcp, "error writing volume");
+		return false;
+	}
+	return true;
+}
+
+static bool vcp_set_volume_server(struct bt_vcp *vcp, uint8_t volume)
+{
+	struct bt_vcp_db *vdb = vcp_get_vdb(vcp);
+	struct vol_state *vstate;
+
+	vcp->volume = volume;
+
+	if (!vdb) {
+		DBG(vcp, "error: VDB not available");
+		return false;
+	}
+
+	vstate = vdb_get_vstate(vdb);
+	if (!vstate) {
+		DBG(vcp, "error: VSTATE not available");
+		return false;
+	}
+
+	vstate->vol_set = vcp->volume;
+	vstate->counter = -~vstate->counter; /*Increment Change Counter*/
+	gatt_db_attribute_notify(vdb->vcs->vs, (void *) vstate,
+			sizeof(struct vol_state), bt_vcp_get_att(vcp));
+	return true;
+}
+
+bool bt_vcp_set_volume(struct bt_vcp *vcp, uint8_t volume)
+{
+	if (vcp->client)
+		return vcp_set_volume_client(vcp, volume);
+	else
+		return vcp_set_volume_server(vcp, volume);
 }
 
 static void vcp_voffset_state_notify(struct bt_vcp *vcp, uint16_t value_handle,
@@ -2061,6 +2208,9 @@ static void read_vol_state(struct bt_vcp *vcp, bool success, uint8_t att_ecode,
 	DBG(vcp, "Vol Set:%x", vs->vol_set);
 	DBG(vcp, "Vol Mute:%x", vs->mute);
 	DBG(vcp, "Vol Counter:%x", vs->counter);
+
+	vcp->volume = vs->vol_set;
+	vcp->volume_counter = vs->counter;
 }
 
 static void read_vol_offset_state(struct bt_vcp *vcp, bool success,
@@ -2262,7 +2412,7 @@ static void foreach_vcs_char(struct gatt_db_attribute *attr, void *user_data)
 		DBG(vcp, "VCS Vol state found: handle 0x%04x", value_handle);
 
 		vcs = vcp_get_vcs(vcp);
-		if (!vcs || vcs->vs)
+		if (!vcs)
 			return;
 
 		vcs->vs = attr;
@@ -2279,7 +2429,7 @@ static void foreach_vcs_char(struct gatt_db_attribute *attr, void *user_data)
 		DBG(vcp, "VCS Volume CP found: handle 0x%04x", value_handle);
 
 		vcs = vcp_get_vcs(vcp);
-		if (!vcs || vcs->vol_cp)
+		if (!vcs)
 			return;
 
 		vcs->vol_cp = attr;
@@ -2291,7 +2441,7 @@ static void foreach_vcs_char(struct gatt_db_attribute *attr, void *user_data)
 		DBG(vcp, "VCS Vol Flag found: handle 0x%04x", value_handle);
 
 		vcs = vcp_get_vcs(vcp);
-		if (!vcs || vcs->vf)
+		if (!vcs)
 			return;
 
 		vcs->vf = attr;
@@ -2757,4 +2907,3 @@ bool bt_vcp_attach(struct bt_vcp *vcp, struct bt_gatt_client *client)
 
 	return true;
 }
-
