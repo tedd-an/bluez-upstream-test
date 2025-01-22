@@ -30,6 +30,7 @@
 #include "gdbus/gdbus.h"
 #include "print.h"
 #include "agent.h"
+#include "error.h"
 #include "gatt.h"
 #include "advertising.h"
 #include "adv_monitor.h"
@@ -1977,8 +1978,8 @@ static void connect_reply(DBusMessage *message, void *user_data)
 	dbus_error_init(&error);
 
 	if (dbus_set_error_from_message(&error, message) == TRUE) {
-		bt_shell_printf("Failed to connect: %s %s\n", error.name,
-				error.message);
+		bt_shell_printf("Failed to connect: %s: %s\n", error.name,
+				error_code_to_str(error.message));
 		dbus_error_free(&error);
 		return bt_shell_noninteractive_quit(EXIT_FAILURE);
 	}
