@@ -19,6 +19,7 @@ struct {
 	{ "br-connection-profile-unavailable", "Exhausted the list of BR/EDR profiles to connect to" },
 	{ "br-connection-busy", "Cannot connect, connection busy" },
 	{ "br-connection-adapter-not-powered", "Cannot connect, adapter is not powered" },
+	{ "br-connection-page-timeout", "Device is unpowered or not in range" },
 };
 
 const char *error_code_to_str(const char *error_code)
