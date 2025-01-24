@@ -39,6 +39,7 @@
 #define OBEX_MAS_UUID \
 	"\xBB\x58\x2B\x40\x42\x0C\x11\xDB\xB0\xDE\x08\x00\x20\x0C\x9A\x66"
 #define OBEX_MAS_UUID_LEN 16
+#define SUPPORTED_FEATURES_TAG  0x29
 
 #define MAP_INTERFACE "org.bluez.obex.MessageAccess1"
 #define MAP_MSG_INTERFACE "org.bluez.obex.Message1"
@@ -2179,6 +2180,23 @@ static void parse_service_record(struct map_data *map)
 		map->supported_features = 0x0000001f;
 }
 
+static void *map_supported_features(struct obc_session *session)
+{
+	const void *data;
+
+	/* Supported Feature Bits */
+	data = obc_session_get_attribute(session,
+					SDP_ATTR_MAP_SUPPORTED_FEATURES);
+	if (!data)
+		return NULL;
+
+	if(*(uint32_t *)data & 0x00080000)
+		return g_obex_apparam_set_uint32(NULL, SUPPORTED_FEATURES_TAG,
+				0x0000027f);
+
+	return NULL;
+}
+
 static int map_probe(struct obc_session *session)
 {
 	struct map_data *map;
@@ -2224,6 +2242,7 @@ static struct obc_driver map = {
 	.uuid = MAS_UUID,
 	.target = OBEX_MAS_UUID,
 	.target_len = OBEX_MAS_UUID_LEN,
+	.supported_features = map_supported_features,
 	.probe = map_probe,
 	.remove = map_remove
 };
