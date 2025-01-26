@@ -203,6 +203,9 @@ struct bt_vcp {
 	uint8_t volume;
 	uint8_t volume_counter;
 
+	uint8_t pending_volume;
+	unsigned int pending_ops;
+
 	void *debug_data;
 	void *user_data;
 };
@@ -2003,6 +2006,19 @@ done:
 	return vcp;
 }
 
+static void vcp_set_pending_volume(struct bt_vcp *vcp)
+{
+	/* Send pending request if any */
+	if (vcp->pending_ops <= 1) {
+		vcp->pending_ops = 0;
+		return;
+	}
+	vcp->pending_ops = 0;
+
+	DBG(vcp, "set pending volume 0x%x", vcp->pending_volume);
+	bt_vcp_set_volume(vcp, vcp->pending_volume);
+}
+
 static void vcp_vstate_notify(struct bt_vcp *vcp, uint16_t value_handle,
 				const uint8_t *value, uint16_t length,
 				void *user_data)
@@ -2020,6 +2036,8 @@ static void vcp_vstate_notify(struct bt_vcp *vcp, uint16_t value_handle,
 
 	if (vcp->volume_changed)
 		vcp->volume_changed(vcp, vcp->volume);
+
+	vcp_set_pending_volume(vcp);
 }
 
 static void vcp_volume_cp_sent(bool success, uint8_t err, void *user_data)
@@ -2031,6 +2049,8 @@ static void vcp_volume_cp_sent(bool success, uint8_t err, void *user_data)
 			DBG(vcp, "setting volume failed: invalid counter");
 		else
 			DBG(vcp, "setting volume failed: error 0x%x", err);
+
+		vcp_set_pending_volume(vcp);
 	}
 }
 
@@ -2061,9 +2081,20 @@ static bool vcp_set_volume_client(struct bt_vcp *vcp, uint8_t volume)
 		return false;
 	}
 
-	vcp->volume = volume;
+	vcp->pending_volume = volume;
+	if (vcp->pending_ops) {
+		/* Wait for current operation to complete */
+		vcp->pending_ops++;
+		return true;
+	} else if (vcp->volume == vcp->pending_volume) {
+		/* Do not set to current value, as that doesn't generate
+		 * a notification
+		 */
+		return true;
+	}
+
 	req.op = BT_VCS_SET_ABSOLUTE_VOL;
-	req.vol_set = vcp->volume;
+	req.vol_set = vcp->pending_volume;
 	req.change_counter = vcp->volume_counter;
 
 	if (!bt_gatt_client_write_value(vcp->client, value_handle, (void *)&req,
@@ -2072,6 +2103,8 @@ static bool vcp_set_volume_client(struct bt_vcp *vcp, uint8_t volume)
 		DBG(vcp, "error writing volume");
 		return false;
 	}
+
+	vcp->pending_ops++;
 	return true;
 }
 
@@ -2895,6 +2928,8 @@ bool bt_vcp_attach(struct bt_vcp *vcp, struct bt_gatt_client *client)
 	vcp->client = bt_gatt_client_clone(client);
 	if (!vcp->client)
 		return false;
+
+	vcp->pending_ops = 0;
 
 	bt_uuid16_create(&uuid, VCS_UUID);
 	gatt_db_foreach_service(vcp->rdb->db, &uuid, foreach_vcs_service, vcp);
