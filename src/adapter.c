@@ -5727,6 +5727,7 @@ static void device_flags_changed_callback(uint16_t index, uint16_t length,
 	struct btd_adapter *adapter = user_data;
 	struct btd_device *dev;
 	char addr[18];
+	uint32_t changed_flags = 0;
 
 	if (length < sizeof(*ev)) {
 		btd_error(adapter->dev_id,
@@ -5744,7 +5745,9 @@ static void device_flags_changed_callback(uint16_t index, uint16_t length,
 		return;
 	}
 
-	btd_device_flags_changed(dev, ev->supported_flags, ev->current_flags);
+	changed_flags = ev->current_flags | btd_device_get_pending_flags(dev);
+
+	btd_device_flags_changed(dev, ev->supported_flags, changed_flags);
 }
 
 
