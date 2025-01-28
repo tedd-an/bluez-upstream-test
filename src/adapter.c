@@ -5580,6 +5580,7 @@ static void set_device_privacy_complete(uint8_t status, uint16_t length,
 	if (status != MGMT_STATUS_SUCCESS) {
 		error("Set device flags return status: %s",
 					mgmt_errstr(status));
+		dev->pending_flags = 0;
 		return;
 	}
 
