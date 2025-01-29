@@ -66,6 +66,7 @@ struct set_opts {
 	uint16_t imtu;
 	uint16_t omtu;
 	int central;
+	uint8_t auto_mtu;
 	uint8_t mode;
 	int flushable;
 	uint32_t priority;
@@ -610,7 +611,7 @@ static uint8_t mode_l2mode(uint8_t mode)
 }
 
 static gboolean set_l2opts(int sock, uint16_t imtu, uint16_t omtu,
-						uint8_t mode, GError **err)
+				uint8_t auto_mtu, uint8_t mode, GError **err)
 {
 	struct l2cap_options l2o;
 	socklen_t len;
@@ -622,7 +623,7 @@ static gboolean set_l2opts(int sock, uint16_t imtu, uint16_t omtu,
 		return FALSE;
 	}
 
-	if (imtu)
+	if (imtu || auto_mtu)
 		l2o.imtu = imtu;
 	if (omtu)
 		l2o.omtu = omtu;
@@ -666,17 +667,24 @@ static gboolean set_le_mode(int sock, uint8_t mode, GError **err)
 }
 
 static gboolean l2cap_set(int sock, uint8_t src_type, int sec_level,
-				uint16_t imtu, uint16_t omtu, uint8_t mode,
-				int central, int flushable, uint32_t priority,
-				GError **err)
+				uint16_t imtu, uint16_t omtu, uint8_t auto_mtu,
+				uint8_t mode, int central, int flushable,
+				uint32_t priority, GError **err)
 {
-	if (imtu || omtu || mode) {
+	if (imtu || omtu || auto_mtu || mode) {
 		gboolean ret = FALSE;
 
-		if (src_type == BDADDR_BREDR)
-			ret = set_l2opts(sock, imtu, omtu, mode, err);
-		else {
-			if (imtu)
+		if (src_type == BDADDR_BREDR) {
+			ret = set_l2opts(sock, imtu, omtu, auto_mtu, mode, err);
+
+			/* Back to default behavior in case the first call fails:
+			 * it may happen if the used kernel still doesn't support
+			 * auto-tuning the MTU 
+			 */
+			if (!ret && auto_mtu)
+				ret = set_l2opts(sock, imtu, omtu, 0, mode, err);
+		} else {
+			if (imtu || auto_mtu)
 				ret = set_le_imtu(sock, imtu, err);
 
 			if (ret && mode)
@@ -986,6 +994,8 @@ static gboolean parse_set_opts(struct set_opts *opts, GError **err,
 			opts->imtu = va_arg(args, int);
 			if (!opts->mtu)
 				opts->mtu = opts->imtu;
+			if (!opts->imtu)
+				opts->auto_mtu = 1;
 			break;
 		case BT_IO_OPT_CENTRAL:
 			opts->central = va_arg(args, gboolean);
@@ -1891,7 +1901,7 @@ gboolean bt_io_set(GIOChannel *io, GError **err, BtIOOption opt1, ...)
 	switch (type) {
 	case BT_IO_L2CAP:
 		return l2cap_set(sock, opts.src_type, opts.sec_level, opts.imtu,
-					opts.omtu, opts.mode, opts.central,
+					opts.omtu, opts.auto_mtu, opts.mode, opts.central,
 					opts.flushable, opts.priority, err);
 	case BT_IO_RFCOMM:
 		return rfcomm_set(sock, opts.sec_level, opts.central, err);
@@ -1942,7 +1952,7 @@ static GIOChannel *create_io(gboolean server, struct set_opts *opts,
 				server ? opts->psm : 0, opts->cid, err) < 0)
 			goto failed;
 		if (!l2cap_set(sock, opts->src_type, opts->sec_level,
-				opts->imtu, opts->omtu, opts->mode,
+				opts->imtu, opts->omtu, opts->auto_mtu, opts->mode,
 				opts->central, opts->flushable, opts->priority,
 				err))
 			goto failed;
