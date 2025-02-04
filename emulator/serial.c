@@ -79,6 +79,7 @@ static void serial_read_callback(int fd, uint32_t events, void *user_data)
 	uint8_t *ptr = buf;
 	ssize_t len;
 	uint16_t count;
+	ssize_t available;
 
 	if (events & (EPOLLERR | EPOLLHUP)) {
 		mainloop_remove_fd(serial->fd);
@@ -87,8 +88,16 @@ static void serial_read_callback(int fd, uint32_t events, void *user_data)
 	}
 
 again:
+
+	if(serial->pkt_offset > sizeof(buf)) {
+		printf("packet offset overflow\n");
+		serial->pkt_offset = 0;
+		return;
+	}
+	
+	available = sizeof(buf) - serial->pkt_offset;
 	len = read(serial->fd, buf + serial->pkt_offset,
-			sizeof(buf) - serial->pkt_offset);
+			available);
 	if (len < 0) {
 		if (errno == EAGAIN)
 			goto again;
