@@ -197,12 +197,6 @@ static void read_index_list_callback(uint8_t status, uint16_t length,
 static void test_pre_setup(const void *test_data)
 {
 	struct test_data *data = tester_get_data();
-	const struct sco_client_data *scodata = test_data;
-
-	if (scodata && scodata->so_timestamping) {
-		if (tester_pre_setup_skip_by_default())
-			return;
-	}
 
 	data->mgmt = mgmt_new_default();
 	if (!data->mgmt) {
@@ -665,10 +659,10 @@ static gboolean recv_errqueue(GIOChannel *io, GIOCondition cond,
 	err = tx_tstamp_recv(&data->tx_ts, sk, scodata->data_len);
 	if (err > 0)
 		return TRUE;
-	else if (!err && !data->step)
-		tester_test_passed();
-	else
+	else if (err)
 		tester_test_failed();
+	else if (!data->step)
+		tester_test_passed();
 
 	data->err_io_id = 0;
 	return FALSE;
@@ -682,17 +676,17 @@ static void sco_tx_timestamping(struct test_data *data, GIOChannel *io)
 	int err;
 	unsigned int count;
 
-	if (!(scodata->so_timestamping & SOF_TIMESTAMPING_TX_RECORD_MASK))
+	if (!(scodata->so_timestamping & TS_TX_RECORD_MASK))
 		return;
 
 	sk = g_io_channel_unix_get_fd(io);
 
 	tester_print("Enabling TX timestamping");
 
-	tx_tstamp_init(&data->tx_ts, scodata->so_timestamping);
+	tx_tstamp_init(&data->tx_ts, scodata->so_timestamping, false);
 
 	for (count = 0; count < scodata->repeat_send + 1; ++count)
-		data->step += tx_tstamp_expect(&data->tx_ts);
+		data->step += tx_tstamp_expect(&data->tx_ts, 0);
 
 	err = setsockopt(sk, SOL_SOCKET, SO_TIMESTAMPING, &so, sizeof(so));
 	if (err < 0) {
