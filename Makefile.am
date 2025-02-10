@@ -253,6 +253,7 @@ shared_sources += src/shared/shell.c src/shared/shell.h
 endif
 
 src_libshared_glib_la_SOURCES = $(shared_sources) \
+				src/shared/io-glib.h \
 				src/shared/io-glib.c \
 				src/shared/timeout-glib.c \
 				src/shared/mainloop-glib.c \
