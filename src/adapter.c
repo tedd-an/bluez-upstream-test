@@ -3142,10 +3142,11 @@ static void property_set_mode(struct btd_adapter *adapter, uint32_t setting,
 		break;
 	case MGMT_SETTING_DISCOVERABLE:
 		if (btd_has_kernel_features(KERNEL_CONN_CONTROL)) {
-			if (mode) {
+			if (mode && !(adapter->current_settings &
+				      MGMT_SETTING_CONNECTABLE)) {
 				set_mode(adapter, MGMT_OP_SET_CONNECTABLE,
 									mode);
-			} else {
+			} else if (!mode) {
 				opcode = MGMT_OP_SET_CONNECTABLE;
 				param = &mode;
 				len = sizeof(mode);
