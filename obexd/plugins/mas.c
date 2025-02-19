@@ -612,10 +612,10 @@ static void *message_open(const char *name, int oflag, mode_t mode,
 		return NULL;
 	}
 
+	mas->buffer = g_string_new("");
+
 	*err = messages_get_message(mas->backend_data, name, 0,
 			get_message_cb, mas);
-
-	mas->buffer = g_string_new("");
 
 	if (*err < 0)
 		return NULL;
