@@ -516,7 +516,32 @@ int messages_get_message(void *session, const char *handle,
 					messages_get_message_cb callback,
 					void *user_data)
 {
-	return -ENOSYS;
+	struct session *s =  session;
+	FILE *fp;
+	char *path;
+	char buffer[1024];
+
+	DBG(" ");
+	path = g_build_filename(s->cwd_absolute, handle, NULL);
+	fp = fopen(path, "r");
+	if (fp == NULL) {
+		DBG("fopen() failed");
+		return -EBADR;
+	}
+
+	/* 1024 is the maximum size of the line which is calculated to be more
+	 * sufficient*/
+	while (fgets(buffer, 1024, fp)) {
+		if (callback)
+			callback(session, 0, 0, (const char*)buffer, user_data);
+	}
+
+	if (callback)
+		callback(session, 0, 0, NULL, user_data);
+
+	g_free(path);
+	fclose(fp);
+	return 0;
 }
 
 int messages_update_inbox(void *session, messages_status_cb callback,
