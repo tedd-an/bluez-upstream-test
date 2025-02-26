@@ -152,6 +152,7 @@ struct svc_callback {
 
 /* Per-bearer (LE or BR/EDR) device state */
 struct bearer_state {
+	bool prefer;
 	bool paired;
 	bool bonded;
 	bool connected;
@@ -367,10 +368,25 @@ static GSList *find_service_with_uuid(GSList *list, char *uuid)
 	return NULL;
 }
 
+static const char *device_prefer_bearer_str(struct btd_device *device)
+{
+	/* Check if both BR/EDR and LE bearer are supported */
+	if (!device->bredr || !device->le)
+		return NULL;
+
+	if (device->bredr_state.prefer)
+		return "bredr";
+	else if (device->le_state.prefer)
+		return "le";
+	else
+		return "last-seen";
+}
+
 static void update_technologies(GKeyFile *file, struct btd_device *dev)
 {
 	const char *list[2];
 	size_t len = 0;
+	const char *bearer;
 
 	if (dev->bredr)
 		list[len++] = "BR/EDR";
@@ -390,6 +406,12 @@ static void update_technologies(GKeyFile *file, struct btd_device *dev)
 
 	g_key_file_set_string_list(file, "General", "SupportedTechnologies",
 								list, len);
+
+	/* Store the PreferredBearer in case of dual-mode devices */
+	bearer = device_prefer_bearer_str(dev);
+	if (bearer)
+		g_key_file_set_string(file, "General", "PreferredBearer",
+							bearer);
 }
 
 static void store_csrk(struct csrk_info *csrk, GKeyFile *key_file,
@@ -2079,6 +2101,7 @@ bool btd_device_add_set(struct btd_device *device, bool encrypted,
 static void device_set_auto_connect(struct btd_device *device, gboolean enable)
 {
 	char addr[18];
+	const char *bearer;
 
 	if (!device || !device->le || device_address_is_private(device))
 		return;
@@ -2098,6 +2121,11 @@ static void device_set_auto_connect(struct btd_device *device, gboolean enable)
 		adapter_auto_connect_remove(device->adapter, device);
 		return;
 	}
+
+	/* Inhibit auto connect if BR/EDR bearer is preferred */
+	bearer = device_prefer_bearer_str(device);
+	if (bearer && !strcasecmp(bearer, "bredr"))
+		return;
 
 	/* Enabling auto connect */
 	adapter_auto_connect_add(device->adapter, device);
@@ -2543,10 +2571,12 @@ static uint8_t select_conn_bearer(struct btd_device *dev)
 	time_t bredr_last = NVAL_TIME, le_last = NVAL_TIME;
 	time_t current = time(NULL);
 
-	/* Prefer bonded bearer in case only one is bonded */
-	if (dev->bredr_state.bonded && !dev->le_state.bonded )
+	/* Use preferred bearer or bonded bearer in case only one is bonded */
+	if (dev->bredr_state.prefer ||
+			(dev->bredr_state.bonded && !dev->le_state.bonded))
 		return BDADDR_BREDR;
-	else if (!dev->bredr_state.bonded && dev->le_state.bonded)
+	else if (dev->le_state.prefer ||
+			(!dev->bredr_state.bonded && dev->le_state.bonded))
 		return dev->bdaddr_type;
 
 	/* If the address is random it can only be connected over LE */
@@ -3340,6 +3370,79 @@ static const GDBusMethodTable device_methods[] = {
 	{ }
 };
 
+static gboolean
+dev_property_get_prefer_bearer(const GDBusPropertyTable *property,
+				DBusMessageIter *iter, void *data)
+{
+	struct btd_device *device = data;
+	const char *str = device_prefer_bearer_str(device);
+
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_STRING, &str);
+
+	return TRUE;
+}
+
+static void
+dev_property_set_prefer_bearer(const GDBusPropertyTable *property,
+					 DBusMessageIter *value,
+					 GDBusPendingPropertySet id, void *data)
+{
+	struct btd_device *device = data;
+	const char *str;
+
+	if (dbus_message_iter_get_arg_type(value) != DBUS_TYPE_STRING) {
+		g_dbus_pending_property_error(id,
+					ERROR_INTERFACE ".InvalidArguments",
+					"Invalid arguments in method call");
+		return;
+	}
+
+	dbus_message_iter_get_basic(value, &str);
+
+	/* Check if current preferred bearer is the same */
+	if (!strcasecmp(device_prefer_bearer_str(device), str))
+		goto done;
+
+	if (!strcasecmp(str, "last-seen")) {
+		device->bredr_state.prefer = false;
+		device->le_state.prefer = false;
+	} else if (!strcasecmp(str, "bredr")) {
+		device->bredr_state.prefer = true;
+		device->le_state.prefer = false;
+		/* Remove device from auto-connect list so the kernel does not
+		 * attempt to auto-connect to it in case it starts advertising.
+		 */
+		device_set_auto_connect(device, FALSE);
+	} else if (!strcasecmp(str, "le")) {
+		device->le_state.prefer = true;
+		device->bredr_state.prefer = false;
+		/* Add device to auto-connect list */
+		device_set_auto_connect(device, TRUE);
+	} else {
+		g_dbus_pending_property_error(id,
+					ERROR_INTERFACE ".InvalidArguments",
+					"Invalid arguments in method call");
+		return;
+	}
+
+	store_device_info(device);
+
+	g_dbus_emit_property_changed(dbus_conn, device->path,
+					DEVICE_INTERFACE, "PreferredBearer");
+
+done:
+	g_dbus_pending_property_success(id);
+}
+
+static gboolean
+dev_property_prefer_bearer_exists(const GDBusPropertyTable *property,
+						void *data)
+{
+	struct btd_device *device = data;
+
+	return device_prefer_bearer_str(device) != NULL;
+}
+
 static const GDBusPropertyTable device_properties[] = {
 	{ "Address", "s", dev_property_get_address },
 	{ "AddressType", "s", property_get_address_type },
@@ -3378,6 +3481,10 @@ static const GDBusPropertyTable device_properties[] = {
 				dev_property_wake_allowed_exist },
 	{ "Sets", "a{oa{sv}}", dev_property_get_set, NULL,
 				dev_property_set_exists },
+	{ "PreferredBearer", "s", dev_property_get_prefer_bearer,
+				dev_property_set_prefer_bearer,
+				dev_property_prefer_bearer_exists,
+				G_DBUS_PROPERTY_FLAG_EXPERIMENTAL },
 	{ }
 };
 
@@ -3902,6 +4009,24 @@ static void load_info(struct btd_device *device, const char *local,
 	}
 
 	g_strfreev(techno);
+
+	/* Load preferred bearer */
+	str = g_key_file_get_string(key_file, "General", "PreferredBearer",
+								NULL);
+	if (str) {
+		if (!strcasecmp(str, "last-seen")) {
+			device->bredr_state.prefer = false;
+			device->le_state.prefer = false;
+		} else if (!strcasecmp(str, "bredr")) {
+			device->bredr_state.prefer = true;
+			device->le_state.prefer = false;
+		} else if (!strcasecmp(str, "le")) {
+			device->le_state.prefer = true;
+			device->bredr_state.prefer = false;
+		}
+
+		g_free(str);
+	}
 
 next:
 	/* Load trust */
