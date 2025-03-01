@@ -58,6 +58,7 @@
 
 #include "bap.h"
 #include "bass.h"
+#include "transport.h"
 
 #define ISO_SOCKET_UUID "6fbaf188-05e0-496a-9885-d6ddfdb4e03e"
 #define PACS_UUID_STR "00001850-0000-1000-8000-00805f9b34fb"
@@ -81,6 +82,7 @@ struct bap_setup {
 	unsigned int id;
 	struct iovec *base;
 	struct future *qos_done;
+	struct future *close_done;
 	void (*destroy)(struct bap_setup *setup);
 };
 
@@ -903,12 +905,30 @@ static void setup_io_close(void *data, void *user_data)
 	bt_bap_stream_io_connecting(setup->stream, -1);
 }
 
-static void ep_close(struct bap_ep *ep)
+static void setup_close(void *data, void *user_data)
+{
+	struct bap_setup *setup = data;
+	struct future *close_done = user_data;
+	struct bt_bap_stream *stream = setup->stream;
+
+	DBG("%p", setup);
+
+	future_init_chain(&setup->close_done, close_done);
+
+	setup_io_close(setup, NULL);
+
+	if (bt_bap_stream_get_state(stream) != BT_BAP_STREAM_STATE_RELEASING)
+		bt_bap_stream_release(stream, NULL, NULL);
+	else
+		setup_free(setup);
+}
+
+static void ep_close(struct bap_ep *ep, struct future *close_done)
 {
 	if (!ep)
 		return;
 
-	queue_foreach(ep->setups, setup_io_close, NULL);
+	queue_foreach(ep->setups, setup_close, close_done);
 }
 
 static struct bap_setup *setup_new(struct bap_ep *ep)
@@ -962,6 +982,7 @@ static void setup_free(void *data)
 	}
 
 	future_clear(&setup->qos_done, ECANCELED, NULL);
+	future_clear(&setup->close_done, 0, NULL);
 
 	if (setup->ep)
 		queue_remove(setup->ep->setups, setup);
@@ -1077,7 +1098,7 @@ static DBusMessage *set_configuration(DBusConnection *conn, DBusMessage *msg,
 	 * TO DO reconfiguration of a BIS.
 	 */
 	if (bt_bap_pac_get_type(ep->lpac) != BT_BAP_BCAST_SOURCE)
-		ep_close(ep);
+		ep_close(ep, NULL);
 
 	setup = setup_new(ep);
 
@@ -1125,6 +1146,63 @@ static DBusMessage *set_configuration(DBusConnection *conn, DBusMessage *msg,
 
 		return g_dbus_create_reply(msg, DBUS_TYPE_INVALID);
 	}
+
+	return NULL;
+}
+
+struct close_stream_data {
+	const char *path;
+	struct future *close_done;
+	unsigned int count;
+};
+
+static void close_stream(void *data, void *user_data)
+{
+	struct bap_setup *setup = data;
+	struct close_stream_data *info = user_data;
+	struct bt_bap_stream *stream = setup->stream;
+	const char *path = media_transport_stream_path(stream);
+
+	if (info->path && (!path || strcmp(info->path, path)))
+		return;
+
+	setup_close(setup, info->close_done);
+	info->count++;
+}
+
+static unsigned int ep_close_stream(struct bap_ep *ep,
+						struct future *close_done,
+						const char *transport_path)
+{
+	struct close_stream_data info = { transport_path, close_done, 0 };
+
+	queue_foreach(ep->setups, close_stream, &info);
+	return info.count;
+}
+
+
+static DBusMessage *clear_configuration(DBusConnection *conn, DBusMessage *msg,
+								void *data)
+{
+	struct bap_ep *ep = data;
+	const char *path;
+	DBusMessageIter args;
+	struct future *done = NULL;
+
+	dbus_message_iter_init(msg, &args);
+	dbus_message_iter_get_basic(&args, &path);
+
+	DBG("%s: %s", ep->path, path ? path : "NULL");
+
+	future_init_dbus_reply(&done, "clear_configuration", msg);
+
+	if (strcmp(path, ep->path) == 0)
+		path = NULL;
+
+	if (ep_close_stream(ep, done, path))
+		future_clear(&done, 0, NULL);
+	else
+		future_clear(&done, path ? EINVAL : 0, NULL);
 
 	return NULL;
 }
@@ -1350,6 +1428,9 @@ static const GDBusMethodTable ep_methods[] = {
 					GDBUS_ARGS({ "endpoint", "o" },
 						{ "Configuration", "a{sv}" } ),
 					NULL, set_configuration) },
+	{ GDBUS_EXPERIMENTAL_ASYNC_METHOD("ClearConfiguration",
+					GDBUS_ARGS({ "transport", "o" }),
+					NULL, clear_configuration) },
 	{ },
 };
 
