@@ -93,6 +93,8 @@ struct bap_ep {
 	uint16_t supported_context;
 	uint16_t context;
 	struct queue *setups;
+	struct future *select_done;
+	int selecting;
 };
 
 struct bap_data {
@@ -110,7 +112,6 @@ struct bap_data {
 	struct queue *streams;
 	GIOChannel *listen_io;
 	unsigned int io_id;
-	int selecting;
 	void *user_data;
 };
 
@@ -165,6 +166,8 @@ struct bt_iso_qos bap_sink_pa_qos = {
 		}
 	}
 };
+
+static void pac_select_all(struct bap_data *data);
 
 static void future_clear(struct future **p, int err, const char *err_msg)
 {
@@ -239,7 +242,6 @@ static void future_init_dbus_reply(struct future **p, const char *name,
 	future_init(p, name, future_dbus_callback_func, dbus_message_ref(msg));
 }
 
-__attribute__((unused))
 static void future_init_chain(struct future **p, struct future *h)
 {
 	future_clear(p, ECANCELED, NULL);
@@ -1595,7 +1597,6 @@ static void select_cb(struct bt_bap_pac *pac, int err, struct iovec *caps,
 
 	if (err) {
 		error("err %d", err);
-		ep->data->selecting--;
 		goto done;
 	}
 
@@ -1604,16 +1605,12 @@ static void select_cb(struct bt_bap_pac *pac, int err, struct iovec *caps,
 	setup->metadata = util_iov_dup(metadata, 1);
 	setup->qos = *qos;
 
-	DBG("selecting %d", ep->data->selecting);
-	ep->data->selecting--;
-
 done:
-	if (ep->data->selecting)
-		return;
+	DBG("ep %p selecting %d", ep, ep->selecting);
 
-	queue_foreach(ep->data->srcs, bap_config, NULL);
-	queue_foreach(ep->data->snks, bap_config, NULL);
-	queue_foreach(ep->data->bcast, bap_config, NULL);
+	ep->selecting--;
+	if (!ep->selecting)
+		future_clear(&ep->select_done, 0, NULL);
 }
 
 static bool pac_register(struct bt_bap_pac *lpac, struct bt_bap_pac *rpac,
@@ -1631,11 +1628,17 @@ static bool pac_register(struct bt_bap_pac *lpac, struct bt_bap_pac *rpac,
 	return true;
 }
 
+struct pac_select_data {
+	struct bap_data *data;
+	struct future *select_done;
+};
+
 static bool pac_select(struct bt_bap_pac *lpac, struct bt_bap_pac *rpac,
 							void *user_data)
 {
-	struct btd_service *service = user_data;
-	struct bap_data *data = btd_service_get_user_data(service);
+	struct pac_select_data *select_data = user_data;
+	struct bap_data *data = select_data->data;
+	struct btd_service *service = data->service;
 	struct match_ep match = { lpac, rpac };
 	struct queue *queue;
 	struct bap_ep *ep;
@@ -1658,8 +1661,12 @@ static bool pac_select(struct bt_bap_pac *lpac, struct bt_bap_pac *rpac,
 	}
 
 	/* TODO: Cache LRU? */
-	if (btd_service_is_initiator(service))
-		bt_bap_select(lpac, rpac, &ep->data->selecting, select_cb, ep);
+	if (btd_service_is_initiator(service)) {
+		bt_bap_select(lpac, rpac, &ep->selecting, select_cb, ep);
+		if (ep->selecting)
+			future_init_chain(&ep->select_done,
+						select_data->select_done);
+	}
 
 	return true;
 }
@@ -1678,8 +1685,12 @@ static void ep_cancel_select(struct bap_ep *ep)
 {
 	struct bt_bap *bap = ep->data->bap;
 
+	future_clear(&ep->select_done, ECANCELED, NULL);
+
 	bt_bap_foreach_pac(bap, BT_BAP_SOURCE, pac_cancel_select, ep);
 	bt_bap_foreach_pac(bap, BT_BAP_SINK, pac_cancel_select, ep);
+
+	ep->selecting = 0;
 }
 
 static bool pac_found_bcast(struct bt_bap_pac *lpac, struct bt_bap_pac *rpac,
@@ -1703,9 +1714,36 @@ static bool pac_found_bcast(struct bt_bap_pac *lpac, struct bt_bap_pac *rpac,
 	return true;
 }
 
+static void select_complete_cb(int err, const char *err_msg, void *user_data)
+{
+	struct bap_data *data = user_data;
+
+	if (err == ECANCELED)
+		return;
+
+	queue_foreach(data->srcs, bap_config, NULL);
+	queue_foreach(data->snks, bap_config, NULL);
+}
+
+static void pac_select_all(struct bap_data *data)
+{
+	struct pac_select_data select_data = {
+		.data = data,
+	};
+
+	future_init(&select_data.select_done, "pac_select_all",
+						select_complete_cb, data);
+
+	bt_bap_foreach_pac(data->bap, BT_BAP_SOURCE, pac_select, &select_data);
+	bt_bap_foreach_pac(data->bap, BT_BAP_SINK, pac_select, &select_data);
+
+	future_clear(&select_data.select_done, 0, NULL);
+}
+
 static void bap_ready(struct bt_bap *bap, void *user_data)
 {
 	struct btd_service *service = user_data;
+	struct bap_data *data = btd_service_get_user_data(service);
 
 	DBG("bap %p", bap);
 
@@ -1715,8 +1753,7 @@ static void bap_ready(struct bt_bap *bap, void *user_data)
 	bt_bap_foreach_pac(bap, BT_BAP_SOURCE, pac_register, service);
 	bt_bap_foreach_pac(bap, BT_BAP_SINK, pac_register, service);
 
-	bt_bap_foreach_pac(bap, BT_BAP_SOURCE, pac_select, service);
-	bt_bap_foreach_pac(bap, BT_BAP_SINK, pac_select, service);
+	pac_select_all(data);
 }
 
 static bool match_setup_stream(const void *data, const void *user_data)
@@ -2684,8 +2721,7 @@ static void pac_added(struct bt_bap_pac *pac, void *user_data)
 	bt_bap_foreach_pac(data->bap, BT_BAP_SOURCE, pac_register, service);
 	bt_bap_foreach_pac(data->bap, BT_BAP_SINK, pac_register, service);
 
-	bt_bap_foreach_pac(data->bap, BT_BAP_SOURCE, pac_select, service);
-	bt_bap_foreach_pac(data->bap, BT_BAP_SINK, pac_select, service);
+	pac_select_all(data);
 }
 
 static void pac_added_broadcast(struct bt_bap_pac *pac, void *user_data)
