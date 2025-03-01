@@ -96,8 +96,10 @@ struct bap_ep {
 	uint16_t supported_context;
 	uint16_t context;
 	struct queue *setups;
+	struct future *setup_done;
 	struct future *select_done;
 	int selecting;
+	bool reconfigure;
 };
 
 struct bap_data {
@@ -170,7 +172,8 @@ struct bt_iso_qos bap_sink_pa_qos = {
 	}
 };
 
-static void pac_select_all(struct bap_data *data);
+static void pac_select_all(struct bap_data *data, bool reconfigure,
+							struct future *done);
 
 static void future_clear(struct future **p, int err, const char *err_msg)
 {
@@ -849,7 +852,8 @@ static void qos_cb(struct bt_bap_stream *stream, uint8_t code, uint8_t reason,
 
 	setup->id = 0;
 
-	future_clear(&setup->qos_done, code ? EIO : 0, "Unable to configure");
+	if (code)
+		future_clear(&setup->qos_done, EIO, "Unable to configure");
 }
 
 static void setup_create_io(struct bap_data *data, struct bap_setup *setup,
@@ -1227,6 +1231,120 @@ static DBusMessage *clear_configuration(DBusConnection *conn, DBusMessage *msg,
 	return NULL;
 }
 
+static void ep_close_if_reconfigure(void *obj, void *user_data)
+{
+	struct bap_ep *ep = obj;
+	struct future *done = user_data;
+
+	if (ep->reconfigure)
+		ep_close(ep, done);
+}
+
+static int select_properties_parse(DBusMessageIter *props, bool *defer)
+{
+	const char *key;
+
+	if (dbus_message_iter_get_arg_type(props) != DBUS_TYPE_DICT_ENTRY)
+		return -EINVAL;
+
+	while (dbus_message_iter_get_arg_type(props) == DBUS_TYPE_DICT_ENTRY) {
+		DBusMessageIter value, entry;
+		int var;
+
+		dbus_message_iter_recurse(props, &entry);
+		dbus_message_iter_get_basic(&entry, &key);
+
+		dbus_message_iter_next(&entry);
+		dbus_message_iter_recurse(&entry, &value);
+
+		var = dbus_message_iter_get_arg_type(&value);
+
+		if (!strcasecmp(key, "Defer")) {
+			dbus_bool_t flag;
+
+			if (var != DBUS_TYPE_BOOLEAN)
+				goto fail;
+
+			dbus_message_iter_get_basic(&value, &flag);
+			*defer = flag;
+		}
+
+		dbus_message_iter_next(props);
+	}
+
+	return 0;
+
+fail:
+	DBG("Failed parsing %s", key);
+
+	return -EINVAL;
+}
+
+struct select_properties_data {
+	struct bap_data *data;
+	DBusMessage *msg;
+};
+
+static void select_properties_reconfig(int err, const char *err_msg, void *data)
+{
+	struct select_properties_data *info = data;
+	struct future *done = NULL;
+
+	future_init_dbus_reply(&done, "select_properties_reconfig", info->msg);
+	dbus_message_unref(info->msg);
+
+	/* Reconfigure endpoints using the same flow as for initial config */
+	if (!err)
+		pac_select_all(info->data, true, done);
+
+	future_clear(&done, err, err_msg);
+
+	free(info);
+}
+
+static DBusMessage *select_properties(DBusConnection *conn, DBusMessage *msg,
+								void *user_data)
+{
+	struct bap_ep *ep = user_data;
+	struct bap_data *data = ep->data;
+	struct select_properties_data *info;
+	struct future *done = NULL;
+	bool defer = false;
+	DBusMessageIter args, props;
+
+	switch (bt_bap_pac_get_type(ep->lpac)) {
+	case BT_BAP_SOURCE:
+	case BT_BAP_SINK:
+		break;
+	default:
+		return btd_error_invalid_args(msg);
+	}
+
+	dbus_message_iter_init(msg, &args);
+	dbus_message_iter_recurse(&args, &props);
+	if (select_properties_parse(&props, &defer))
+		return btd_error_invalid_args(msg);
+
+	DBG("%s defer %d", ep->path, (int)defer);
+
+	ep->reconfigure = true;
+	if (defer)
+		return dbus_message_new_method_return(msg);
+
+	info = new0(struct select_properties_data, 1);
+	info->data = ep->data;
+	info->msg = dbus_message_ref(msg);
+
+	future_init(&done, "select_properties", select_properties_reconfig,
+									info);
+
+	queue_foreach(data->snks, ep_close_if_reconfigure, done);
+	queue_foreach(data->srcs, ep_close_if_reconfigure, done);
+
+	future_clear(&done, 0, NULL);
+	return NULL;
+}
+
 static bool stream_io_unset(const void *data, const void *user_data)
 {
 	struct bt_bap_stream *stream = (struct bt_bap_stream *)data;
@@ -1451,6 +1569,10 @@ static const GDBusMethodTable ep_methods[] = {
 	{ GDBUS_EXPERIMENTAL_ASYNC_METHOD("ClearConfiguration",
 					GDBUS_ARGS({ "transport", "o" }),
 					NULL, clear_configuration) },
+	{ GDBUS_EXPERIMENTAL_ASYNC_METHOD("SelectProperties",
+					GDBUS_ARGS(
+						{ "Properties", "a{sv}" }),
+					NULL, select_properties) },
 	{ },
 };
 
@@ -1684,13 +1806,6 @@ static void setup_config(void *data, void *user_data)
 	bt_bap_stream_set_user_data(setup->stream, ep->path);
 }
 
-static void bap_config(void *data, void *user_data)
-{
-	struct bap_ep *ep = data;
-
-	queue_foreach(ep->setups, setup_config, NULL);
-}
-
 static void select_cb(struct bt_bap_pac *pac, int err, struct iovec *caps,
 				struct iovec *metadata, struct bt_bap_qos *qos,
 				void *user_data)
@@ -1707,13 +1822,16 @@ static void select_cb(struct bt_bap_pac *pac, int err, struct iovec *caps,
 	setup->caps = util_iov_dup(caps, 1);
 	setup->metadata = util_iov_dup(metadata, 1);
 	setup->qos = *qos;
+	future_init_chain(&setup->qos_done, ep->setup_done);
 
 done:
 	DBG("ep %p selecting %d", ep, ep->selecting);
 
 	ep->selecting--;
-	if (!ep->selecting)
+	if (!ep->selecting) {
+		future_clear(&ep->setup_done, 0, NULL);
 		future_clear(&ep->select_done, 0, NULL);
+	}
 }
 
 static bool pac_register(struct bt_bap_pac *lpac, struct bt_bap_pac *rpac,
@@ -1734,6 +1852,8 @@ static bool pac_register(struct bt_bap_pac *lpac, struct bt_bap_pac *rpac,
 struct pac_select_data {
 	struct bap_data *data;
 	struct future *select_done;
+	struct future *setup_done;
+	bool reconfigure;
 };
 
 static bool pac_select(struct bt_bap_pac *lpac, struct bt_bap_pac *rpac,
@@ -1763,12 +1883,21 @@ static bool pac_select(struct bt_bap_pac *lpac, struct bt_bap_pac *rpac,
 		return true;
 	}
 
+	if (select_data->reconfigure) {
+		if (!ep->reconfigure)
+			return true;
+		ep->reconfigure = false;
+	}
+
 	/* TODO: Cache LRU? */
 	if (btd_service_is_initiator(service)) {
 		bt_bap_select(lpac, rpac, &ep->selecting, select_cb, ep);
-		if (ep->selecting)
+		if (ep->selecting) {
 			future_init_chain(&ep->select_done,
 						select_data->select_done);
+			future_init_chain(&ep->setup_done,
+						select_data->setup_done);
+		}
 	}
 
 	return true;
@@ -1788,6 +1917,7 @@ static void ep_cancel_select(struct bap_ep *ep)
 {
 	struct bt_bap *bap = ep->data->bap;
 
+	future_clear(&ep->setup_done, ECANCELED, NULL);
 	future_clear(&ep->select_done, ECANCELED, NULL);
 
 	bt_bap_foreach_pac(bap, BT_BAP_SOURCE, pac_cancel_select, ep);
@@ -1817,6 +1947,21 @@ static bool pac_found_bcast(struct bt_bap_pac *lpac, struct bt_bap_pac *rpac,
 	return true;
 }
 
+static void setup_ensure_stream(void *data, void *user_data)
+{
+	struct bap_setup *setup = data;
+
+	if (!setup->stream)
+		setup_config(setup, user_data);
+}
+
+static void bap_config(void *data, void *user_data)
+{
+	struct bap_ep *ep = data;
+
+	queue_foreach(ep->setups, setup_ensure_stream, NULL);
+}
+
 static void select_complete_cb(int err, const char *err_msg, void *user_data)
 {
 	struct bap_data *data = user_data;
@@ -1828,10 +1973,13 @@ static void select_complete_cb(int err, const char *err_msg, void *user_data)
 	queue_foreach(data->snks, bap_config, NULL);
 }
 
-static void pac_select_all(struct bap_data *data)
+static void pac_select_all(struct bap_data *data, bool reconfigure,
+							struct future *done)
 {
 	struct pac_select_data select_data = {
 		.data = data,
+		.reconfigure = reconfigure,
+		.setup_done = done,
 	};
 
 	future_init(&select_data.select_done, "pac_select_all",
@@ -1856,7 +2004,7 @@ static void bap_ready(struct bt_bap *bap, void *user_data)
 	bt_bap_foreach_pac(bap, BT_BAP_SOURCE, pac_register, service);
 	bt_bap_foreach_pac(bap, BT_BAP_SINK, pac_register, service);
 
-	pac_select_all(data);
+	pac_select_all(data, false, NULL);
 }
 
 static bool match_setup_stream(const void *data, const void *user_data)
@@ -2499,7 +2647,11 @@ static void bap_state(struct bt_bap_stream *stream, uint8_t old_state,
 		}
 		break;
 	case BT_BAP_STREAM_STATE_QOS:
+		if (setup) {
 			setup_create_io(data, setup, stream, true);
+			future_clear(&setup->qos_done, setup->io ? 0 : EIO,
+							"Unable to configure");
+		}
 		break;
 	case BT_BAP_STREAM_STATE_ENABLING:
 		if (setup)
@@ -2806,7 +2958,7 @@ static void pac_added(struct bt_bap_pac *pac, void *user_data)
 	bt_bap_foreach_pac(data->bap, BT_BAP_SOURCE, pac_register, service);
 	bt_bap_foreach_pac(data->bap, BT_BAP_SINK, pac_register, service);
 
-	pac_select_all(data);
+	pac_select_all(data, false, NULL);
 }
 
 static void pac_added_broadcast(struct bt_bap_pac *pac, void *user_data)
