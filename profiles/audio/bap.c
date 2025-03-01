@@ -80,7 +80,7 @@ struct bap_setup {
 	struct iovec *metadata;
 	unsigned int id;
 	struct iovec *base;
-	DBusMessage *msg;
+	struct future *qos_done;
 	void (*destroy)(struct bap_setup *setup);
 };
 
@@ -112,6 +112,17 @@ struct bap_data {
 	unsigned int io_id;
 	int selecting;
 	void *user_data;
+};
+
+typedef void (*future_func_t)(int err, const char *err_msg, void *data);
+
+struct future {
+	unsigned int step, steps;
+	const char *name;
+	future_func_t func;
+	void *data;
+	int err;
+	const char *err_msg;
 };
 
 static struct queue *sessions;
@@ -154,6 +165,94 @@ struct bt_iso_qos bap_sink_pa_qos = {
 		}
 	}
 };
+
+static void future_clear(struct future **p, int err, const char *err_msg)
+{
+	struct future *h = *p;
+
+	if (!h)
+		return;
+
+	DBG("future %p (%s) 0x%02x (%s) step %u/%u", h, h->name ? h->name : "",
+		err, (err && err_msg) ? err_msg : "", h->step + 1, h->steps);
+
+	*p = NULL;
+
+	if (err && !h->err) {
+		h->err = err;
+		h->err_msg = err_msg;
+	}
+
+	if (++h->step < h->steps)
+		return;
+
+	h->func(h->err, h->err_msg, h->data);
+	free(h);
+}
+
+static void future_dbus_callback_func(int err, const char *err_msg, void *data)
+{
+	DBusMessage *msg = data;
+	DBusMessage *reply;
+
+	if (err && !err_msg)
+		err_msg = strerror(err);
+
+	switch (err) {
+	case 0:
+		reply = dbus_message_new_method_return(msg);
+		break;
+	case EINVAL:
+		reply = btd_error_invalid_args_str(msg, err_msg);
+		break;
+	default:
+		reply = btd_error_failed(msg, err_msg);
+		break;
+	}
+
+	g_dbus_send_message(btd_get_dbus_connection(), reply);
+
+	dbus_message_unref(msg);
+}
+
+static void future_init(struct future **p, const char *name, future_func_t func,
+								void *data)
+{
+	struct future *h;
+
+	future_clear(p, ECANCELED, NULL);
+
+	h = new0(struct future, 1);
+	h->steps = 1;
+	h->name = name;
+	h->func = func;
+	h->data = data;
+
+	DBG("future %p (%s) init", h, h->name ? h->name : "");
+
+	*p = h;
+}
+
+static void future_init_dbus_reply(struct future **p, const char *name,
+							DBusMessage *msg)
+{
+	future_init(p, name, future_dbus_callback_func, dbus_message_ref(msg));
+}
+
+__attribute__((unused))
+static void future_init_chain(struct future **p, struct future *h)
+{
+	future_clear(p, ECANCELED, NULL);
+
+	if (h) {
+		h->steps++;
+
+		DBG("future %p (%s) init step %u", h, h->name ? h->name : "",
+								h->steps);
+	}
+
+	*p = h;
+}
 
 static bool bap_data_set_user_data(struct bap_data *data, void *user_data)
 {
@@ -740,24 +839,12 @@ static void qos_cb(struct bt_bap_stream *stream, uint8_t code, uint8_t reason,
 					void *user_data)
 {
 	struct bap_setup *setup = user_data;
-	DBusMessage *reply;
 
 	DBG("stream %p code 0x%02x reason 0x%02x", stream, code, reason);
 
 	setup->id = 0;
 
-	if (!setup->msg)
-		return;
-
-	if (!code)
-		reply = dbus_message_new_method_return(setup->msg);
-	else
-		reply = btd_error_failed(setup->msg, "Unable to configure");
-
-	g_dbus_send_message(btd_get_dbus_connection(), reply);
-
-	dbus_message_unref(setup->msg);
-	setup->msg = NULL;
+	future_clear(&setup->qos_done, code ? EIO : 0, "Unable to configure");
 }
 
 static void config_cb(struct bt_bap_stream *stream,
@@ -765,7 +852,6 @@ static void config_cb(struct bt_bap_stream *stream,
 					void *user_data)
 {
 	struct bap_setup *setup = user_data;
-	DBusMessage *reply;
 
 	DBG("stream %p code 0x%02x reason 0x%02x", stream, code, reason);
 
@@ -786,14 +872,7 @@ static void config_cb(struct bt_bap_stream *stream,
 		return;
 	}
 
-	if (!setup->msg)
-		return;
-
-	reply = btd_error_failed(setup->msg, "Unable to configure");
-	g_dbus_send_message(btd_get_dbus_connection(), reply);
-
-	dbus_message_unref(setup->msg);
-	setup->msg = NULL;
+	future_clear(&setup->qos_done, EIO, "Unable to configure");
 }
 
 static void setup_io_close(void *data, void *user_data)
@@ -872,7 +951,6 @@ static struct bap_setup *setup_new(struct bap_ep *ep)
 static void setup_free(void *data)
 {
 	struct bap_setup *setup = data;
-	DBusMessage *reply;
 
 	DBG("%p", setup);
 
@@ -881,12 +959,7 @@ static void setup_free(void *data)
 		setup->id = 0;
 	}
 
-	if (setup->msg) {
-		reply = btd_error_failed(setup->msg, "Canceled");
-		g_dbus_send_message(btd_get_dbus_connection(), reply);
-		dbus_message_unref(setup->msg);
-		setup->msg = NULL;
-	}
+	future_clear(&setup->qos_done, ECANCELED, NULL);
 
 	if (setup->ep)
 		queue_remove(setup->ep->setups, setup);
@@ -1038,7 +1111,8 @@ static DBusMessage *set_configuration(DBusConnection *conn, DBusMessage *msg,
 
 	switch (bt_bap_stream_get_type(setup->stream)) {
 	case BT_BAP_STREAM_TYPE_UCAST:
-		setup->msg = dbus_message_ref(msg);
+		future_init_dbus_reply(&setup->qos_done, "set_configuration",
+									msg);
 		break;
 	case BT_BAP_STREAM_TYPE_BCAST:
 		/* No message sent over the air for broadcast */
