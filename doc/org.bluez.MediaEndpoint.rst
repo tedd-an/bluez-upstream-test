@@ -69,6 +69,8 @@ array{byte} SelectConfiguration(array{byte} capabilities)
 dict SelectProperties(dict capabilities)
 ````````````````````````````````````````
 
+	**Server Role**
+
 	Select BAP unicast configuration from the supported capabilities:
 
 	:object Endpoint:
@@ -103,6 +105,25 @@ dict SelectProperties(dict capabilities)
 
 	Note: There is no need to cache the selected properties since on
 	success the configuration is send back as parameter of SetConfiguration.
+
+	**Client Role**
+
+	Reconfigure a BAP unicast endpoint. This closes all existing
+	streams of the endpoint, and restarts the configuration
+	selection flow which e.g. triggers calls to *SelectProperties*
+	allowing the sound server to modify the configuration.
+
+	The following arguments are taken in *capabilities*:
+
+	:boolean Defer [optional]:
+
+		If True, mark endpoint for reconfiguration, but
+		postpone it until a non-deferred *SelectProperties()*
+		operation is made on an endpoint of the same device.
+
+		This is necessary to use when reconfiguring source and
+		sink streams with the intention that they be combined
+		into the same CIG, possibly forming bidirectional CIS.
 
 void ClearConfiguration(object transport)
 `````````````````````````````````````````
