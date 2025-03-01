@@ -1363,6 +1363,31 @@ static void bap_stream_state_changed(struct bt_bap_stream *stream)
 	struct bt_bap *bap = stream->bap;
 	const struct queue_entry *entry;
 
+	switch (stream->ep->old_state) {
+	case BT_ASCS_ASE_STATE_RELEASING:
+		/* After Releasing, Server may either transition to Config or
+		 * Idle. Our Unicast Client streams shall be considered
+		 * destroyed after Releasing, so that upper layer can control
+		 * stream creation. Make the lifecycle management simpler by
+		 * making sure the streams are destroyed by always emitting Idle
+		 * to upper layer after Releasing, even if the remote ASE did
+		 * not go through that state.
+		 */
+		if (stream->client &&
+				stream->ep->state != BT_ASCS_ASE_STATE_IDLE &&
+				(stream->lpac->type & (BT_BAP_SINK |
+							BT_BAP_SOURCE))) {
+			struct bt_bap_endpoint *ep = stream->ep;
+			uint8_t state = ep->state;
+
+			ep->state = BT_ASCS_ASE_STATE_IDLE;
+			bap_stream_state_changed(stream);
+			ep->state = state;
+			return;
+		}
+		break;
+	}
+
 	/* Pre notification updates */
 	switch (stream->ep->state) {
 	case BT_ASCS_ASE_STATE_IDLE:
@@ -4851,7 +4876,8 @@ static void ep_status_config(struct bt_bap *bap, struct bt_bap_endpoint *ep,
 	}
 
 	/* Any previously applied codec configuration may be cached by the
-	 * server.
+	 * server. However, all Unicast Client stream creation shall be left to
+	 * the upper layer.
 	 */
 	if (!ep->stream) {
 		struct match_pac match;
@@ -4866,7 +4892,9 @@ static void ep_status_config(struct bt_bap *bap, struct bt_bap_endpoint *ep,
 		if (!match.lpac || !match.rpac)
 			return;
 
-		bap_stream_new(bap, ep, match.lpac, match.rpac, NULL, true);
+		if (!(match.lpac->type & (BT_BAP_SINK | BT_BAP_SOURCE)))
+			bap_stream_new(bap, ep, match.lpac, match.rpac,
+								NULL, true);
 	}
 
 	if (!ep->stream)
