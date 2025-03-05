@@ -2807,6 +2807,10 @@ static int cmd_enhanced_setup_sync_conn_complete(struct btdev *dev,
 done:
 	send_event(dev, BT_HCI_EVT_SYNC_CONN_COMPLETE, &cc, sizeof(cc));
 
+	if (conn)
+		send_event(conn->link->dev, BT_HCI_EVT_SYNC_CONN_COMPLETE,
+							&cc, sizeof(cc));
+
 	return 0;
 }
 
@@ -2852,6 +2856,10 @@ static int cmd_setup_sync_conn_complete(struct btdev *dev, const void *data,
 
 done:
 	send_event(dev, BT_HCI_EVT_SYNC_CONN_COMPLETE, &cc, sizeof(cc));
+
+	if (conn)
+		send_event(conn->link->dev, BT_HCI_EVT_SYNC_CONN_COMPLETE,
+							&cc, sizeof(cc));
 
 	return 0;
 }
@@ -7655,6 +7663,33 @@ static void send_acl(struct btdev *dev, const void *data, uint16_t len)
 	send_packet(conn->link->dev, iov, 3);
 }
 
+static void send_sco(struct btdev *dev, const void *data, uint16_t len)
+{
+	struct bt_hci_sco_hdr hdr;
+	struct iovec iov[2];
+	struct btdev_conn *conn;
+	uint8_t pkt_type = BT_H4_SCO_PKT;
+
+	/* Packet type */
+	iov[0].iov_base = &pkt_type;
+	iov[0].iov_len = sizeof(pkt_type);
+
+	iov[1].iov_base = (void *) (data);
+	iov[1].iov_len = len;
+
+	memcpy(&hdr, data, sizeof(hdr));
+
+	conn = queue_find(dev->conns, match_handle,
+					UINT_TO_PTR(acl_handle(hdr.handle)));
+	if (!conn)
+		return;
+
+	/* TODO: flow control */
+
+	if (conn->link)
+		send_packet(conn->link->dev, iov, 2);
+}
+
 static void send_iso(struct btdev *dev, const void *data, uint16_t len)
 {
 	struct bt_hci_acl_hdr *hdr;
@@ -7701,6 +7736,9 @@ void btdev_receive_h4(struct btdev *btdev, const void *data, uint16_t len)
 		break;
 	case BT_H4_ACL_PKT:
 		send_acl(btdev, data + 1, len - 1);
+		break;
+	case BT_H4_SCO_PKT:
+		send_sco(btdev, data + 1, len - 1);
 		break;
 	case BT_H4_ISO_PKT:
 		send_iso(btdev, data + 1, len - 1);
