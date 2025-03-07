@@ -44,6 +44,7 @@ struct test_data {
 	int sk;
 	bool disable_esco;
 	bool enable_codecs;
+	bool disable_sco_flowctl;
 	int step;
 	uint16_t handle;
 	struct tx_tstamp_data tx_ts;
@@ -196,6 +197,16 @@ static void read_index_list_callback(uint8_t status, uint16_t length,
 		if (features)
 			features[3] &= ~0x80;
 	}
+
+	if (data->disable_sco_flowctl) {
+		uint8_t *commands;
+
+		tester_print("Disabling SCO flow control");
+
+		commands = hciemu_get_commands(data->hciemu);
+		if (commands)
+			commands[10] &= ~(BIT(3) | BIT(4));
+	}
 }
 
 static void test_pre_setup(const void *test_data)
@@ -240,7 +251,8 @@ static void test_data_free(void *test_data)
 	free(data);
 }
 
-#define test_sco_full(name, data, setup, func, _disable_esco, _enable_codecs) \
+#define test_sco_full(name, data, setup, func, _disable_esco, _enable_codecs, \
+							_disable_sco_flowctl) \
 	do { \
 		struct test_data *user; \
 		user = malloc(sizeof(struct test_data)); \
@@ -254,19 +266,26 @@ static void test_data_free(void *test_data)
 		user->step = 0; \
 		user->disable_esco = _disable_esco; \
 		user->enable_codecs = _enable_codecs; \
+		user->disable_sco_flowctl = _disable_sco_flowctl; \
 		tester_add_full(name, data, \
 				test_pre_setup, setup, func, NULL, \
 				test_post_teardown, 2, user, test_data_free); \
 	} while (0)
 
 #define test_sco(name, data, setup, func) \
-	test_sco_full(name, data, setup, func, false, false)
+	test_sco_full(name, data, setup, func, false, false, false)
+
+#define test_sco_no_flowctl(name, data, setup, func) \
+	test_sco_full(name, data, setup, func, false, false, true)
 
 #define test_sco_11(name, data, setup, func) \
-	test_sco_full(name, data, setup, func, true, false)
+	test_sco_full(name, data, setup, func, true, false, false)
+
+#define test_sco_11_no_flowctl(name, data, setup, func) \
+	test_sco_full(name, data, setup, func, true, false, true)
 
 #define test_offload_sco(name, data, setup, func) \
-	test_sco_full(name, data, setup, func, false, true)
+	test_sco_full(name, data, setup, func, false, true, false)
 
 static const struct sco_client_data connect_success = {
 	.expect_err = 0
@@ -290,7 +309,8 @@ const uint8_t data[] = {0, 1, 2, 3, 4, 5, 6, 7, 8};
 static const struct sco_client_data connect_send_success = {
 	.expect_err = 0,
 	.data_len = sizeof(data),
-	.send_data = data
+	.send_data = data,
+	.repeat_send = 3
 };
 
 static const struct sco_client_data connect_send_tx_timestamping = {
@@ -318,10 +338,51 @@ static void client_connectable_complete(uint16_t opcode, uint8_t status,
 		tester_setup_complete();
 }
 
+static void bthost_recv_data(const void *buf, uint16_t len, uint8_t status,
+								void *user_data)
+{
+	struct test_data *data = user_data;
+	const struct sco_client_data *scodata = data->test_data;
+
+	--data->step;
+
+	tester_print("Client received %u bytes of data", len);
+
+	if (scodata->send_data && (scodata->data_len != len ||
+			memcmp(scodata->send_data, buf, len)))
+		tester_test_failed();
+	else if (!data->step)
+		tester_test_passed();
+}
+
+static void bthost_sco_disconnected(void *user_data)
+{
+	struct test_data *data = user_data;
+
+	tester_print("SCO handle 0x%04x disconnected", data->handle);
+
+	data->handle = 0x0000;
+}
+
+static void sco_new_conn(uint16_t handle, void *user_data)
+{
+	struct test_data *data = user_data;
+	struct bthost *host;
+
+	tester_print("New client connection with handle 0x%04x", handle);
+
+	data->handle = handle;
+
+	host = hciemu_client_get_host(data->hciemu);
+	bthost_add_sco_hook(host, data->handle, bthost_recv_data, data,
+				bthost_sco_disconnected);
+}
+
 static void setup_powered_callback(uint8_t status, uint16_t length,
 					const void *param, void *user_data)
 {
 	struct test_data *data = tester_get_data();
+	const struct sco_client_data *scodata = data->test_data;
 	struct bthost *bthost;
 
 	if (status != MGMT_STATUS_SUCCESS) {
@@ -334,6 +395,9 @@ static void setup_powered_callback(uint8_t status, uint16_t length,
 	bthost = hciemu_client_get_host(data->hciemu);
 	bthost_set_cmd_complete_cb(bthost, client_connectable_complete, data);
 	bthost_write_scan_enable(bthost, 0x03);
+
+	if (scodata && scodata->send_data)
+		bthost_set_sco_cb(bthost, sco_new_conn, data);
 }
 
 static void setup_powered(const void *test_data)
@@ -740,8 +804,6 @@ static gboolean sco_connect_cb(GIOChannel *io, GIOCondition cond,
 		ssize_t ret = 0;
 		unsigned int count;
 
-		data->step = 0;
-
 		sco_tx_timestamping(data, io);
 
 		tester_print("Writing %u*%u bytes of data",
@@ -751,6 +813,7 @@ static gboolean sco_connect_cb(GIOChannel *io, GIOCondition cond,
 			ret = write(sk, scodata->send_data, scodata->data_len);
 			if (scodata->data_len != ret)
 				break;
+			data->step++;
 		}
 		if (scodata->data_len != ret) {
 			tester_warn("Failed to write %u bytes: %zu %s (%d)",
@@ -1069,9 +1132,18 @@ int main(int argc, char *argv[])
 	test_sco("SCO CVSD Send - Success", &connect_send_success,
 					setup_powered, test_connect);
 
+	test_sco_no_flowctl("SCO CVSD Send No Flowctl - Success",
+			&connect_send_success, setup_powered, test_connect);
+
 	test_sco("SCO CVSD Send - TX Timestamping",
 					&connect_send_tx_timestamping,
 					setup_powered, test_connect);
+
+	test_sco_11("SCO CVSD 1.1 Send - Success", &connect_send_success,
+					setup_powered, test_connect);
+
+	test_sco_11_no_flowctl("SCO CVSD 1.1 Send No Flowctl - Success",
+			&connect_send_success, setup_powered, test_connect);
 
 	test_offload_sco("Basic SCO Get Socket Option - Offload - Success",
 				NULL, setup_powered, test_codecs_getsockopt);
