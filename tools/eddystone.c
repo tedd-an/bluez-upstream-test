@@ -39,7 +39,7 @@ static bool shutdown_timeout(void *user_data)
 	return false;
 }
 
-static void shutdown_complete(const void *data, uint8_t size, void *user_data)
+static void shutdown_complete(struct iovec *iov, void *user_data)
 {
 	unsigned int id = PTR_TO_UINT(user_data);
 
@@ -106,12 +106,11 @@ static void set_adv_enable(void)
 					&enable, 1, NULL, NULL, NULL);
 }
 
-static void adv_data_callback(const void *data, uint8_t size,
-							void *user_data)
+static void adv_data_callback(struct iovec *iov, void *user_data)
 {
-	uint8_t status = *((uint8_t *) data);
+	uint8_t status;
 
-	if (status) {
+	if (util_iov_pull_u8(iov, &status) || status) {
 		fprintf(stderr, "Failed to set advertising data\n");
 		shutdown_device();
 		return;
@@ -122,13 +121,13 @@ static void adv_data_callback(const void *data, uint8_t size,
 	set_adv_enable();
 }
 
-static void adv_tx_power_callback(const void *data, uint8_t size,
-							void *user_data)
+static void adv_tx_power_callback(struct iovec *iov, void *user_data)
 {
-	const struct bt_hci_rsp_le_read_adv_tx_power *rsp = data;
+	const struct bt_hci_rsp_le_read_adv_tx_power *rsp;
 	struct bt_hci_cmd_le_set_adv_data cmd;
 
-	if (rsp->status) {
+	rsp = util_iov_pull_mem(iov, sizeof(*rsp));
+	if (rsp || rsp->status) {
 		fprintf(stderr, "Failed to read advertising TX power\n");
 		shutdown_device();
 		return;
@@ -166,12 +165,12 @@ static void adv_tx_power_callback(const void *data, uint8_t size,
 					adv_data_callback, NULL, NULL);
 }
 
-static void local_features_callback(const void *data, uint8_t size,
-							void *user_data)
+static void local_features_callback(struct iovec *iov, void *user_data)
 {
-	const struct bt_hci_rsp_read_local_features *rsp = data;
+	const struct bt_hci_rsp_read_local_features *rsp;
 
-	if (rsp->status) {
+	rsp = util_iov_pull_mem(iov, sizeof(*rsp));
+	if (!rsp || rsp->status) {
 		fprintf(stderr, "Failed to read local features\n");
 		shutdown_device();
 		return;

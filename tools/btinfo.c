@@ -83,7 +83,7 @@ static bool shutdown_timeout(void *user_data)
 	return false;
 }
 
-static void shutdown_complete(const void *data, uint8_t size, void *user_data)
+static void shutdown_complete(struct iovec *iov, void *user_data)
 {
 	unsigned int id = PTR_TO_UINT(user_data);
 
@@ -106,10 +106,15 @@ static void shutdown_device(void)
 		mainloop_quit();
 }
 
-static void local_version_callback(const void *data, uint8_t size,
-							void *user_data)
+static void local_version_callback(struct iovec *iov, void *user_data)
 {
-	const struct bt_hci_rsp_read_local_version *rsp = data;
+	const struct bt_hci_rsp_read_local_version *rsp;
+
+	rsp = util_iov_pull_mem(iov, sizeof(*rsp));
+	if (!rsp || rsp->status) {
+		fprintf(stderr, "Failed to read local version\n");
+		return;
+	}
 
 	printf("HCI version: %u\n", rsp->hci_ver);
 	printf("HCI revision: %u\n", le16_to_cpu(rsp->hci_rev));
@@ -128,14 +133,12 @@ static void local_version_callback(const void *data, uint8_t size,
 	printf("Manufacturer: %u\n", le16_to_cpu(rsp->manufacturer));
 }
 
-static void local_commands_callback(const void *data, uint8_t size,
-							void *user_data)
+static void local_commands_callback(struct iovec *iov, void *user_data)
 {
 	shutdown_device();
 }
 
-static void local_features_callback(const void *data, uint8_t size,
-							void *user_data)
+static void local_features_callback(struct iovec *iov, void *user_data)
 {
 	bt_hci_send(hci_dev, BT_HCI_CMD_READ_LOCAL_COMMANDS, NULL, 0,
 					local_commands_callback, NULL, NULL);

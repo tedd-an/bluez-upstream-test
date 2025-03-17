@@ -25,13 +25,13 @@ struct crypto_data {
 	void *user_data;
 };
 
-static void le_encrypt_callback(const void *response, uint8_t size,
-							void *user_data)
+static void le_encrypt_callback(struct iovec *iov, void *user_data)
 {
 	struct crypto_data *data = user_data;
-	const struct bt_hci_rsp_le_encrypt *rsp = response;
+	const struct bt_hci_rsp_le_encrypt *rsp;
 
-	if (rsp->status) {
+	rsp = util_iov_pull_mem(iov, sizeof(*rsp));
+	if (!rsp || rsp->status) {
 		data->callback(NULL, 0, data->user_data);
 		return;
 	}
@@ -66,14 +66,14 @@ static bool le_encrypt(struct bt_hci *hci, uint8_t size,
 	return true;
 }
 
-static void prand_callback(const void *response, uint8_t size,
-							void *user_data)
+static void prand_callback(struct iovec *iov, void *user_data)
 {
 	struct crypto_data *data = user_data;
-	const struct bt_hci_rsp_le_rand *rsp = response;
+	const struct bt_hci_rsp_le_rand *rsp;
 	uint8_t prand[3];
 
-	if (rsp->status) {
+	rsp = util_iov_pull_mem(iov, sizeof(*rsp));
+	if (!rsp || rsp->status) {
 		data->callback(NULL, 0, data->user_data);
 		return;
 	}

@@ -102,10 +102,10 @@ static uint8_t *str2bytearray(char *arg, size_t *val_len)
 	return util_memdup(value, i);
 }
 
-static void hci_cmd_complete(const void *data, uint8_t size, void *user_data)
+static void hci_cmd_complete(struct iovec *iov, void *user_data)
 {
 	bt_shell_printf("HCI Command complete:\n");
-	bt_shell_hexdump(data, size);
+	bt_shell_hexdump(iov->iov_base, iov->iov_len);
 
 	return bt_shell_noninteractive_quit(EXIT_SUCCESS);
 }
@@ -198,12 +198,12 @@ static bool match_event(const void *data, const void *match_data)
 	return evt->event == event;
 }
 
-static void hci_evt_received(const void *data, uint8_t size, void *user_data)
+static void hci_evt_received(struct iovec *iov, void *user_data)
 {
 	struct hci_event *evt = user_data;
 
 	bt_shell_printf("HCI Event 0x%02x received:\n", evt->event);
-	bt_shell_hexdump(data, size);
+	bt_shell_hexdump(iov->iov_base, iov->iov_len);
 }
 
 static void hci_register(int argc, char *argv[])

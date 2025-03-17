@@ -30,6 +30,8 @@
 #include "src/shared/queue.h"
 #include "src/shared/hci.h"
 
+#define HCI_MAX_EVENT_SIZE	260
+
 #define BTPROTO_HCI	1
 struct sockaddr_hci {
 	sa_family_t	hci_family;
@@ -213,7 +215,7 @@ static bool match_cmd_opcode(const void *a, const void *b)
 }
 
 static void process_response(struct bt_hci *hci, uint16_t opcode,
-					const void *data, size_t size)
+						struct iovec *iov)
 {
 	struct cmd *cmd;
 
@@ -233,7 +235,7 @@ static void process_response(struct bt_hci *hci, uint16_t opcode,
 	bt_hci_ref(hci);
 
 	if (cmd->callback)
-		cmd->callback(data, size, cmd->user_data);
+		cmd->callback(iov, cmd->user_data);
 
 	cmd_free(cmd);
 
@@ -246,44 +248,42 @@ static void process_notify(void *data, void *user_data)
 {
 	struct bt_hci_evt_hdr *hdr = user_data;
 	struct evt *evt = data;
+	struct iovec iov = { hdr + sizeof(*hdr), hdr->plen };
 
 	if (evt->event == hdr->evt)
-		evt->callback(user_data + sizeof(struct bt_hci_evt_hdr),
-						hdr->plen, evt->user_data);
+		evt->callback(&iov, evt->user_data);
 }
 
-static void process_event(struct bt_hci *hci, const void *data, size_t size)
+static void process_event(struct bt_hci *hci, struct iovec *iov)
 {
-	const struct bt_hci_evt_hdr *hdr = data;
+	const struct bt_hci_evt_hdr *hdr;
 	const struct bt_hci_evt_cmd_complete *cc;
 	const struct bt_hci_evt_cmd_status *cs;
 
-	if (size < sizeof(struct bt_hci_evt_hdr))
+	hdr = util_iov_pull_mem(iov, sizeof(*hdr));
+	if (!hdr)
 		return;
 
-	data += sizeof(struct bt_hci_evt_hdr);
-	size -= sizeof(struct bt_hci_evt_hdr);
-
-	if (hdr->plen != size)
+	if (hdr->plen != iov->iov_len)
 		return;
 
 	switch (hdr->evt) {
 	case BT_HCI_EVT_CMD_COMPLETE:
-		if (size < sizeof(*cc))
+		cc = util_iov_pull_mem(iov, sizeof(*cc));
+		if (!cc)
 			return;
-		cc = data;
 		hci->num_cmds = cc->ncmd;
-		process_response(hci, le16_to_cpu(cc->opcode),
-						data + sizeof(*cc),
-						size - sizeof(*cc));
+		process_response(hci, le16_to_cpu(cc->opcode), iov);
 		break;
 
 	case BT_HCI_EVT_CMD_STATUS:
-		if (size < sizeof(*cs))
+		cs = util_iov_pull_mem(iov, sizeof(*cs));
+		if (!cs)
 			return;
-		cs = data;
 		hci->num_cmds = cs->ncmd;
-		process_response(hci, le16_to_cpu(cs->opcode), &cs->status, 1);
+		iov->iov_base = (void *)&cs->status;
+		iov->iov_len = sizeof(cs->status);
+		process_response(hci, le16_to_cpu(cs->opcode), iov);
 		break;
 
 	default:
@@ -295,9 +295,11 @@ static void process_event(struct bt_hci *hci, const void *data, size_t size)
 static bool io_read_callback(struct io *io, void *user_data)
 {
 	struct bt_hci *hci = user_data;
-	uint8_t buf[512];
+	uint8_t buf[HCI_MAX_EVENT_SIZE];
+	struct iovec iov = { buf };
 	ssize_t len;
 	int fd;
+	uint8_t h4;
 
 	fd = io_get_fd(hci->io);
 	if (fd < 0)
@@ -310,12 +312,14 @@ static bool io_read_callback(struct io *io, void *user_data)
 	if (len < 0)
 		return false;
 
-	if (len < 1)
+	iov.iov_len = len;
+
+	if (!util_iov_pull_u8(&iov, &h4))
 		return true;
 
-	switch (buf[0]) {
+	switch (h4) {
 	case BT_H4_EVT_PKT:
-		process_event(hci, buf + 1, len - 1);
+		process_event(hci, &iov);
 		break;
 	}
 

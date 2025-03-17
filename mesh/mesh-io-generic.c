@@ -18,6 +18,7 @@
 #include <ell/ell.h>
 
 #include "monitor/bt.h"
+#include "src/shared/util.h"
 #include "src/shared/hci.h"
 #include "src/shared/mgmt.h"
 #include "lib/bluetooth.h"
@@ -144,14 +145,17 @@ static void event_adv_report(struct mesh_io *io, const void *buf, uint8_t size)
 	}
 }
 
-static void event_callback(const void *buf, uint8_t size, void *user_data)
+static void event_callback(struct iovec *iov, void *user_data)
 {
-	uint8_t event = l_get_u8(buf);
+	uint8_t event;
 	struct mesh_io *io = user_data;
+
+	if (!util_iov_pull_u8(iov, &event))
+		return;
 
 	switch (event) {
 	case BT_HCI_EVT_LE_ADV_REPORT:
-		event_adv_report(io, buf + 1, size - 1);
+		event_adv_report(io, iov->iov_base, iov->iov_len);
 		break;
 
 	default:
@@ -159,30 +163,29 @@ static void event_callback(const void *buf, uint8_t size, void *user_data)
 	}
 }
 
-static void local_commands_callback(const void *data, uint8_t size,
-							void *user_data)
+static void local_commands_callback(struct iovec *iov, void *user_data)
 {
-	const struct bt_hci_rsp_read_local_commands *rsp = data;
+	const struct bt_hci_rsp_read_local_commands *rsp;
 
-	if (rsp->status)
+	rsp = util_iov_pull_mem(iov, sizeof(*rsp));
+	if (!rsp || rsp->status)
 		l_error("Failed to read local commands");
 }
 
-static void local_features_callback(const void *data, uint8_t size,
-							void *user_data)
+static void local_features_callback(struct iovec *iov, void *user_data)
 {
-	const struct bt_hci_rsp_read_local_features *rsp = data;
+	const struct bt_hci_rsp_read_local_features *rsp;
 
-	if (rsp->status)
+	rsp = util_iov_pull_mem(iov, sizeof(*rsp));
+	if (!rsp || rsp->status)
 		l_error("Failed to read local features");
 }
 
-static void hci_generic_callback(const void *data, uint8_t size,
-								void *user_data)
+static void hci_generic_callback(struct iovec *iov, void *user_data)
 {
-	uint8_t status = l_get_u8(data);
+	uint8_t status;
 
-	if (status)
+	if (!util_iov_pull_u8(iov, &status) || status)
 		l_error("Failed to initialize HCI");
 }
 
@@ -278,17 +281,15 @@ static void configure_hci(struct mesh_io_private *io)
 				sizeof(cmd), hci_generic_callback, NULL, NULL);
 }
 
-static void scan_enable_rsp(const void *buf, uint8_t size,
-							void *user_data)
+static void scan_enable_rsp(struct iovec *iov, void *user_data)
 {
-	uint8_t status = *((uint8_t *) buf);
+	uint8_t status;
 
-	if (status)
+	if (!util_iov_pull_u8(iov, &status) || status)
 		l_error("LE Scan enable failed (0x%02x)", status);
 }
 
-static void set_recv_scan_enable(const void *buf, uint8_t size,
-							void *user_data)
+static void set_recv_scan_enable(struct iovec *iov, void *user_data)
 {
 	struct mesh_io_private *pvt = user_data;
 	struct bt_hci_cmd_le_set_scan_enable cmd;
@@ -299,14 +300,13 @@ static void set_recv_scan_enable(const void *buf, uint8_t size,
 			&cmd, sizeof(cmd), scan_enable_rsp, pvt, NULL);
 }
 
-static void scan_disable_rsp(const void *buf, uint8_t size,
-							void *user_data)
+static void scan_disable_rsp(struct iovec *iov, void *user_data)
 {
 	struct bt_hci_cmd_le_set_scan_parameters cmd;
 	struct mesh_io_private *pvt = user_data;
-	uint8_t status = *((uint8_t *) buf);
+	uint8_t status;
 
-	if (status)
+	if (!util_iov_pull_u8(iov, &status) || status)
 		l_error("LE Scan disable failed (0x%02x)", status);
 
 	cmd.type = pvt->active ? 0x01 : 0x00;	/* Passive/Active scanning */
@@ -452,8 +452,7 @@ static bool dev_caps(struct mesh_io *io, struct mesh_io_caps *caps)
 	return true;
 }
 
-static void send_cancel_done(const void *buf, uint8_t size,
-							void *user_data)
+static void send_cancel_done(struct iovec *iov, void *user_data)
 {
 	struct mesh_io_private *pvt = user_data;
 	struct bt_hci_cmd_le_set_random_address cmd;
@@ -478,7 +477,7 @@ static void send_cancel(struct mesh_io_private *pvt)
 		return;
 
 	if (!pvt->sending) {
-		send_cancel_done(NULL, 0, pvt);
+		send_cancel_done(NULL, pvt);
 		return;
 	}
 
@@ -488,8 +487,7 @@ static void send_cancel(struct mesh_io_private *pvt)
 				send_cancel_done, pvt, NULL);
 }
 
-static void set_send_adv_enable(const void *buf, uint8_t size,
-							void *user_data)
+static void set_send_adv_enable(struct iovec *iov, void *user_data)
 {
 	struct mesh_io_private *pvt = user_data;
 	struct bt_hci_cmd_le_set_adv_enable cmd;
@@ -503,8 +501,7 @@ static void set_send_adv_enable(const void *buf, uint8_t size,
 				&cmd, sizeof(cmd), NULL, NULL, NULL);
 }
 
-static void set_send_adv_data(const void *buf, uint8_t size,
-							void *user_data)
+static void set_send_adv_data(struct iovec *iov, void *user_data)
 {
 	struct mesh_io_private *pvt = user_data;
 	struct tx_pkt *tx;
@@ -535,8 +532,7 @@ done:
 	pvt->tx = NULL;
 }
 
-static void set_send_adv_params(const void *buf, uint8_t size,
-							void *user_data)
+static void set_send_adv_params(struct iovec *iov, void *user_data)
 {
 	struct mesh_io_private *pvt = user_data;
 	struct bt_hci_cmd_le_set_adv_parameters cmd;
@@ -575,7 +571,7 @@ static void send_pkt(struct mesh_io_private *pvt, struct tx_pkt *tx,
 	pvt->interval = interval;
 
 	if (!pvt->sending) {
-		set_send_adv_params(NULL, 0, pvt);
+		set_send_adv_params(NULL, pvt);
 		return;
 	}
 
