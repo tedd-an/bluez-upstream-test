@@ -51,11 +51,17 @@ static void test_debug(const char *str, void *user_data)
 	tester_debug("%s", str);
 }
 
-static void test_pre_setup_lt_address(const void *data, uint8_t size,
-							void *user_data)
+static void test_pre_setup_lt_address(struct iovec *data, void *user_data)
 {
 	struct user_data *user = tester_get_data();
-	const struct bt_hci_rsp_read_bd_addr *rsp = data;
+	const struct bt_hci_rsp_read_bd_addr *rsp;
+
+	rsp = util_iov_pull_mem(data, sizeof(*rsp));
+	if (!rsp) {
+		tester_warn("Invalid response (length too short)");
+		tester_pre_setup_failed();
+		return;
+	}
 
 	if (rsp->status) {
 		tester_warn("Read lower tester address failed (0x%02x)",
@@ -69,11 +75,16 @@ static void test_pre_setup_lt_address(const void *data, uint8_t size,
 	tester_pre_setup_complete();
 }
 
-static void test_pre_setup_lt_complete(const void *data, uint8_t size,
-							void *user_data)
+static void test_pre_setup_lt_complete(struct iovec *iov, void *user_data)
 {
 	struct user_data *user = tester_get_data();
-	uint8_t status = *((uint8_t *) data);
+	uint8_t status;
+
+	if (!util_iov_pull_u8(iov, &status)) {
+		tester_warn("Invalid response (length too short)");
+		tester_pre_setup_failed();
+		return;
+	}
 
 	if (status) {
 		tester_warn("Reset lower tester failed (0x%02x)", status);
@@ -89,11 +100,17 @@ static void test_pre_setup_lt_complete(const void *data, uint8_t size,
 	}
 }
 
-static void test_pre_setup_ut_address(const void *data, uint8_t size,
-							void *user_data)
+static void test_pre_setup_ut_address(struct iovec *iov, void *user_data)
 {
 	struct user_data *user = tester_get_data();
-	const struct bt_hci_rsp_read_bd_addr *rsp = data;
+	const struct bt_hci_rsp_read_bd_addr *rsp;
+
+	rsp = util_iov_pull_mem(iov, sizeof(*rsp));
+	if (!rsp) {
+		tester_warn("Invalid response (length too short)");
+		tester_pre_setup_failed();
+		return;
+	}
 
 	if (rsp->status) {
 		tester_warn("Read upper tester address failed (0x%02x)",
@@ -119,11 +136,16 @@ static void test_pre_setup_ut_address(const void *data, uint8_t size,
 	}
 }
 
-static void test_pre_setup_ut_complete(const void *data, uint8_t size,
-							void *user_data)
+static void test_pre_setup_ut_complete(struct iovec *iov, void *user_data)
 {
 	struct user_data *user = tester_get_data();
-	uint8_t status = *((uint8_t *) data);
+	uint8_t status;
+
+	if (!util_iov_pull_u8(iov, &status)) {
+		tester_warn("Invalid response (length too short)");
+		tester_pre_setup_failed();
+		return;
+	}
 
 	if (status) {
 		tester_warn("Reset upper tester failed (0x%02x)", status);
@@ -211,10 +233,16 @@ static void user_data_free(void *data)
 				test_post_teardown, 30, user, user_data_free); \
 	} while (0)
 
-static void setup_features_complete(const void *data, uint8_t size,
-							void *user_data)
+static void setup_features_complete(struct iovec *iov, void *user_data)
 {
-	const struct bt_hci_rsp_read_local_features *rsp = data;
+	const struct bt_hci_rsp_read_local_features *rsp;
+
+	rsp = util_iov_pull_mem(iov, sizeof(*rsp));
+	if (!rsp) {
+		tester_warn("Invalid response (length too short)");
+		tester_setup_failed();
+		return;
+	}
 
 	if (rsp->status) {
 		tester_warn("Failed to get HCI features (0x%02x)", rsp->status);
@@ -242,10 +270,15 @@ static void test_reset(const void *test_data)
 	tester_test_passed();
 }
 
-static void test_command_complete(const void *data, uint8_t size,
-							void *user_data)
+static void test_command_complete(struct iovec *iov, void *user_data)
 {
-	uint8_t status = *((uint8_t *) data);
+	uint8_t status;
+
+	if (!util_iov_pull_u8(iov, &status)) {
+		tester_warn("Invalid response (length too short)");
+		tester_test_failed();
+		return;
+	}
 
 	if (status) {
 		tester_warn("HCI command failed (0x%02x)", status);
@@ -283,10 +316,17 @@ static void test_read_local_supported_features(const void *test_data)
 	test_command(BT_HCI_CMD_READ_LOCAL_FEATURES);
 }
 
-static void test_local_extended_features_complete(const void *data,
-						uint8_t size, void *user_data)
+static void test_local_extended_features_complete(struct iovec *iov,
+							void *user_data)
 {
-	const struct bt_hci_rsp_read_local_ext_features *rsp = data;
+	const struct bt_hci_rsp_read_local_ext_features *rsp;
+
+	rsp = util_iov_pull_mem(iov, sizeof(*rsp));
+	if (!rsp) {
+		tester_warn("Invalid response (length too short)");
+		tester_test_failed();
+		return;
+	}
 
 	if (rsp->status) {
 		tester_warn("Failed to get HCI extended features (0x%02x)",
@@ -308,7 +348,7 @@ static void test_read_local_extended_features(const void *test_data)
 	if (!bt_hci_send(user->hci_ut, BT_HCI_CMD_READ_LOCAL_EXT_FEATURES,
 					&cmd, sizeof(cmd),
 					test_local_extended_features_complete,
-								NULL, NULL)) {
+					NULL, NULL)) {
 		tester_warn("Failed to send HCI extended features command");
 		tester_test_failed();
 		return;
@@ -345,15 +385,21 @@ static void test_le_clear_accept_list(const void *test_data)
 	test_command(BT_HCI_CMD_LE_CLEAR_ACCEPT_LIST);
 }
 
-static void test_le_encrypt_complete(const void *data, uint8_t size,
-								void *user_data)
+static void test_le_encrypt_complete(struct iovec *iov, void *user_data)
 {
-	const struct bt_hci_rsp_le_encrypt *rsp = data;
+	const struct bt_hci_rsp_le_encrypt *rsp;
 	uint8_t sample[16] = {
 		0x7d, 0xf7, 0x6b, 0x0c, 0x1a, 0xb8, 0x99, 0xb3,
 		0x3e, 0x42, 0xf0, 0x47, 0xb9, 0x1b, 0x54, 0x6f
 	};
 	uint8_t enc_data[16];
+
+	rsp = util_iov_pull_mem(iov, sizeof(*rsp));
+	if (!rsp) {
+		tester_warn("Invalid response (length too short)");
+		tester_test_failed();
+		return;
+	}
 
 	if (rsp->status) {
 		tester_warn("Failed HCI LE Encrypt (0x%02x)", rsp->status);
@@ -404,20 +450,31 @@ static void test_le_rand(const void *test_data)
 	test_command(BT_HCI_CMD_LE_RAND);
 }
 
-static void test_le_read_local_pk_complete(const void *data, uint8_t size,
-								void *user_data)
+static void test_le_read_local_pk_complete(struct iovec *iov, void *user_data)
 {
-	const uint8_t *event = data;
+	uint8_t event;
 	const struct bt_hci_evt_le_read_local_pk256_complete *evt;
 	struct le_keys *keys = user_data;
 
-	if (*event != BT_HCI_EVT_LE_READ_LOCAL_PK256_COMPLETE) {
+	if (!util_iov_pull_u8(iov, &event)) {
+		tester_warn("Invalid response (length too short)");
+		tester_test_failed();
+		return;
+	}
+
+	if (event != BT_HCI_EVT_LE_READ_LOCAL_PK256_COMPLETE) {
 		tester_warn("Failed Read Local PK256 command");
 		tester_test_failed();
 		return;
 	}
 
-	evt = (void *)(event + 1);
+	evt = util_iov_pull_mem(iov, sizeof(*evt));
+	if (!evt) {
+		tester_warn("Invalid response (length too short)");
+		tester_test_failed();
+		return;
+	}
+
 	if (evt->status) {
 		tester_warn("HCI Read Local PK complete failed (0x%02x)",
 								evt->status);
@@ -432,13 +489,13 @@ static void test_le_read_local_pk_complete(const void *data, uint8_t size,
 	tester_test_passed();
 }
 
-static void test_le_read_local_pk_status(const void *data, uint8_t size,
-							void *user_data)
+static void test_le_read_local_pk_status(struct iovec *iov, void *user_data)
 {
-	uint8_t status = *((uint8_t *) data);
+	uint8_t status;
 
-	if (status) {
-		tester_warn("Failed to send Read Local PK256 cmd (0x%02x)", status);
+	if (!util_iov_pull_u8(iov, &status) || status) {
+		tester_warn("Failed to send Read Local PK256 cmd (0x%02x)",
+				status);
 		tester_test_failed();
 		return;
 	}
@@ -477,20 +534,31 @@ static void test_le_read_local_pk(const void *test_data)
 	}
 }
 
-static void setup_le_read_local_pk_complete(const void *data, uint8_t size,
-								void *user_data)
+static void setup_le_read_local_pk_complete(struct iovec *iov, void *user_data)
 {
-	const uint8_t *event = data;
+	uint8_t event;
 	const struct bt_hci_evt_le_read_local_pk256_complete *evt;
 	struct le_keys *keys = user_data;
 
-	if (*event != BT_HCI_EVT_LE_READ_LOCAL_PK256_COMPLETE) {
+	if (!util_iov_pull_u8(iov, &event)) {
+		tester_warn("Invalid response (length too short)");
+		tester_setup_failed();
+		return;
+	}
+
+	if (event != BT_HCI_EVT_LE_READ_LOCAL_PK256_COMPLETE) {
 		tester_warn("Failed Read Local PK256 command");
 		tester_setup_failed();
 		return;
 	}
 
-	evt = (void *)(event + 1);
+	evt = util_iov_pull_mem(iov, sizeof(*evt));
+	if (!evt) {
+		tester_warn("Invalid response (length too short)");
+		tester_setup_failed();
+		return;
+	}
+
 	if (evt->status) {
 		tester_warn("HCI Read Local PK complete failed (0x%02x)",
 								evt->status);
@@ -505,10 +573,15 @@ static void setup_le_read_local_pk_complete(const void *data, uint8_t size,
 	tester_setup_complete();
 }
 
-static void setup_le_read_local_pk_status(const void *data, uint8_t size,
-							void *user_data)
+static void setup_le_read_local_pk_status(struct iovec *iov, void *user_data)
 {
-	uint8_t status = *((uint8_t *) data);
+	uint8_t status;
+
+	if (!util_iov_pull_u8(iov, &status)) {
+		tester_warn("Invalid response (length too short)");
+		tester_setup_failed();
+		return;
+	}
 
 	if (status) {
 		tester_warn("Failed to send DHKey gen cmd (0x%02x)", status);
@@ -551,21 +624,32 @@ static void setup_le_generate_dhkey(const void *test_data)
 	}
 }
 
-static void test_le_generate_dhkey_complete(const void *data, uint8_t size,
-								void *user_data)
+static void test_le_generate_dhkey_complete(struct iovec *iov, void *user_data)
 {
-	const uint8_t *event = data;
+	uint8_t event;
 	const struct bt_hci_evt_le_generate_dhkey_complete *evt;
 	struct le_keys *keys = user_data;
 	uint8_t dhkey[32];
 
-	if (*event != BT_HCI_EVT_LE_GENERATE_DHKEY_COMPLETE) {
+	if (!util_iov_pull_u8(iov, &event)) {
+		tester_warn("Invalid response (length too short)");
+		tester_test_failed();
+		return;
+	}
+
+	if (event != BT_HCI_EVT_LE_GENERATE_DHKEY_COMPLETE) {
 		tester_warn("Failed DHKey generation command");
 		tester_test_failed();
 		return;
 	}
 
-	evt = (void *)(event + 1);
+	evt = util_iov_pull_mem(iov, sizeof(*evt));
+	if (!evt) {
+		tester_warn("Invalid response (length too short)");
+		tester_test_failed();
+		return;
+	}
+
 	if (evt->status) {
 		tester_warn("HCI Generate DHKey complete failed (0x%02x)",
 								evt->status);
@@ -593,12 +677,11 @@ static void test_le_generate_dhkey_complete(const void *data, uint8_t size,
 		tester_test_failed();
 }
 
-static void test_le_generate_dhkey_status(const void *data, uint8_t size,
-							void *user_data)
+static void test_le_generate_dhkey_status(struct iovec *iov, void *user_data)
 {
-	uint8_t status = *((uint8_t *) data);
+	uint8_t status;
 
-	if (status) {
+	if (util_iov_pull_u8(iov, &status) || status) {
 		tester_warn("Failed to send DHKey gen cmd (0x%02x)", status);
 		tester_test_failed();
 		return;
@@ -630,10 +713,16 @@ static void test_le_generate_dhkey(const void *test_data)
 
 }
 
-static void test_inquiry_complete(const void *data, uint8_t size,
-							void *user_data)
+static void test_inquiry_complete(struct iovec *iov, void *user_data)
 {
-	const struct bt_hci_evt_inquiry_complete *evt = data;
+	const struct bt_hci_evt_inquiry_complete *evt;
+
+	evt = util_iov_pull_mem(iov, sizeof(*evt));
+	if (!iov) {
+		tester_warn("Invalid response (length too short)");
+		tester_test_failed();
+		return;
+	}
 
 	if (evt->status) {
 		tester_warn("HCI inquiry complete failed (0x%02x)",
@@ -645,10 +734,15 @@ static void test_inquiry_complete(const void *data, uint8_t size,
 	tester_test_passed();
 }
 
-static void test_inquiry_status(const void *data, uint8_t size,
-							void *user_data)
+static void test_inquiry_status(struct iovec *iov, void *user_data)
 {
-	uint8_t status = *((uint8_t *) data);
+	uint8_t status;
+
+	if (!util_iov_pull_u8(iov, &status)) {
+		tester_warn("Invalid response (length too short)");
+		tester_test_failed();
+		return;
+	}
 
 	if (status) {
 		tester_warn("HCI inquiry command failed (0x%02x)", status);
@@ -679,10 +773,15 @@ static void test_inquiry_liac(const void *test_data)
 	}
 }
 
-static void setup_lt_connectable_complete(const void *data, uint8_t size,
-							void *user_data)
+static void setup_lt_connectable_complete(struct iovec *iov, void *user_data)
 {
-	uint8_t status = *((uint8_t *) data);
+	uint8_t status;
+
+	if (!util_iov_pull_u8(iov, &status)) {
+		tester_warn("Invalid response (length too short)");
+		tester_setup_failed();
+		return;
+	}
 
 	if (status) {
 		tester_warn("Failed to set HCI scan enable (0x%02x)", status);
@@ -693,12 +792,17 @@ static void setup_lt_connectable_complete(const void *data, uint8_t size,
 	tester_setup_complete();
 }
 
-static void setup_lt_connect_request_accept(const void *data, uint8_t size,
-							void *user_data)
+static void setup_lt_connect_request_accept(struct iovec *iov, void *user_data)
 {
 	struct user_data *user = tester_get_data();
-	const struct bt_hci_evt_conn_request *evt = data;
+	const struct bt_hci_evt_conn_request *evt;
 	struct bt_hci_cmd_accept_conn_request cmd;
+
+	evt = util_iov_pull_mem(iov, sizeof(*evt));
+	if (!evt) {
+		tester_warn("Invalid response (length too short)");
+		return;
+	}
 
 	memcpy(cmd.bdaddr, evt->bdaddr, 6);
 	cmd.role = 0x01;
@@ -734,11 +838,17 @@ static void test_create_connection_disconnect(void *user_data)
 	tester_test_passed();
 }
 
-static void test_create_connection_complete(const void *data, uint8_t size,
-							void *user_data)
+static void test_create_connection_complete(struct iovec *iov, void *user_data)
 {
 	struct user_data *user = tester_get_data();
-	const struct bt_hci_evt_conn_complete *evt = data;
+	const struct bt_hci_evt_conn_complete *evt;
+
+	evt = util_iov_pull_mem(iov, sizeof(*evt));
+	if (!evt) {
+		tester_warn("Invalid response (length too short)");
+		tester_test_failed();
+		return;
+	}
 
 	if (evt->status) {
 		tester_warn("HCI create connection complete failed (0x%02x)",
@@ -752,10 +862,15 @@ static void test_create_connection_complete(const void *data, uint8_t size,
 	tester_wait(2, test_create_connection_disconnect, NULL);
 }
 
-static void test_create_connection_status(const void *data, uint8_t size,
-							void *user_data)
+static void test_create_connection_status(struct iovec *iov, void *user_data)
 {
-	uint8_t status = *((uint8_t *) data);
+	uint8_t status;
+
+	if (!util_iov_pull_u8(iov, &status)) {
+		tester_warn("Invalid response (length too short)");
+		tester_test_failed();
+		return;
+	}
 
 	if (status) {
 		tester_warn("HCI create connection command failed (0x%02x)",
@@ -783,7 +898,7 @@ static void test_create_connection(const void *test_data)
 	if (!bt_hci_send(user->hci_ut, BT_HCI_CMD_CREATE_CONN,
 						&cmd, sizeof(cmd),
 						test_create_connection_status,
-								NULL, NULL)) {
+						NULL, NULL)) {
 		tester_warn("Failed to send HCI create connection command");
 		tester_test_failed();
 		return;
@@ -795,10 +910,15 @@ static void teardown_timeout(void *user_data)
 	tester_teardown_complete();
 }
 
-static void teardown_disconnect_status(const void *data, uint8_t size,
-							void *user_data)
+static void teardown_disconnect_status(struct iovec *iov, void *user_data)
 {
-	uint8_t status = *((uint8_t *) data);
+	uint8_t status;
+
+	if (!util_iov_pull_u8(iov, &status)) {
+		tester_warn("Invalid response (length too short)");
+		tester_teardown_failed();
+		return;
+	}
 
 	if (status) {
 		tester_warn("HCI disconnect failed (0x%02x)", status);
@@ -820,21 +940,34 @@ static void teardown_connection(const void *test_data)
 	if (!bt_hci_send(user->hci_ut, BT_HCI_CMD_DISCONNECT,
 						&cmd, sizeof(cmd),
 						teardown_disconnect_status,
-								NULL, NULL)) {
+						NULL, NULL)) {
 		tester_warn("Failed to send HCI disconnect command");
 		tester_test_failed();
 		return;
 	}
 }
 
-static void test_adv_report(const void *data, uint8_t size, void *user_data)
+static void test_adv_report(struct iovec *iov, void *user_data)
 {
 	struct user_data *user = tester_get_data();
-	uint8_t subevent = *((uint8_t *) data);
-	const struct bt_hci_evt_le_adv_report *lar = data + 1;
+	uint8_t subevent;
+	const struct bt_hci_evt_le_adv_report *lar;
+
+	if (!util_iov_pull_u8(iov, &subevent)) {
+		tester_warn("Invalid response (length too short)");
+		tester_setup_failed();
+		return;
+	}
 
 	switch (subevent) {
 	case BT_HCI_EVT_LE_ADV_REPORT:
+		lar = util_iov_pull_mem(iov, sizeof(*lar));
+		if (!lar) {
+			tester_warn("Invalid response (length too short)");
+			tester_setup_failed();
+			return;
+		}
+
 		if (!memcmp(lar->addr, user->bdaddr_ut, 6))
 			tester_setup_complete();
 		break;

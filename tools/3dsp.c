@@ -62,7 +62,7 @@ static bool shutdown_timeout(void *user_data)
 	return false;
 }
 
-static void shutdown_complete(const void *data, uint8_t size, void *user_data)
+static void shutdown_complete(struct iovec *iov, void *user_data)
 {
 	unsigned int id = PTR_TO_UINT(user_data);
 
@@ -85,11 +85,11 @@ static void shutdown_device(void)
 		mainloop_quit();
 }
 
-static void inquiry_started(const void *data, uint8_t size, void *user_data)
+static void inquiry_started(struct iovec *iov, void *user_data)
 {
-	uint8_t status = *((uint8_t *) data);
+	uint8_t status;
 
-	if (status) {
+	if (!util_iov_pull_u8(iov, &status) || status) {
 		printf("Failed to search for 3D display\n");
 		shutdown_device();
 		return;
@@ -112,19 +112,18 @@ static void start_inquiry(void)
 						inquiry_started, NULL, NULL);
 }
 
-static void set_peripheral_broadcast_receive(const void *data, uint8_t size,
-							void *user_data)
+static void set_peripheral_broadcast_receive(struct iovec *iov, void *user_data)
 {
 	printf("Peripheral broadcast reception enabled\n");
 }
 
-static void sync_train_received(const void *data, uint8_t size,
-							void *user_data)
+static void sync_train_received(struct iovec *iov, void *user_data)
 {
-	const struct bt_hci_evt_sync_train_received *evt = data;
+	const struct bt_hci_evt_sync_train_received *evt;
 	struct bt_hci_cmd_set_peripheral_broadcast_receive cmd;
 
-	if (evt->status) {
+	evt = util_iov_pull_mem(iov, sizeof(*evt));
+	if (!evt || evt->status) {
 		printf("Failed to synchronize with 3D display\n");
 		start_inquiry();
 		return;
@@ -152,13 +151,13 @@ static void sync_train_received(const void *data, uint8_t size,
 				set_peripheral_broadcast_receive, NULL, NULL);
 }
 
-static void brcm_sync_train_received(const void *data, uint8_t size,
-							void *user_data)
+static void brcm_sync_train_received(struct iovec *iov, void *user_data)
 {
-	const struct brcm_evt_sync_train_received *evt = data;
+	const struct brcm_evt_sync_train_received *evt;
 	struct bt_hci_cmd_set_peripheral_broadcast_receive cmd;
 
-	if (evt->status) {
+	evt = util_iov_pull_mem(iov, sizeof(*evt));
+	if (!evt || evt->status) {
 		printf("Failed to synchronize with 3D display\n");
 		start_inquiry();
 		return;
@@ -186,13 +185,13 @@ static void brcm_sync_train_received(const void *data, uint8_t size,
 				set_peripheral_broadcast_receive, NULL, NULL);
 }
 
-static void truncated_page_complete(const void *data, uint8_t size,
-							void *user_data)
+static void truncated_page_complete(struct iovec *iov, void *user_data)
 {
-	const struct bt_hci_evt_truncated_page_complete *evt = data;
+	const struct bt_hci_evt_truncated_page_complete *evt;
 	struct bt_hci_cmd_receive_sync_train cmd;
 
-	if (evt->status) {
+	evt = util_iov_pull_mem(iov, sizeof(*evt));
+	if (!evt || evt->status) {
 		printf("Failed to contact 3D display\n");
 		shutdown_device();
 		return;
@@ -209,11 +208,17 @@ static void truncated_page_complete(const void *data, uint8_t size,
 							NULL, NULL, NULL);
 }
 
-static void peripheral_broadcast_timeout(const void *data, uint8_t size,
-							void *user_data)
+static void peripheral_broadcast_timeout(struct iovec *iov, void *user_data)
 {
-	const struct bt_hci_evt_peripheral_broadcast_timeout *evt = data;
+	const struct bt_hci_evt_peripheral_broadcast_timeout *evt;
 	struct bt_hci_cmd_receive_sync_train cmd;
+
+	evt = util_iov_pull_mem(iov, sizeof(*evt));
+	if (!evt) {
+		printf("Failed to synchronize with 3D display\n");
+		shutdown_device();
+		return;
+	}
 
 	printf("Re-synchronizing with 3D display\n");
 
@@ -226,13 +231,13 @@ static void peripheral_broadcast_timeout(const void *data, uint8_t size,
 							NULL, NULL, NULL);
 }
 
-static void peripheral_broadcast_receive(const void *data, uint8_t size,
-							void *user_data)
+static void peripheral_broadcast_receive(struct iovec *iov, void *user_data)
 {
-	const struct bt_hci_evt_peripheral_broadcast_receive *evt = data;
+	const struct bt_hci_evt_peripheral_broadcast_receive *evt;
 	struct bt_hci_cmd_read_clock cmd;
 
-	if (evt->status != 0x00)
+	evt = util_iov_pull_mem(iov, sizeof(*evt));
+	if (!evt || evt->status)
 		return;
 
 	if (le32_to_cpu(evt->clock) != 0x00000000)
@@ -245,9 +250,13 @@ static void peripheral_broadcast_receive(const void *data, uint8_t size,
 							NULL, NULL, NULL);
 }
 
-static void ext_inquiry_result(const void *data, uint8_t size, void *user_data)
+static void ext_inquiry_result(struct iovec *iov, void *user_data)
 {
-	const struct bt_hci_evt_ext_inquiry_result *evt = data;
+	const struct bt_hci_evt_ext_inquiry_result *evt;
+
+	evt = util_iov_pull_mem(iov, sizeof(*evt));
+	if (!evt)
+		return;
 
 	if (evt->dev_class[0] != 0x3c || evt->dev_class[1] != 0x04
 					|| evt->dev_class[2] != 0x08)
@@ -270,18 +279,19 @@ static void ext_inquiry_result(const void *data, uint8_t size, void *user_data)
 	}
 }
 
-static void inquiry_complete(const void *data, uint8_t size, void *user_data)
+static void inquiry_complete(struct iovec *iov, void *user_data)
 {
 	printf("No 3D display found\n");
 
 	start_inquiry();
 }
 
-static void read_local_version(const void *data, uint8_t size, void *user_data)
+static void read_local_version(struct iovec *iov, void *user_data)
 {
-	const struct bt_hci_rsp_read_local_version *rsp = data;
+	const struct bt_hci_rsp_read_local_version *rsp;
 
-	if (rsp->status) {
+	rsp = util_iov_pull_mem(iov, sizeof(*rsp));
+	if (!rsp || rsp->status) {
 		printf("Failed to read local version information\n");
 		shutdown_device();
 		return;
@@ -336,8 +346,7 @@ static void start_glasses(void)
 
 static bool sync_train_active = false;
 
-static void sync_train_complete(const void *data, uint8_t size,
-							void *user_data)
+static void sync_train_complete(struct iovec *iov, void *user_data)
 {
 	sync_train_active = false;
 }
@@ -365,10 +374,14 @@ static void start_sync_train(void)
 	sync_train_active = true;
 }
 
-static void conn_request(const void *data, uint8_t size, void *user_data)
+static void conn_request(struct iovec *io, void *user_data)
 {
-	const struct bt_hci_evt_conn_request *evt = data;
+	const struct bt_hci_evt_conn_request *evt;
 	struct bt_hci_cmd_accept_conn_request cmd;
+
+	evt = util_iov_pull_mem(io, sizeof(*evt));
+	if (!evt)
+		return;
 
 	printf("Incoming connection from 3D glasses\n");
 
@@ -381,30 +394,34 @@ static void conn_request(const void *data, uint8_t size, void *user_data)
 	start_sync_train();
 }
 
-static void peripheral_page_response_timeout(const void *data, uint8_t size,
-							void *user_data)
+static void peripheral_page_response_timeout(struct iovec *iov, void *user_data)
 {
 	printf("Incoming truncated page received\n");
 
 	start_sync_train();
 }
 
-static void peripheral_broadcast_channel_map_change(const void *data,
-						uint8_t size, void *user_data)
+static void peripheral_broadcast_channel_map_change(struct iovec *iov,
+							void *user_data)
 {
 	printf("Broadcast channel map changed\n");
 
 	start_sync_train();
 }
 
-static void inquiry_resp_tx_power(const void *data, uint8_t size,
-							void *user_data)
+static void inquiry_resp_tx_power(struct iovec *iov, void *user_data)
 {
-	const struct bt_hci_rsp_read_inquiry_resp_tx_power *rsp = data;
+	const struct bt_hci_rsp_read_inquiry_resp_tx_power *rsp;
 	struct bt_hci_cmd_write_ext_inquiry_response cmd;
 	uint8_t inqdata[] = { 0x03, 0x3d, 0x03, 0x43, 0x02, 0x0a, 0x00, 0x00 };
 	uint8_t devclass[] = { 0x3c, 0x04, 0x08 };
 	uint8_t scanmode = 0x03;
+
+	rsp = util_iov_pull_mem(iov, sizeof(*rsp));
+	if (!rsp || rsp->status) {
+		fprintf(stderr, "Failed to read local tx power\n");
+		return;
+	}
 
 	inqdata[6] = (uint8_t) rsp->level;
 
@@ -421,13 +438,14 @@ static void inquiry_resp_tx_power(const void *data, uint8_t size,
 							NULL, NULL, NULL);
 }
 
-static void read_clock(const void *data, uint8_t size, void *user_data)
+static void read_clock(struct iovec *iov, void *user_data)
 {
-	const struct bt_hci_rsp_read_clock *rsp = data;
+	const struct bt_hci_rsp_read_clock *rsp;
 	struct broadcast_message msg;
 	uint8_t bcastdata[sizeof(msg) + 3] = { LT_ADDR, 0x03, 0x11, };
 
-	if (rsp->status) {
+	rsp = util_iov_pull_mem(iov, sizeof(*rsp));
+	if (!rsp || rsp->status) {
 		printf("Failed to read local clock information\n");
 		shutdown_device();
 		return;
@@ -447,13 +465,13 @@ static void read_clock(const void *data, uint8_t size, void *user_data)
 			bcastdata, sizeof(bcastdata), NULL, NULL, NULL);
 }
 
-static void set_peripheral_broadcast(const void *data, uint8_t size,
-								void *user_data)
+static void set_peripheral_broadcast(struct iovec *iov, void *user_data)
 {
-	const struct bt_hci_rsp_set_peripheral_broadcast *rsp = data;
+	const struct bt_hci_rsp_set_peripheral_broadcast *rsp;
 	struct bt_hci_cmd_read_clock cmd;
 
-	if (rsp->status) {
+	rsp = util_iov_pull_mem(iov, sizeof(*rsp));
+	if (!rsp || rsp->status) {
 		printf("Failed to set peripheral broadcast transmission\n");
 		shutdown_device();
 		return;

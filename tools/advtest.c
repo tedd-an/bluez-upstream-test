@@ -146,25 +146,25 @@ static void scan_le_adv_report(const void *data, uint8_t size,
 	}
 }
 
-static void scan_le_meta_event(const void *data, uint8_t size,
-							void *user_data)
+static void scan_le_meta_event(struct iovec *iov, void *user_data)
 {
-	uint8_t evt_code = ((const uint8_t *) data)[0];
+	uint8_t evt_code;
+
+	if (!util_iov_pull_u8(iov, &evt_code))
+		return;
 
 	switch (evt_code) {
 	case BT_HCI_EVT_LE_ADV_REPORT:
-		scan_le_adv_report(data + 1, size - 1, user_data);
+		scan_le_adv_report(iov->iov_base, iov->iov_len, user_data);
 		break;
 	}
 }
 
-static void scan_enable_callback(const void *data, uint8_t size,
-							void *user_data)
+static void scan_enable_callback(struct iovec *iov, void *user_data)
 {
 }
 
-static void adv_enable_callback(const void *data, uint8_t size,
-							void *user_data)
+static void adv_enable_callback(struct iovec *iov, void *user_data)
 {
 	struct bt_hci_cmd_le_set_scan_parameters cmd4;
 	struct bt_hci_cmd_le_set_scan_enable cmd5;
@@ -186,8 +186,7 @@ static void adv_enable_callback(const void *data, uint8_t size,
 					scan_enable_callback, NULL, NULL);
 }
 
-static void adv_le_evtmask_callback(const void *data, uint8_t size,
-							void *user_data)
+static void adv_le_evtmask_callback(struct iovec *iov, void *user_data)
 {
 	struct bt_hci_cmd_le_set_resolv_timeout cmd0;
 	struct bt_hci_cmd_le_add_to_resolv_list cmd1;
@@ -244,13 +243,13 @@ static void adv_le_evtmask_callback(const void *data, uint8_t size,
 					adv_enable_callback, NULL, NULL);
 }
 
-static void adv_le_features_callback(const void *data, uint8_t size,
-							void *user_data)
+static void adv_le_features_callback(struct iovec *iov, void *user_data)
 {
-	const struct bt_hci_rsp_le_read_local_features *rsp = data;
+	const struct bt_hci_rsp_le_read_local_features *rsp;
 	uint8_t evtmask[] = { 0xff, 0xff, 0x0f, 0x00, 0x00, 0x00, 0x00, 0x00 };
 
-	if (rsp->status) {
+	rsp = util_iov_pull_mem(iov, sizeof(*rsp));
+	if (!rsp || rsp->status) {
 		fprintf(stderr, "Failed to read local LE features\n");
 		mainloop_exit_failure();
 		return;
@@ -260,13 +259,13 @@ static void adv_le_features_callback(const void *data, uint8_t size,
 					adv_le_evtmask_callback, NULL, NULL);
 }
 
-static void adv_features_callback(const void *data, uint8_t size,
-							void *user_data)
+static void adv_features_callback(struct iovec *iov, void *user_data)
 {
-	const struct bt_hci_rsp_read_local_features *rsp = data;
+	const struct bt_hci_rsp_read_local_features *rsp;
 	uint8_t evtmask[] = { 0x90, 0xe8, 0x04, 0x02, 0x00, 0x80, 0x00, 0x20 };
 
-	if (rsp->status) {
+	rsp = util_iov_pull_mem(iov, sizeof(*rsp));
+	if (!rsp || rsp->status) {
 		fprintf(stderr, "Failed to read local features\n");
 		mainloop_exit_failure();
 		return;
@@ -285,8 +284,7 @@ static void adv_features_callback(const void *data, uint8_t size,
 					adv_le_features_callback, NULL, NULL);
 }
 
-static void scan_le_evtmask_callback(const void *data, uint8_t size,
-							void *user_data)
+static void scan_le_evtmask_callback(struct iovec *iov, void *user_data)
 {
 	bt_hci_send(adv_dev, BT_HCI_CMD_RESET, NULL, 0, NULL, NULL, NULL);
 
@@ -294,13 +292,13 @@ static void scan_le_evtmask_callback(const void *data, uint8_t size,
 					adv_features_callback, NULL, NULL);
 }
 
-static void scan_le_features_callback(const void *data, uint8_t size,
-							void *user_data)
+static void scan_le_features_callback(struct iovec *iov, void *user_data)
 {
-	const struct bt_hci_rsp_le_read_local_features *rsp = data;
+	const struct bt_hci_rsp_le_read_local_features *rsp;
 	uint8_t evtmask[] = { 0xff, 0xff, 0x0f, 0x00, 0x00, 0x00, 0x00, 0x00 };
 
-	if (rsp->status) {
+	rsp = util_iov_pull_mem(iov, sizeof(*rsp));
+	if (!rsp || rsp->status) {
 		fprintf(stderr, "Failed to read local LE features\n");
 		mainloop_exit_failure();
 		return;
@@ -310,13 +308,13 @@ static void scan_le_features_callback(const void *data, uint8_t size,
 					scan_le_evtmask_callback, NULL, NULL);
 }
 
-static void scan_features_callback(const void *data, uint8_t size,
-							void *user_data)
+static void scan_features_callback(struct iovec *iov, void *user_data)
 {
-	const struct bt_hci_rsp_read_local_features *rsp = data;
+	const struct bt_hci_rsp_read_local_features *rsp;
 	uint8_t evtmask[] = { 0x90, 0xe8, 0x04, 0x02, 0x00, 0x80, 0x00, 0x20 };
 
-	if (rsp->status) {
+	rsp = util_iov_pull_mem(iov, sizeof(*rsp));
+	if (!rsp || rsp->status) {
 		fprintf(stderr, "Failed to read local features\n");
 		mainloop_exit_failure();
 		return;

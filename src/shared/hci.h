@@ -10,6 +10,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <sys/uio.h>
 
 typedef void (*bt_hci_destroy_func_t)(void *user_data);
 
@@ -24,8 +25,7 @@ void bt_hci_unref(struct bt_hci *hci);
 
 bool bt_hci_set_close_on_unref(struct bt_hci *hci, bool do_close);
 
-typedef void (*bt_hci_callback_func_t)(const void *data, uint8_t size,
-							void *user_data);
+typedef void (*bt_hci_callback_func_t)(struct iovec *iov, void *user_data);
 
 unsigned int bt_hci_send(struct bt_hci *hci, uint16_t opcode,
 				const void *data, uint8_t size,

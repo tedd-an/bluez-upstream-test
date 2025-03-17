@@ -154,11 +154,11 @@ static bool set_exception = false;
 static bool reset_on_exit = false;
 static bool cold_boot = false;
 
-static void reset_complete(const void *data, uint8_t size, void *user_data)
+static void reset_complete(struct iovec *iov, void *user_data)
 {
-	uint8_t status = *((uint8_t *) data);
+	uint8_t status;
 
-	if (status) {
+	if (!util_iov_pull_u8(iov, &status) || status) {
 		fprintf(stderr, "Failed to reset (0x%02x)\n", status);
 		mainloop_quit();
 		return;
@@ -167,11 +167,11 @@ static void reset_complete(const void *data, uint8_t size, void *user_data)
 	mainloop_quit();
 }
 
-static void cold_boot_complete(const void *data, uint8_t size, void *user_data)
+static void cold_boot_complete(struct iovec *iov, void *user_data)
 {
-	uint8_t status = *((uint8_t *) data);
+	uint8_t status;
 
-	if (status) {
+	if (!util_iov_pull_u8(iov, &status) || status) {
 		fprintf(stderr, "Failed to cold boot (0x%02x)\n", status);
 		mainloop_quit();
 		return;
@@ -186,12 +186,11 @@ static void cold_boot_complete(const void *data, uint8_t size, void *user_data)
 	mainloop_quit();
 }
 
-static void leave_manufacturer_mode_complete(const void *data, uint8_t size,
-							void *user_data)
+static void leave_manufacturer_mode_complete(struct iovec *iov, void *user_data)
 {
-	uint8_t status = *((uint8_t *) data);
+	uint8_t status;
 
-	if (status) {
+	if (!util_iov_pull_u8(iov, &status) || status) {
 		fprintf(stderr, "Failed to leave manufacturer mode (0x%02x)\n",
 									status);
 		mainloop_quit();
@@ -233,12 +232,11 @@ static void shutdown_device(void)
 	mainloop_quit();
 }
 
-static void write_bd_address_complete(const void *data, uint8_t size,
-							void *user_data)
+static void write_bd_address_complete(struct iovec *iov, void *user_data)
 {
-	uint8_t status = *((uint8_t *) data);
+	uint8_t status;
 
-	if (status) {
+	if (!util_iov_pull_u8(iov, &status) || status) {
 		fprintf(stderr, "Failed to write address (0x%02x)\n", status);
 		mainloop_quit();
 		return;
@@ -247,13 +245,13 @@ static void write_bd_address_complete(const void *data, uint8_t size,
 	shutdown_device();
 }
 
-static void read_bd_addr_complete(const void *data, uint8_t size,
-							void *user_data)
+static void read_bd_addr_complete(struct iovec *data, void *user_data)
 {
-	const struct bt_hci_rsp_read_bd_addr *rsp = data;
+	const struct bt_hci_rsp_read_bd_addr *rsp;
 	struct cmd_write_bd_address cmd;
 
-	if (rsp->status) {
+	rsp = util_iov_pull_mem(data, sizeof(*rsp));
+	if (!rsp || rsp->status) {
 		fprintf(stderr, "Failed to read address (0x%02x)\n",
 							rsp->status);
 		mainloop_quit();
@@ -285,12 +283,11 @@ static void read_bd_addr_complete(const void *data, uint8_t size,
 					write_bd_address_complete, NULL, NULL);
 }
 
-static void act_deact_traces_complete(const void *data, uint8_t size,
-							void *user_data)
+static void act_deact_traces_complete(struct iovec *iov, void *user_data)
 {
-	uint8_t status = *((uint8_t *) data);
+	uint8_t status;
 
-	if (status) {
+	if (!util_iov_pull_u8(iov, &status) || status) {
 		fprintf(stderr, "Failed to activate traces (0x%02x)\n", status);
 		shutdown_device();
 		return;
@@ -323,12 +320,11 @@ static void trigger_exception(void)
 	shutdown_device();
 }
 
-static void write_bd_data_complete(const void *data, uint8_t size,
-							void *user_data)
+static void write_bd_data_complete(struct iovec *iov, void *user_data)
 {
-	uint8_t status = *((uint8_t *) data);
+	uint8_t status;
 
-	if (status) {
+	if (!util_iov_pull_u8(iov, &status) || status) {
 		fprintf(stderr, "Failed to write data (0x%02x)\n", status);
 		shutdown_device();
 		return;
@@ -342,13 +338,13 @@ static void write_bd_data_complete(const void *data, uint8_t size,
 	shutdown_device();
 }
 
-static void read_bd_data_complete(const void *data, uint8_t size,
-							void *user_data)
+static void read_bd_data_complete(struct iovec *iov, void *user_data)
 {
-	const struct rsp_read_bd_data *rsp = data;
+	const struct rsp_read_bd_data *rsp;
 
-	if (rsp->status) {
-		fprintf(stderr, "Failed to read data (0x%02x)\n", rsp->status);
+	rsp = util_iov_pull_mem(iov, sizeof(*rsp));
+	if (!rsp || rsp->status) {
+		fprintf(stderr, "Failed to read data\n");
 		shutdown_device();
 		return;
 	}
@@ -389,12 +385,11 @@ static void read_bd_data_complete(const void *data, uint8_t size,
 	shutdown_device();
 }
 
-static void firmware_command_complete(const void *data, uint8_t size,
-							void *user_data)
+static void firmware_command_complete(struct iovec *iov, void *user_data)
 {
-	uint8_t status = *((uint8_t *) data);
+	uint8_t status;
 
-	if (status) {
+	if (!util_iov_pull_u8(iov, &status) || status) {
 		fprintf(stderr, "Failed to load firmware (0x%02x)\n", status);
 		manufacturer_mode_reset = 0x01;
 		shutdown_device();
@@ -434,12 +429,11 @@ static void firmware_command_complete(const void *data, uint8_t size,
 
 }
 
-static void enter_manufacturer_mode_complete(const void *data, uint8_t size,
-							void *user_data)
+static void enter_manufacturer_mode_complete(struct iovec *iov, void *user_data)
 {
-	uint8_t status = *((uint8_t *) data);
+	uint8_t status;
 
-	if (status) {
+	if (!util_iov_pull_u8(iov, &status) || status) {
 		fprintf(stderr, "Failed to enter manufacturer mode (0x%02x)\n",
 									status);
 		mainloop_quit();
@@ -448,7 +442,9 @@ static void enter_manufacturer_mode_complete(const void *data, uint8_t size,
 
 	if (load_firmware) {
 		uint8_t status = BT_HCI_ERR_SUCCESS;
-		firmware_command_complete(&status, sizeof(status), NULL);
+		struct iovec data = { &status, sizeof(status) };
+
+		firmware_command_complete(&data, NULL);
 		return;
 	}
 
@@ -563,20 +559,14 @@ static void request_firmware(const char *path)
 		firmware_offset = 1;
 }
 
-static void read_boot_params_complete(const void *data, uint8_t size,
-							void *user_data)
+static void read_boot_params_complete(struct iovec *iov, void *user_data)
 {
-	const struct rsp_read_boot_params *rsp = data;
+	const struct rsp_read_boot_params *rsp;
 
-	if (rsp->status) {
+	rsp = util_iov_pull_mem(iov, sizeof(*rsp));
+	if (!rsp || rsp->status) {
 		fprintf(stderr, "Failed to read boot params (0x%02x)\n",
 							rsp->status);
-		mainloop_quit();
-		return;
-	}
-
-	if (size != sizeof(*rsp)) {
-		fprintf(stderr, "Size mismatch for read boot params\n");
 		mainloop_quit();
 		return;
 	}
@@ -628,22 +618,16 @@ static const struct {
 	{ }
 };
 
-static void read_version_complete(const void *data, uint8_t size,
-							void *user_data)
+static void read_version_complete(struct iovec *iov, void *user_data)
 {
-	const struct rsp_read_version *rsp = data;
+	const struct rsp_read_version *rsp;
 	const char *str;
 	int i;
 
-	if (rsp->status) {
+	rsp = util_iov_pull_mem(iov, sizeof(*rsp));
+	if (!rsp || rsp->status) {
 		fprintf(stderr, "Failed to read version (0x%02x)\n",
 							rsp->status);
-		mainloop_quit();
-		return;
-	}
-
-	if (size != sizeof(*rsp)) {
-		fprintf(stderr, "Size mismatch for read version response\n");
 		mainloop_quit();
 		return;
 	}
