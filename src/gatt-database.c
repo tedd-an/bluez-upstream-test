@@ -740,17 +740,14 @@ static void gap_car_read_cb(struct gatt_db_attribute *attrib,
 					void *user_data)
 {
 	uint8_t value = 0x00;
+	struct btd_device *device;
 
 	DBG("GAP Central Address Resolution read request\n");
 
-	if (btd_opts.defaults.le.addr_resolution) {
-		struct btd_device *device;
-
-		device = btd_adapter_find_device_by_fd(bt_att_get_fd(att));
-		if (device)
-			value = btd_device_flags_enabled(device,
+	device = btd_adapter_find_device_by_fd(bt_att_get_fd(att));
+	if (device)
+		value = btd_device_flags_enabled(device,
 					DEVICE_FLAG_ADDRESS_RESOLUTION);
-	}
 
 	gatt_db_attribute_read_result(attrib, id, 0, &value, sizeof(value));
 }
@@ -873,10 +870,13 @@ static void populate_gap_service(struct btd_gatt_database *database)
 {
 	bt_uuid_t uuid;
 	struct gatt_db_attribute *service, *attrib;
+	bool ll_privacy = btd_adapter_has_settings(database->adapter,
+						MGMT_SETTING_LL_PRIVACY);
 
 	/* Add the GAP service */
 	bt_uuid16_create(&uuid, UUID_GAP);
-	service = gatt_db_add_service(database->db, &uuid, true, 7);
+	service = gatt_db_add_service(database->db, &uuid, true,
+						ll_privacy ? 7 : 5);
 
 	/*
 	 * Device Name characteristic.
@@ -898,15 +898,19 @@ static void populate_gap_service(struct btd_gatt_database *database)
 							NULL, database);
 	gatt_db_attribute_set_fixed_length(attrib, 2);
 
-	/*
-	 * Central Address Resolution characteristic.
-	 */
-	bt_uuid16_create(&uuid, GATT_CHARAC_CAR);
-	attrib = gatt_db_service_add_characteristic(service, &uuid,
+	/* Only enable Central Address Resolution if LL Privacy is supported */
+	if (ll_privacy) {
+		/*
+		 * Central Address Resolution characteristic.
+		 */
+		bt_uuid16_create(&uuid, GATT_CHARAC_CAR);
+		attrib = gatt_db_service_add_characteristic(service, &uuid,
 							BT_ATT_PERM_READ,
 							BT_GATT_CHRC_PROP_READ,
 							gap_car_read_cb,
 							NULL, database);
+	}
+
 	gatt_db_attribute_set_fixed_length(attrib, 1);
 
 	gatt_db_service_set_active(service, true);
