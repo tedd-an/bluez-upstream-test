@@ -57,6 +57,33 @@
 #define SDP_MESSAGE_TYPE_MMS		0x08
 #define SDP_MESSAGE_TYPE_IM		0x10
 
+#define SDP_MCE_MAP_SUPPORTED_FEATURES_IN_CONNECT	0x00080000
+
+#define MAP_SUPPORTED_FEATURES_TAG  	0x29
+
+#define NOTIFICATION_REGISTRATION_FEATURE	0x00000001
+#define NOTIFICATION_FEATURE			0x00000002
+#define BROWSING_FEATURE			0x00000004
+#define UPLOADING_FEATURE			0x00000008
+#define DELETE_FEATURE				0x00000010
+#define INSTANCE_INFORMATION_FEATURE		0x00000020
+#define EXTENDED_EVENT_REPORT_1_1		0x00000040
+#define EVENT_REPORT_1_2			0x00000080
+#define MESSAGE_FORMAT_1_1			0x00000100
+#define MESSAGE_LISTING_FORMAT_1_1		0x00000200
+#define PERSISTENT_MESSAGE_HANDLES		0x00000400
+#define DATABASE_IDENTIFIER			0x00000800
+#define FOLDER_VERSION_COUNTER			0x00001000
+#define CONVERSATION_VERSION_COUNTERS		0x00002000
+#define PARTICIPANT_PRESENCE_CHANGE		0x00004000
+#define PARTICIPANT_CHAT_STATE_CHANGE		0x00008000
+#define PBAP_CONTACT_CROSS_REFERENCE		0x00010000
+#define NOTIFICATION_FILTERING			0x00020000
+#define UTC_OFFSET_TIMESTAMP_FORMAT		0x00040000
+#define RESERVED				0x00080000
+#define CONVERSATION_LISTING			0x00100000
+#define OWNER_STATUS				0x00200000
+
 static const char * const filter_list[] = {
 	"subject",
 	"timestamp",
@@ -2224,6 +2251,35 @@ static void parse_service_record(struct map_data *map)
 		map->supported_features = 0x0000001f;
 }
 
+static void *map_supported_features(struct obc_session *session)
+{
+	const void *data;
+	uint32_t features;
+
+	/* Supported Feature Bits */
+	data = obc_session_get_attribute(session,
+		SDP_ATTR_MAP_SUPPORTED_FEATURES);
+
+	if (!data)
+		return NULL;
+
+	features = *(uint32_t *) data;
+	if (!(features & SDP_MCE_MAP_SUPPORTED_FEATURES_IN_CONNECT))
+		return NULL;
+
+	return g_obex_apparam_set_uint32(NULL, MAP_SUPPORTED_FEATURES_TAG,
+		NOTIFICATION_REGISTRATION_FEATURE |
+		NOTIFICATION_FEATURE |
+		BROWSING_FEATURE |
+		UPLOADING_FEATURE |
+		DELETE_FEATURE |
+		INSTANCE_INFORMATION_FEATURE |
+		EXTENDED_EVENT_REPORT_1_1 |
+		MESSAGE_FORMAT_1_1 |
+		MESSAGE_LISTING_FORMAT_1_1 |
+		PERSISTENT_MESSAGE_HANDLES);
+}
+
 static int map_probe(struct obc_session *session)
 {
 	struct map_data *map;
@@ -2269,6 +2325,7 @@ static struct obc_driver map = {
 	.uuid = MAS_UUID,
 	.target = OBEX_MAS_UUID,
 	.target_len = OBEX_MAS_UUID_LEN,
+	.supported_features = map_supported_features,
 	.probe = map_probe,
 	.remove = map_remove
 };
