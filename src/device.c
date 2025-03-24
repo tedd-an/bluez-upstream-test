@@ -2620,6 +2620,9 @@ static DBusMessage *dev_connect(DBusConnection *conn, DBusMessage *msg,
 	struct btd_device *dev = user_data;
 	uint8_t bdaddr_type;
 
+	if (dev->bonding)
+		return btd_error_in_progress(msg);
+
 	if (dev->bredr_state.connected) {
 		/*
 		 * Check if services have been resolved and there is at least
@@ -2638,6 +2641,9 @@ static DBusMessage *dev_connect(DBusConnection *conn, DBusMessage *msg,
 
 	if (bdaddr_type != BDADDR_BREDR) {
 		int err;
+
+		if (dev->connect)
+			return btd_error_in_progress(msg);
 
 		if (dev->le_state.connected)
 			return dbus_message_new_method_return(msg);
@@ -3124,7 +3130,7 @@ static DBusMessage *pair_device(DBusConnection *conn, DBusMessage *msg,
 	if (!dbus_message_get_args(msg, NULL, DBUS_TYPE_INVALID))
 		return btd_error_invalid_args(msg);
 
-	if (device->bonding)
+	if (device->bonding || device->connect)
 		return btd_error_in_progress(msg);
 
 	/* Only use this selection algorithms when device is combo
