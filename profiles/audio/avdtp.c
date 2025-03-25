@@ -1328,6 +1328,17 @@ static GSList *caps_to_list(uint8_t *data, size_t size,
 
 		cap = (struct avdtp_service_capability *)data;
 
+		if (cap->category == AVDTP_MEDIA_TRANSPORT &&
+					cap->length != 0) {
+			error("Invalid media transport in getcap resp");
+			cpy = util_malloc(sizeof(*cpy) + 1);
+			memcpy(cpy, cap, sizeof(*cap));
+			cpy->length = 1;
+			cpy->data[0] = 0;
+			caps = g_slist_append(caps, cpy);
+			break;
+		}
+
 		if (sizeof(*cap) + cap->length > size) {
 			error("Invalid capability data in getcap resp");
 			break;
