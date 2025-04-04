@@ -1283,8 +1283,10 @@ static void bap_abort_stream_req(struct bt_bap *bap,
 	queue_remove_all(bap->reqs, match_req_stream, stream, bap_req_abort);
 }
 
-static void bt_bap_stream_unref(struct bt_bap_stream *stream)
+static void bt_bap_stream_unref(void *data)
 {
+	struct bt_bap_stream *stream = data;
+
 	if (!stream)
 		return;
 
@@ -1308,7 +1310,6 @@ static void bap_ucast_detach(struct bt_bap_stream *stream)
 	queue_remove(stream->bap->streams, stream);
 	bap_stream_clear_cfm(stream);
 
-	stream->ep = NULL;
 	ep->stream = NULL;
 	bt_bap_stream_unref(stream);
 }
@@ -1751,6 +1752,16 @@ static bool stream_notify_state(void *data)
 	return false;
 }
 
+static struct bt_bap_stream *bt_bap_stream_ref(struct bt_bap_stream *stream)
+{
+	if (!stream)
+		return NULL;
+
+	__sync_fetch_and_add(&stream->ref_count, 1);
+
+	return stream;
+}
+
 static void bap_ucast_set_state(struct bt_bap_stream *stream, uint8_t state)
 {
 	struct bt_bap_endpoint *ep = stream->ep;
@@ -1771,7 +1782,8 @@ static void bap_ucast_set_state(struct bt_bap_stream *stream, uint8_t state)
 	else if (!stream->state_id)
 		stream->state_id = timeout_add(BAP_PROCESS_TIMEOUT,
 						stream_notify_state,
-						stream, NULL);
+						bt_bap_stream_ref(stream),
+						bt_bap_stream_unref);
 	else /* If a state_id is already pending then queue the old one */
 		queue_push_tail(stream->pending_states,
 				UINT_TO_PTR(ep->old_state));
@@ -2256,16 +2268,6 @@ static unsigned int bap_ucast_release(struct bt_bap_stream *stream,
 	}
 
 	return req->id;
-}
-
-static struct bt_bap_stream *bt_bap_stream_ref(struct bt_bap_stream *stream)
-{
-	if (!stream)
-		return NULL;
-
-	__sync_fetch_and_add(&stream->ref_count, 1);
-
-	return stream;
 }
 
 static void bap_bcast_set_state(struct bt_bap_stream *stream, uint8_t state)
