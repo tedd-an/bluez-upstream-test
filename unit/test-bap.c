@@ -30,6 +30,7 @@
 #include "src/shared/att.h"
 #include "src/shared/gatt-db.h"
 #include "src/shared/gatt-client.h"
+#include "src/shared/gatt-server.h"
 #include "src/shared/bap.h"
 #include "src/shared/lc3.h"
 
@@ -48,18 +49,35 @@ struct test_config {
 
 struct test_data {
 	struct bt_gatt_client *client;
+	struct bt_gatt_server *server;
 	struct gatt_db *db;
+	struct queue *ccc_states;
 	struct bt_bap *bap;
+	unsigned int id;
 	struct bt_bap_pac *snk;
 	struct bt_bap_pac *src;
 	struct bt_bap_pac *bsrc;
 	struct bt_bap_pac *bsnk;
+	struct bt_bap_pac_qos *qos;
 	struct iovec *base;
 	struct iovec *caps;
 	struct test_config *cfg;
 	struct queue *streams;
 	size_t iovcnt;
 	struct iovec *iov;
+};
+
+struct notify {
+	uint16_t handle, ccc_handle;
+	uint8_t *value;
+	uint16_t len;
+	bt_gatt_server_conf_func_t conf;
+	void *user_data;
+};
+
+struct ccc_state {
+	uint16_t handle;
+	uint16_t value;
 };
 
 /*
@@ -71,6 +89,14 @@ struct test_data {
 static struct iovec lc3_caps = LC3_CAPABILITIES(LC3_FREQ_ANY, LC3_DURATION_ANY,
 								3u, 26, 240);
 
+static struct bt_bap_pac_qos lc3_qos = {
+	.phy = 0x02,
+	.rtn = 0x01,
+	.location = 0x00000003,
+	.supported_context = 0x0fff,
+	.context = 0x0fff,
+};
+
 #define iov_data(args...) ((const struct iovec[]) { args })
 
 #define define_test(name, setup, function, _cfg, args...)		\
@@ -78,6 +104,7 @@ static struct iovec lc3_caps = LC3_CAPABILITIES(LC3_FREQ_ANY, LC3_DURATION_ANY,
 		const struct iovec iov[] = { args };		\
 		static struct test_data data;			\
 		data.caps = &lc3_caps;				\
+		data.qos = &lc3_qos;				\
 		data.cfg = _cfg;				\
 		data.iovcnt = ARRAY_SIZE(iov_data(args));	\
 		data.iov = util_iov_dup(iov, ARRAY_SIZE(iov_data(args))); \
@@ -284,7 +311,7 @@ static const struct iovec setup_data[] = {
 	 *   Handle: 0x0022
 	 *   Error: Attribute Not Found (0x0a)
 	 */
-	IOV_DATA(0x01, 0x08, 0x23, 0x00, 0x0a),
+	IOV_DATA(0x01, 0x08, 0x22, 0x00, 0x0a),
 	/* ACL Data TX: Handle 42 flags 0x00 dlen 11
 	 *   ATT: Read By Type Request (0x08) len 6
 	 *   Handle range: 0x0001-0xffff
@@ -333,6 +360,201 @@ static void test_setup(const void *user_data)
 
 	bt_gatt_client_ready_register(data->client, client_ready_cb, data,
 						NULL);
+
+	bt_att_unref(att);
+	gatt_db_unref(db);
+}
+
+static bool ccc_state_match(const void *a, const void *b)
+{
+	const struct ccc_state *ccc = a;
+	uint16_t handle = PTR_TO_UINT(b);
+
+	return ccc->handle == handle;
+}
+
+static struct ccc_state *find_ccc_state(struct test_data *data,
+				uint16_t handle)
+{
+	return queue_find(data->ccc_states, ccc_state_match,
+				UINT_TO_PTR(handle));
+}
+
+static struct ccc_state *get_ccc_state(struct test_data *data,
+					uint16_t handle)
+{
+	struct ccc_state *ccc;
+
+	ccc = find_ccc_state(data, handle);
+	if (ccc)
+		return ccc;
+
+	ccc = new0(struct ccc_state, 1);
+	ccc->handle = handle;
+	queue_push_tail(data->ccc_states, ccc);
+
+	return ccc;
+}
+
+static void gatt_notify_cb(struct gatt_db_attribute *attrib,
+					struct gatt_db_attribute *ccc,
+					const uint8_t *value, size_t len,
+					struct bt_att *att, void *user_data)
+{
+	struct test_data *data = user_data;
+	uint16_t handle = gatt_db_attribute_get_handle(attrib);
+
+	if (tester_use_debug())
+		tester_debug("handle 0x%04x len %zd", handle, len);
+
+	if (!data->server) {
+		if (tester_use_debug())
+			tester_debug("data->server %p", data->server);
+		return;
+	}
+
+	if (!bt_gatt_server_send_notification(data->server,
+			handle, value, len, false))
+		tester_debug("%s: Failed to send notification", __func__);
+}
+
+static void gatt_ccc_read_cb(struct gatt_db_attribute *attrib,
+					unsigned int id, uint16_t offest,
+					uint8_t opcode, struct bt_att *att,
+					void *user_data)
+{
+	struct test_data *data = user_data;
+	struct ccc_state *ccc;
+	uint16_t handle;
+	uint8_t ecode = 0;
+	uint16_t value = 0;
+
+	handle = gatt_db_attribute_get_handle(attrib);
+
+	ccc = get_ccc_state(data, handle);
+	if (!ccc) {
+		ecode = BT_ATT_ERROR_UNLIKELY;
+		goto done;
+	}
+
+	value = cpu_to_le16(ccc->value);
+
+done:
+	gatt_db_attribute_read_result(attrib, id, ecode, (void *)&value,
+							sizeof(value));
+}
+
+static void test_setup_pacs(struct test_data *data)
+{
+	if (!data->cfg)
+		return;
+
+	if (data->cfg->src) {
+		if (data->cfg->vs)
+			data->snk = bt_bap_add_vendor_pac(data->db,
+							"test-bap-snk",
+							BT_BAP_SINK, 0x0ff,
+							0x0001, 0x0001,
+							NULL, data->caps, NULL);
+		else
+			data->snk = bt_bap_add_pac(data->db, "test-bap-snk",
+							BT_BAP_SINK, LC3_ID,
+							NULL, data->caps, NULL);
+		g_assert(data->snk);
+	}
+
+	if (data->cfg->snk) {
+		if (data->cfg->vs)
+			data->src = bt_bap_add_vendor_pac(data->db,
+							"test-bap-src",
+							BT_BAP_SOURCE, 0x0ff,
+							0x0001, 0x0001,
+							NULL, data->caps, NULL);
+		else
+			data->src = bt_bap_add_pac(data->db, "test-bap-src",
+							BT_BAP_SOURCE, LC3_ID,
+							NULL, data->caps, NULL);
+		g_assert(data->src);
+	}
+}
+
+static void setup_complete_cb(const void *user_data)
+{
+	tester_setup_complete();
+}
+
+static int pac_config(struct bt_bap_stream *stream, struct iovec *cfg,
+			struct bt_bap_qos *qos, bt_bap_pac_config_t cb,
+			void *user_data)
+{
+	cb(stream, 0);
+
+	return 0;
+}
+
+static struct bt_bap_pac_ops ucast_pac_ops = {
+	.config = pac_config,
+};
+
+static void test_setup_server(const void *user_data)
+{
+	struct test_data *data = (void *)user_data;
+	struct bt_att *att;
+	struct gatt_db *db;
+	struct io *io;
+
+	io = tester_setup_io(setup_data, ARRAY_SIZE(setup_data));
+	g_assert(io);
+
+	tester_io_set_complete_func(setup_complete_cb);
+
+	db = gatt_db_new();
+	g_assert(db);
+
+	gatt_db_ccc_register(db, gatt_ccc_read_cb, NULL, gatt_notify_cb, data);
+
+	data->ccc_states = queue_new();
+
+	if (data->cfg && data->cfg->vs)
+		data->snk = bt_bap_add_vendor_pac(db, "test-bap-snk",
+							BT_BAP_SINK, 0x0ff,
+							0x0001, 0x0001,
+							data->qos, NULL,
+							NULL);
+	else
+		data->snk = bt_bap_add_pac(db, "test-bap-snk", BT_BAP_SINK,
+							LC3_ID, data->qos,
+							data->caps, NULL);
+	g_assert(data->snk);
+
+	bt_bap_pac_set_ops(data->snk, &ucast_pac_ops, NULL);
+
+	if (data->cfg && data->cfg->vs)
+		data->src = bt_bap_add_vendor_pac(db, "test-bap-snk",
+							BT_BAP_SOURCE, 0x0ff,
+							0x0001, 0x0001,
+							data->qos, NULL,
+							NULL);
+	else
+		data->src = bt_bap_add_pac(db, "test-bap-src", BT_BAP_SOURCE,
+							LC3_ID, data->qos,
+							data->caps, NULL);
+	g_assert(data->src);
+
+	bt_bap_pac_set_ops(data->src, &ucast_pac_ops, NULL);
+
+	att = bt_att_new(io_get_fd(io), false);
+	g_assert(att);
+
+	bt_att_set_debug(att, BT_ATT_DEBUG, print_debug, "bt_att:", NULL);
+
+	data->server = bt_gatt_server_new(db, att, 64, 0);
+	g_assert(data->server);
+
+	bt_gatt_server_set_debug(data->server, print_debug, "bt_gatt_server:",
+						NULL);
+
+	tester_io_send();
 
 	bt_att_unref(att);
 	gatt_db_unref(db);
@@ -455,40 +677,6 @@ static void bap_ready(struct bt_bap *bap, void *user_data)
 	bt_bap_foreach_pac(bap, BT_BAP_SOURCE, pac_found, user_data);
 }
 
-static void test_client_config(struct test_data *data)
-{
-	if (!data->cfg)
-		return;
-
-	if (data->cfg->src) {
-		if (data->cfg->vs)
-			data->snk = bt_bap_add_vendor_pac(data->db,
-							"test-bap-snk",
-							BT_BAP_SINK, 0x0ff,
-							0x0001, 0x0001,
-							NULL, data->caps, NULL);
-		else
-			data->snk = bt_bap_add_pac(data->db, "test-bap-snk",
-							BT_BAP_SINK, LC3_ID,
-							NULL, data->caps, NULL);
-		g_assert(data->snk);
-	}
-
-	if (data->cfg->snk) {
-		if (data->cfg->vs)
-			data->src = bt_bap_add_vendor_pac(data->db,
-							"test-bap-src",
-							BT_BAP_SOURCE, 0x0ff,
-							0x0001, 0x0001,
-							NULL, data->caps, NULL);
-		else
-			data->src = bt_bap_add_pac(data->db, "test-bap-src",
-							BT_BAP_SOURCE, LC3_ID,
-							NULL, data->caps, NULL);
-		g_assert(data->src);
-	}
-}
-
 static void test_client(const void *user_data)
 {
 	struct test_data *data = (void *)user_data;
@@ -502,7 +690,7 @@ static void test_client(const void *user_data)
 	data->db = gatt_db_new();
 	g_assert(data->db);
 
-	test_client_config(data);
+	test_setup_pacs(data);
 
 	data->bap = bt_bap_new(data->db, bt_gatt_client_get_db(data->client));
 	g_assert(data->bap);
@@ -516,15 +704,6 @@ static void test_client(const void *user_data)
 						data, NULL);
 
 	bt_bap_attach(data->bap, data->client);
-}
-
-static int pac_config(struct bt_bap_stream *stream, struct iovec *cfg,
-			struct bt_bap_qos *qos, bt_bap_pac_config_t cb,
-			void *user_data)
-{
-	cb(stream, 0);
-
-	return 0;
 }
 
 static struct bt_bap_pac_ops bcast_pac_ops = {
@@ -697,6 +876,7 @@ static void test_teardown(const void *user_data)
 {
 	struct test_data *data = (void *)user_data;
 
+	bt_bap_unregister(data->id);
 	bt_bap_unref(data->bap);
 	bt_gatt_client_unref(data->client);
 	util_iov_free(data->iov, data->iovcnt);
@@ -708,6 +888,8 @@ static void test_teardown(const void *user_data)
 	bt_bap_remove_pac(data->bsrc);
 	bt_bap_remove_pac(data->bsnk);
 	gatt_db_unref(data->db);
+	bt_gatt_server_unref(data->server);
+	data->server = NULL;
 
 	queue_destroy(data->streams, NULL);
 
@@ -741,7 +923,7 @@ static void test_teardown(const void *user_data)
  *           1 channel (0x01)
  *           2 channels (0x02)
  *       Codec Specific Capabilities #3: len 0x05 type 0x04
- *         Frame Length: 30 (0x001e) - 240 (0x00f0)
+ *         Frame Length: 26 (0x001a) - 240 (0x00f0)
  * ATT: Read Request (0x0a) len 2
  *   Handle: 0x0006 Type: Sink Audio Location (0x2bca)
  * ATT: Read Response (0x0b) len 4
@@ -760,7 +942,7 @@ static void test_teardown(const void *user_data)
 #define DISC_SNK_LC3 \
 	DISC_SNK_PAC(0x06, 0x00, 0x00, 0x00, 0x00, 0x10, 0x03, 0x01, \
 		0xff, 0x00, 0x02, 0x02, 0x03, 0x02, 0x03, 0x03, 0x05, 0x04, \
-		0x1e, 0x00, 0xf0, 0x00, 0x00)
+		0x1a, 0x00, 0xf0, 0x00, 0x00)
 
 /* ATT: Read Request (0x0a) len 2
  *   Handle: 0x0009 Type: Source PAC (0x2bcb)
@@ -789,7 +971,7 @@ static void test_teardown(const void *user_data)
  *           1 channel (0x01)
  *           2 channels (0x02)
  *       Codec Specific Capabilities #3: len 0x05 type 0x04
- *         Frame Length: 30 (0x001e) - 240 (0x00f0)
+ *         Frame Length: 26 (0x001e) - 240 (0x00f0)
  * ATT: Read Request (0x0a) len 2
  *   Handle: 0x000c Type: Source Audio Location (0x2bcc)
  * ATT: Read Response (0x0b) len 4
@@ -809,39 +991,39 @@ static void test_teardown(const void *user_data)
 #define DISC_SRC_LC3 \
 	DISC_SRC_PAC(0x06, 0x00, 0x00, 0x00, 0x00, 0x10, 0x03, 0x01, \
 		0xff, 0x00, 0x02, 0x02, 0x03, 0x02, 0x03, 0x03, 0x05, 0x04, \
-		0x1e, 0x00, 0xf0, 0x00, 0x00)
+		0x1a, 0x00, 0xf0, 0x00, 0x00)
 
 /* ATT: Read Request (0x0a) len 2
  *   Handle: 0x000f Type: Available Audio Contexts (0x2bcd)
  * ATT: Read Response (0x0b) len 4
- *   Value: ff0f0e00
+ *   Value: ff0fff0f
  *   Handle: 0x000f Type: Available Audio Contexts (0x2bcd)
  */
 #define DISC_CTX(_caps...) \
 	DISC_SRC_PAC(_caps), \
 	IOV_DATA(0x0a, 0x0f, 0x00), \
-	IOV_DATA(0x0b, 0xff, 0x0f, 0x0e, 0x00)
+	IOV_DATA(0x0b, 0xff, 0x0f, 0xff, 0x0f)
 
 #define DISC_CTX_LC3 \
 	DISC_CTX(0x06, 0x00, 0x00, 0x00, 0x00, 0x10, 0x03, 0x01, \
 		0xff, 0x00, 0x02, 0x02, 0x03, 0x02, 0x03, 0x03, 0x05, 0x04, \
-		0x1e, 0x00, 0xf0, 0x00, 0x00)
+		0x1a, 0x00, 0xf0, 0x00, 0x00)
 
 /* ATT: Read Request (0x0a) len 2
  *   Handle: 0x0012 Type: Supported Audio Contexts (0x2bce)
  * ATT: Read Response (0x0b) len 4
- *   Value: ff0f0e00
+ *   Value: ff0fff0f
  *   Handle: 0x0012 Type: Supported Audio Contexts (0x2bce)
  */
 #define DISC_SUP_CTX(_caps...) \
 	DISC_CTX(_caps), \
 	IOV_DATA(0x0a, 0x12, 0x00), \
-	IOV_DATA(0x0b, 0xff, 0x0f, 0x0e, 0x00)
+	IOV_DATA(0x0b, 0xff, 0x0f, 0xff, 0x0f)
 
 #define DISC_SUP_CTX_LC3 \
 	DISC_SUP_CTX(0x06, 0x00, 0x00, 0x00, 0x00, 0x10, 0x03, 0x01, \
 		0xff, 0x00, 0x02, 0x02, 0x03, 0x02, 0x03, 0x03, 0x05, 0x04, \
-		0x1e, 0x00, 0xf0, 0x00, 0x00)
+		0x1a, 0x00, 0xf0, 0x00, 0x00)
 
 /* ATT: Read Request (0x0a) len 2
  *   Handle: 0x0016 Type: Sink ASE (0x2bc4)
@@ -878,7 +1060,7 @@ static void test_teardown(const void *user_data)
 #define DISC_SNK_ASE_LC3 \
 	DISC_SNK_ASE(0x06, 0x00, 0x00, 0x00, 0x00, 0x10, 0x03, 0x01, \
 		0xff, 0x00, 0x02, 0x02, 0x03, 0x02, 0x03, 0x03, 0x05, 0x04, \
-		0x1e, 0x00, 0xf0, 0x00, 0x00)
+		0x1a, 0x00, 0xf0, 0x00, 0x00)
 
 /* ATT: Read Request (0x0a) len 2
  *   Handle: 0x001c Type: Source ASE (0x2bc5)
@@ -922,9 +1104,13 @@ static void test_teardown(const void *user_data)
 #define DISC_SRC_ASE_LC3 \
 	DISC_SRC_ASE(0x06, 0x00, 0x00, 0x00, 0x00, 0x10, 0x03, 0x01, \
 		0xff, 0x00, 0x02, 0x02, 0x03, 0x02, 0x03, 0x03, 0x05, 0x04, \
-		0x1e, 0x00, 0xf0, 0x00, 0x00)
+		0x1a, 0x00, 0xf0, 0x00, 0x00)
 
-static void test_disc(void)
+#define DISC_ASE_LC3 \
+	DISC_SNK_ASE_LC3, \
+	DISC_SRC_ASE_LC3
+
+static void test_ucl_disc(void)
 {
 	/* The IUT discovers the characteristics specified in the PAC
 	 * Characteristic and Location Characteristic columns in Table 4.4.
@@ -964,6 +1150,85 @@ static void test_disc(void)
 						DISC_SRC_ASE_LC3);
 }
 
+static void bap_attached(struct bt_bap *bap, void *user_data)
+{
+	struct test_data *data = (void *)user_data;
+
+	if (tester_use_debug())
+		tester_debug("bap %p session attached", bap);
+
+	data->bap = bap;
+
+	bt_bap_set_debug(data->bap, print_debug, "bt_bap:", NULL);
+}
+
+static void test_server(const void *user_data)
+{
+	struct test_data *data = (void *)user_data;
+	struct io *io;
+
+	io = tester_setup_io(data->iov, data->iovcnt);
+	g_assert(io);
+
+	tester_io_set_complete_func(test_complete_cb);
+
+	data->id = bt_bap_register(bap_attached, NULL, data);
+	g_assert(data->id);
+
+	tester_io_send();
+}
+
+static void test_usr_disc(void)
+{
+	/* BAP/USR/DISC/BV-01-C [Expose Audio Sink Capabilities]
+	 * BAP/USR/DISC/BV-02-C [Expose Audio Source Capabilities]
+	 *
+	 * The specified PAC Characteristic and the Location Characteristic,
+	 * if supported, are read on the IUT.
+	 */
+	define_test("BAP/USR/DISC/BV-01-C", test_setup_server, test_server,
+						NULL, DISC_SNK_LC3);
+	define_test("BAP/USR/DISC/BV-02-C", test_setup_server, test_server,
+						NULL, DISC_SRC_LC3);
+
+	/* BAP/UCL/DISC/BV-06-C [Discover Available Audio Contexts]
+	 *
+	 * The IUT successfully reads the value of the Available Audio Contexts
+	 * characteristic on the Lower Tester.
+	 */
+	define_test("BAP/USR/DISC/BV-06-C", test_setup_server, test_server,
+						NULL, DISC_CTX_LC3);
+
+	/* BAP/USR/DISC/BV-07-C [Expose Supported Audio Contexts]
+	 *
+	 * The IUT successfully returns the value of its Supported Audio
+	 * Contexts characteristic when read by the Lower Tester.
+	 */
+	define_test("BAP/USR/DISC/BV-07-C", test_setup_server, test_server,
+						NULL, DISC_SUP_CTX_LC3);
+
+	/* BAP/USR/DISC/BV-03-C [Expose Sink ASE_ID]
+	 * BAP/USR/DISC/BV-04-C [Expose Source ASE_ID]
+	 * BAP/USR/DISC/BV-05-C [Expose Sink and Source ASE_ID]
+	 *
+	 * The IUT successfully returns the values of each ASE characteristic
+	 * read by the Lower Tester. The value of the ASE_ID field is unique
+	 * for each ASE characteristic.
+	 */
+	define_test("BAP/USR/DISC/BV-03-C", test_setup_server, test_server,
+						NULL, DISC_SNK_ASE_LC3);
+	define_test("BAP/USR/DISC/BV-04-C", test_setup_server, test_server,
+						NULL, DISC_SRC_ASE_LC3);
+	define_test("BAP/USR/DISC/BV-05-C", test_setup_server, test_server,
+						NULL, DISC_ASE_LC3);
+}
+
+static void test_disc(void)
+{
+	test_ucl_disc();
+	test_usr_disc();
+}
+
 /* ATT: Write Command (0x52) len 23
  *  Handle: 0x0022
  *    Data: 0101010202_cfg
@@ -972,13 +1237,13 @@ static void test_disc(void)
  *     Data: 0101010000
  * ATT: Handle Value Notification (0x1b) len 37
  *   Handle: 0x0016
- *     Data: 01010102010a00204e00409c00204e00409c00_cfg
+ *     Data: 01010002010a00204e00409c00204e00409c00_cfg
  */
 #define SCC_SNK(_cfg...) \
 	IOV_DATA(0x52, 0x22, 0x00, 0x01, 0x01, 0x01, 0x02, 0x02, _cfg), \
 	IOV_DATA(0x1b, 0x22, 0x00, 0x01, 0x01, 0x01, 0x00, 0x00), \
 	IOV_NULL, \
-	IOV_DATA(0x1b, 0x16, 0x00, 0x01, 0x01, 0x01, 0x02, 0x01, 0x0a, 0x00, \
+	IOV_DATA(0x1b, 0x16, 0x00, 0x01, 0x01, 0x00, 0x02, 0x01, 0x0a, 0x00, \
 			0x20, 0x4e, 0x00, 0x40, 0x9c, 0x00, 0x20, 0x4e, 0x00, \
 			0x40, 0x9c, 0x00, _cfg)
 
@@ -1163,13 +1428,13 @@ static struct test_config cfg_snk_48_6 = {
  *     Data: 0101030000
  * ATT: Handle Value Notification (0x1b) len 37
  *   Handle: 0x001c
- *     Data: 03010102010a00204e00409c00204e00409c00_cfg
+ *     Data: 03010002010a00204e00409c00204e00409c00_cfg
  */
 #define SCC_SRC(_cfg...) \
 	IOV_DATA(0x52, 0x22, 0x00, 0x01, 0x01, 0x03, 0x02, 0x02, _cfg), \
 	IOV_DATA(0x1b, 0x22, 0x00, 0x01, 0x01, 0x03, 0x00, 0x00), \
 	IOV_NULL, \
-	IOV_DATA(0x1b, 0x1c, 0x00, 0x03, 0x01, 0x01, 0x02, 0x01, 0x0a, 0x00, \
+	IOV_DATA(0x1b, 0x1c, 0x00, 0x03, 0x01, 0x00, 0x02, 0x01, 0x0a, 0x00, \
 			0x20, 0x4e, 0x00, 0x40, 0x9c, 0x00, 0x20, 0x4e, 0x00, \
 			0x40, 0x9c, 0x00, _cfg)
 
@@ -1351,7 +1616,7 @@ static struct test_config cfg_src_48_6 = {
  * formatted in an LTV structure with the length, type, and value
  * specified in Table 4.10.
  */
-static void test_scc_cc_lc3(void)
+static void test_ucl_scc_cc_lc3(void)
 {
 	define_test("BAP/UCL/SCC/BV-001-C [UCL SRC Config Codec, LC3 8_1]",
 			test_setup, test_client, &cfg_snk_8_1, SCC_SNK_8_1);
@@ -1419,6 +1684,170 @@ static void test_scc_cc_lc3(void)
 			test_setup, test_client, &cfg_src_48_6, SCC_SRC_48_6);
 }
 
+
+/* 4.9 Unicast Server Configuration */
+static void test_usr_scc_cc_lc3(void)
+{
+	/* 4.9.1 Unicast Server as Audio Sink Performs Config Codec – LC3
+	 *
+	 * Test Purpose:
+	 * Verify that a Unicast Server Audio Sink IUT can perform a Config
+	 * Codec operation initiated by a Unicast Client for an ASE in the Idle
+	 * state, the Codec Configured state.
+	 *
+	 * Pass Veridict:
+	 * The IUT sends a Response_Code of 0x00 (Success) in response to each
+	 * Config Codec operation.
+	 *
+	 * BAP/USR/SCC/BV-001-C [USR SNK Config Codec, LC3 8_1]
+	 * BAP/USR/SCC/BV-002-C [USR SNK Config Codec, LC3 8_2]
+	 * BAP/USR/SCC/BV-003-C [USR SNK Config Codec, LC3 16_1]
+	 * BAP/USR/SCC/BV-004-C [USR SNK Config Codec, LC3 16_2]
+	 * BAP/USR/SCC/BV-005-C [USR SNK Config Codec, LC3 24_1]
+	 * BAP/USR/SCC/BV-006-C [USR SNK Config Codec, LC3 24_2]
+	 * BAP/USR/SCC/BV-007-C [USR SNK Config Codec, LC3 32_1]
+	 * BAP/USR/SCC/BV-008-C [USR SNK Config Codec, LC3 32_2]
+	 * BAP/USR/SCC/BV-009-C [USR SNK Config Codec, LC3 44.1_1]
+	 * BAP/USR/SCC/BV-010-C [USR SNK Config Codec, LC3 44.1_2]
+	 * BAP/USR/SCC/BV-011-C [USR SNK Config Codec, LC3 48_1]
+	 * BAP/USR/SCC/BV-012-C [USR SNK Config Codec, LC3 48_2]
+	 * BAP/USR/SCC/BV-013-C [USR SNK Config Codec, LC3 48_3]
+	 * BAP/USR/SCC/BV-014-C [USR SNK Config Codec, LC3 48_4]
+	 * BAP/USR/SCC/BV-015-C [USR SNK Config Codec, LC3 48_5]
+	 * BAP/USR/SCC/BV-016-C [USR SNK Config Codec, LC3 48_6]
+	 */
+	define_test("BAP/USR/SCC/BV-001-C [USR SNK Config Codec, LC3 8_1]",
+			test_setup_server, test_server, &cfg_snk_8_1,
+			SCC_SNK_8_1);
+	define_test("BAP/USR/SCC/BV-002-C [USR SNK Config Codec, LC3 8_2]",
+			test_setup_server, test_server, &cfg_snk_8_2,
+			SCC_SNK_8_2);
+	define_test("BAP/USR/SCC/BV-003-C [USR SNK Config Codec, LC3 16_1]",
+			test_setup_server, test_server, &cfg_snk_16_1,
+			SCC_SNK_16_1);
+	define_test("BAP/USR/SCC/BV-004-C [USR SNK Config Codec, LC3 16_2]",
+			test_setup_server, test_server, &cfg_snk_16_2,
+			SCC_SNK_16_2);
+	define_test("BAP/USR/SCC/BV-005-C [USR SNK Config Codec, LC3 24_1]",
+			test_setup_server, test_server, &cfg_snk_24_1,
+			SCC_SNK_24_1);
+	define_test("BAP/USR/SCC/BV-006-C [USR SNK Config Codec, LC3 24_2]",
+			test_setup_server, test_server, &cfg_snk_24_2,
+			SCC_SNK_24_2);
+	define_test("BAP/USR/SCC/BV-007-C [USR SNK Config Codec, LC3 32_1]",
+			test_setup_server, test_server, &cfg_snk_32_1,
+			SCC_SNK_32_1);
+	define_test("BAP/USR/SCC/BV-008-C [USR SNK Config Codec, LC3 32_2]",
+			test_setup_server, test_server, &cfg_snk_32_2,
+			SCC_SNK_32_2);
+	define_test("BAP/USR/SCC/BV-009-C [USR SNK Config Codec, LC3 44.1_1]",
+			test_setup_server, test_server, &cfg_snk_44_1,
+			SCC_SNK_44_1);
+	define_test("BAP/USR/SCC/BV-010-C [USR SNK Config Codec, LC3 44.1_2]",
+			test_setup_server, test_server, &cfg_snk_44_2,
+			SCC_SNK_44_2);
+	define_test("BAP/USR/SCC/BV-011-C [USR SNK Config Codec, LC3 48_1]",
+			test_setup_server, test_server, &cfg_snk_48_1,
+			SCC_SNK_48_1);
+	define_test("BAP/USR/SCC/BV-012-C [USR SNK Config Codec, LC3 48_2]",
+			test_setup_server, test_server, &cfg_snk_48_2,
+			SCC_SNK_48_2);
+	define_test("BAP/USR/SCC/BV-013-C [USR SNK Config Codec, LC3 48_3]",
+			test_setup_server, test_server, &cfg_snk_48_3,
+			SCC_SNK_48_3);
+	define_test("BAP/USR/SCC/BV-014-C [USR SNK Config Codec, LC3 48_4]",
+			test_setup_server, test_server, &cfg_snk_48_4,
+			SCC_SNK_48_4);
+	define_test("BAP/USR/SCC/BV-015-C [USR SNK Config Codec, LC3 48_5]",
+			test_setup_server, test_server, &cfg_snk_48_5,
+			SCC_SNK_48_5);
+	define_test("BAP/USR/SCC/BV-016-C [USR SNK Config Codec, LC3 48_6]",
+			test_setup_server, test_server, &cfg_snk_48_6,
+			SCC_SNK_48_6);
+	/* 4.9.2 Unicast Server as Audio Source Performs Config Codec – LC3
+	 *
+	 * Test Purpose:
+	 * Verify that a Unicast Server Audio Source IUT can perform a Config
+	 * Codec operation initiated by a Unicast Client for an ASE in the Idle
+	 * state, the Codec Configured state.
+	 *
+	 * Pass verdict:
+	 * The IUT sends a Response_Code of 0x00 (Success) in response to each
+	 * Config Codec operation.
+	 *
+	 * BAP/USR/SCC/BV-017-C [USR SRC Config Codec, LC3 8_1]
+	 * BAP/USR/SCC/BV-018-C [USR SRC Config Codec, LC3 8_2]
+	 * BAP/USR/SCC/BV-019-C [USR SRC Config Codec, LC3 16_1]
+	 * BAP/USR/SCC/BV-020-C [USR SRC Config Codec, LC3 16_2]
+	 * BAP/USR/SCC/BV-021-C [USR SRC Config Codec, LC3 24_1]
+	 * BAP/USR/SCC/BV-022-C [USR SRC Config Codec, LC3 24_2]
+	 * BAP/USR/SCC/BV-023-C [USR SRC Config Codec, LC3 32_1]
+	 * BAP/USR/SCC/BV-024-C [USR SRC Config Codec, LC3 32_2]
+	 * BAP/USR/SCC/BV-025-C [USR SRC Config Codec, LC3 44.1_1]
+	 * BAP/USR/SCC/BV-026-C [USR SRC Config Codec, LC3 44.1_2]
+	 * BAP/USR/SCC/BV-027-C [USR SRC Config Codec, LC3 48_1]
+	 * BAP/USR/SCC/BV-028-C [USR SRC Config Codec, LC3 48_2]
+	 * BAP/USR/SCC/BV-029-C [USR SRC Config Codec, LC3 48_3]
+	 * BAP/USR/SCC/BV-030-C [USR SRC Config Codec, LC3 48_4]
+	 * BAP/USR/SCC/BV-031-C [USR SRC Config Codec, LC3 48_5]
+	 * BAP/USR/SCC/BV-032-C [USR SRC Config Codec, LC3 48_6]
+	 */
+	define_test("BAP/USR/SCC/BV-017-C [USR SRC Config Codec, LC3 8_1]",
+			test_setup_server, test_server, &cfg_src_8_1,
+			SCC_SRC_8_1);
+	define_test("BAP/USR/SCC/BV-018-C [USR SRC Config Codec, LC3 8_2]",
+			test_setup_server, test_server, &cfg_src_8_2,
+			SCC_SRC_8_2);
+	define_test("BAP/USR/SCC/BV-019-C [USR SRC Config Codec, LC3 16_1]",
+			test_setup_server, test_server, &cfg_src_16_1,
+			SCC_SRC_16_1);
+	define_test("BAP/USR/SCC/BV-020-C [USR SRC Config Codec, LC3 16_2]",
+			test_setup_server, test_server, &cfg_src_16_2,
+			SCC_SRC_16_2);
+	define_test("BAP/USR/SCC/BV-021-C [USR SRC Config Codec, LC3 24_1]",
+			test_setup_server, test_server, &cfg_src_24_1,
+			SCC_SRC_24_1);
+	define_test("BAP/USR/SCC/BV-022-C [USR SRC Config Codec, LC3 24_2]",
+			test_setup_server, test_server, &cfg_src_24_2,
+			SCC_SRC_24_2);
+	define_test("BAP/USR/SCC/BV-023-C [USR SRC Config Codec, LC3 32_1]",
+			test_setup_server, test_server, &cfg_src_32_1,
+			SCC_SRC_32_1);
+	define_test("BAP/USR/SCC/BV-024-C [USR SRC Config Codec, LC3 32_2]",
+			test_setup_server, test_server, &cfg_src_32_2,
+			SCC_SRC_32_2);
+	define_test("BAP/USR/SCC/BV-025-C [USR SRC Config Codec, LC3 44.1_1]",
+			test_setup_server, test_server, &cfg_src_44_1,
+			SCC_SRC_44_1);
+	define_test("BAP/USR/SCC/BV-026-C [USR SRC Config Codec, LC3 44.1_2]",
+			test_setup_server, test_server, &cfg_src_44_2,
+			SCC_SRC_44_2);
+	define_test("BAP/USR/SCC/BV-027-C [USR SRC Config Codec, LC3 48_1]",
+			test_setup_server, test_server, &cfg_src_48_1,
+			SCC_SRC_48_1);
+	define_test("BAP/USR/SCC/BV-028-C [USR SRC Config Codec, LC3 48_2]",
+			test_setup_server, test_server, &cfg_src_48_2,
+			SCC_SRC_48_2);
+	define_test("BAP/USR/SCC/BV-029-C [USR SRC Config Codec, LC3 48_3]",
+			test_setup_server, test_server, &cfg_src_48_3,
+			SCC_SRC_48_3);
+	define_test("BAP/USR/SCC/BV-030-C [USR SRC Config Codec, LC3 48_4]",
+			test_setup_server, test_server, &cfg_src_48_4,
+			SCC_SRC_48_4);
+	define_test("BAP/USR/SCC/BV-031-C [USR SRC Config Codec, LC3 48_5]",
+			test_setup_server, test_server, &cfg_src_48_5,
+			SCC_SRC_48_5);
+	define_test("BAP/USR/SCC/BV-032-C [USR SRC Config Codec, LC3 48_6]",
+			test_setup_server, test_server, &cfg_src_48_6,
+			SCC_SRC_48_6);
+}
+
+static void test_scc_cc_lc3(void)
+{
+	test_ucl_scc_cc_lc3();
+	test_usr_scc_cc_lc3();
+}
+
 static struct test_config cfg_snk_vs = {
 	.cc = IOV_NULL,
 	.qos = QOS_UCAST,
@@ -1454,12 +1883,53 @@ static struct test_config cfg_src_vs = {
  * parameter is formatted with octet 0 set to 0xFF, octets 1–2 set to
  * TSPX_VS_Company_ID, and octets 3–4 set to TSPX_VS_Codec_ID.
  */
-static void test_scc_cc_vs(void)
+static void test_ucl_scc_cc_vs(void)
 {
 	define_test("BAP/UCL/SCC/BV-033-C [UCL SRC Config Codec, VS]",
 			test_setup, test_client, &cfg_snk_vs, SCC_SNK_VS);
 	define_test("BAP/UCL/SCC/BV-034-C [UCL SNK Config Codec, VS]",
 			test_setup, test_client, &cfg_src_vs, SCC_SRC_VS);
+}
+
+static void test_usr_scc_cc_vs(void)
+{
+	/* BAP/USR/SCC/BV-033-C [USR SNK Config Codec, VS]
+	 *
+	 * Test Purpose:
+	 * Verify that a Unicast Server Audio Sink IUT can perform a Config
+	 * Codec operation initiated by a Unicast Client for a vendor-specific
+	 * codec for an ASE in the Idle state, the Codec Configured state, and
+	 * the QoS Configured state.
+	 *
+	 * Pass verdict:
+	 * The IUT sends a notification of the ASE Control Point characteristic
+	 * with the Response_Code field set to 0x00 (Success) for the requested
+	 * ASE_ID and opcode.
+	 */
+	define_test("BAP/USR/SCC/BV-033-C [USR SNK Config Codec, VS]",
+			test_setup_server, test_server, &cfg_snk_vs,
+			SCC_SNK_VS);
+	/* BAP/USR/SCC/BV-034-C [USR SRC Config Codec, VS]
+	 *
+	 * Test Purpose:
+	 * Verify that a Unicast Server Audio Source IUT can perform a Config
+	 * Codec operation initiated by a Unicast Client for a vendor-specific
+	 * codec for a Source ASE in the Idle state.
+	 *
+	 * Pass verdict:
+	 * The IUT sends a notification of the ASE Control Point characteristic
+	 * with the Response_Code field set to 0x00 (Success) for the requested
+	 * ASE_ID and opcode.
+	 */
+	define_test("BAP/USR/SCC/BV-034-C [USR SRC Config Codec, VS]",
+			test_setup_server, test_server, &cfg_src_vs,
+			SCC_SRC_VS);
+}
+
+static void test_scc_cc_vs(void)
+{
+	test_ucl_scc_cc_vs();
+	test_usr_scc_cc_vs();
 }
 
 static struct test_config cfg_snk_8_1_1 = {
@@ -1794,7 +2264,7 @@ static struct test_config cfg_src_48_6_1 = {
  */
 #define QOS_SRC(_qos...) \
 	IOV_DATA(0x52, 0x22, 0x00, 0x02, 0x01, 0x03, 0x00, 0x00, _qos), \
-	IOV_DATA(0x1b, 0x22, 0x00, 0x02, 0x01, 0x01, 0x00, 0x00), \
+	IOV_DATA(0x1b, 0x22, 0x00, 0x02, 0x01, 0x03, 0x00, 0x00), \
 	IOV_NULL, \
 	IOV_DATA(0x1b, 0x1c, 0x00, 0x03, 0x02, 0x00, 0x00, _qos)
 
@@ -2270,7 +2740,7 @@ static struct test_config cfg_src_48_6_2 = {
  * The IUT successfully writes to the ASE Control Point characteristic with the
  * opcode set to 0x02 (Config QoS) and the specified parameters.
  */
-static void test_scc_qos_lc3(void)
+static void test_ucl_scc_qos_lc3(void)
 {
 	define_test("BAP/UCL/SCC/BV-035-C [UCL SRC Config QoS, LC3 8_1_1]",
 			test_setup, test_client, &cfg_snk_8_1_1,
@@ -2466,6 +2936,223 @@ static void test_scc_qos_lc3(void)
 			SCC_SRC_48_6_2);
 }
 
+/* Unicast Server Performs Config QoS – LC3
+ *
+ * Test Purpose:
+ * Verify that a Unicast Server IUT can perform a Config QoS operation
+ * initiated by a Unicast Client for the LC3 codec.
+ *.
+ * Pass verdict:
+ * In step 2, the IUT sends a notification of the ASE Control Point
+ * characteristic with Response_Code set to Success (0x00) for the requested
+ * ASE_ID and opcode.
+ * In step 3, the notified ASE characteristic value is correctly formatted, has
+ * the ASE_ID field set to Test_ASE_ID, the ASE_State field set to 0x02
+ * (QoS Configured), and the Additional_ASE_Parameters field containing the
+ * CIG_ID, CIS_ID, and QoS configuration values requested in step 2.
+ */
+static void test_usr_scc_qos_lc3(void)
+{
+	define_test("BAP/USR/SCC/BV-069-C [USR SNK Config QoS, LC3 8_1_1]",
+			test_setup_server, test_server, &cfg_snk_8_1_1,
+			SCC_SNK_8_1_1);
+	define_test("BAP/USR/SCC/BV-070-C [USR SNK Config QoS, LC3 8_2_1]",
+			test_setup_server, test_server, &cfg_snk_8_2_1,
+			SCC_SNK_8_2_1);
+	define_test("BAP/USR/SCC/BV-071-C [USR SNK Config QoS, LC3 16_1_1]",
+			test_setup_server, test_server, &cfg_snk_16_1_1,
+			SCC_SNK_16_1_1);
+	define_test("BAP/USR/SCC/BV-072-C [USR SNK Config QoS, LC3 16_2_1]",
+			test_setup_server, test_server, &cfg_snk_16_2_1,
+			SCC_SNK_16_2_1);
+	define_test("BAP/USR/SCC/BV-073-C [USR SNK Config QoS, LC3 24_1_1]",
+			test_setup_server, test_server, &cfg_snk_24_1_1,
+			SCC_SNK_24_1_1);
+	define_test("BAP/USR/SCC/BV-074-C [USR SNK Config QoS, LC3 24_2_1]",
+			test_setup_server, test_server, &cfg_snk_24_2_1,
+			SCC_SNK_24_2_1);
+	define_test("BAP/USR/SCC/BV-075-C [USR SNK Config QoS, LC3 32_1_1]",
+			test_setup_server, test_server, &cfg_snk_32_1_1,
+			SCC_SNK_32_1_1);
+	define_test("BAP/USR/SCC/BV-076-C [USR SNK Config QoS, LC3 32_2_1]",
+			test_setup_server, test_server, &cfg_snk_32_2_1,
+			SCC_SNK_32_2_1);
+	define_test("BAP/USR/SCC/BV-077-C [USR SNK Config QoS, LC3 44.1_1_1]",
+			test_setup_server, test_server, &cfg_snk_44_1_1,
+			SCC_SNK_44_1_1);
+	define_test("BAP/USR/SCC/BV-078-C [USR SNK Config QoS, LC3 44.1_2_1]",
+			test_setup_server, test_server, &cfg_snk_44_2_1,
+			SCC_SNK_44_2_1);
+	define_test("BAP/USR/SCC/BV-079-C [USR SNK Config QoS, LC3 48_1_1]",
+			test_setup_server, test_server, &cfg_snk_48_1_1,
+			SCC_SNK_48_1_1);
+	define_test("BAP/USR/SCC/BV-080-C [USR SNK Config QoS, LC3 48_2_1]",
+			test_setup_server, test_server, &cfg_snk_48_2_1,
+			SCC_SNK_48_2_1);
+	define_test("BAP/USR/SCC/BV-081-C [USR SNK Config QoS, LC3 48_3_1]",
+			test_setup_server, test_server, &cfg_snk_48_3_1,
+			SCC_SNK_48_3_1);
+	define_test("BAP/USR/SCC/BV-082-C [USR SNK Config QoS, LC3 48_4_1]",
+			test_setup_server, test_server, &cfg_snk_48_4_1,
+			SCC_SNK_48_4_1);
+	define_test("BAP/USR/SCC/BV-083-C [USR SNK Config QoS, LC3 48_5_1]",
+			test_setup_server, test_server, &cfg_snk_48_5_1,
+			SCC_SNK_48_5_1);
+	define_test("BAP/USR/SCC/BV-084-C [USR SNK Config QoS, LC3 48_6_1]",
+			test_setup_server, test_server, &cfg_snk_48_6_1,
+			SCC_SNK_48_6_1);
+	define_test("BAP/USR/SCC/BV-085-C [USR SRC Config QoS, LC3 8_1_1]",
+			test_setup_server, test_server, &cfg_src_8_1_1,
+			SCC_SRC_8_1_1);
+	define_test("BAP/USR/SCC/BV-086-C [USR SRC Config QoS, LC3 8_2_1]",
+			test_setup_server, test_server, &cfg_src_8_2_1,
+			SCC_SRC_8_2_1);
+	define_test("BAP/USR/SCC/BV-087-C [USR SRC Config QoS, LC3 16_1_1]",
+			test_setup_server, test_server, &cfg_src_16_1_1,
+			SCC_SRC_16_1_1);
+	define_test("BAP/USR/SCC/BV-088-C [USR SRC Config QoS, LC3 16_2_1]",
+			test_setup_server, test_server, &cfg_src_16_2_1,
+			SCC_SRC_16_2_1);
+	define_test("BAP/USR/SCC/BV-089-C [USR SRC Config QoS, LC3 24_1_1]",
+			test_setup_server, test_server, &cfg_src_24_1_1,
+			SCC_SRC_24_1_1);
+	define_test("BAP/USR/SCC/BV-090-C [USR SRC Config QoS, LC3 24_2_1]",
+			test_setup_server, test_server, &cfg_src_24_2_1,
+			SCC_SRC_24_2_1);
+	define_test("BAP/USR/SCC/BV-091-C [USR SRC Config QoS, LC3 32_1_1]",
+			test_setup_server, test_server, &cfg_src_32_1_1,
+			SCC_SRC_32_1_1);
+	define_test("BAP/USR/SCC/BV-092-C [USR SRC Config QoS, LC3 32_2_1]",
+			test_setup_server, test_server, &cfg_src_32_2_1,
+			SCC_SRC_32_2_1);
+	define_test("BAP/USR/SCC/BV-093-C [USR SRC Config QoS, LC3 44.1_1_1]",
+			test_setup_server, test_server, &cfg_src_44_1_1,
+			SCC_SRC_44_1_1);
+	define_test("BAP/USR/SCC/BV-094-C [USR SRC Config QoS, LC3 44.1_2_1]",
+			test_setup_server, test_server, &cfg_src_44_2_1,
+			SCC_SRC_44_2_1);
+	define_test("BAP/USR/SCC/BV-095-C [USR SRC Config QoS, LC3 48_1_1]",
+			test_setup_server, test_server, &cfg_src_48_1_1,
+			SCC_SRC_48_1_1);
+	define_test("BAP/USR/SCC/BV-096-C [USR SRC Config QoS, LC3 48_2_1]",
+			test_setup_server, test_server, &cfg_src_48_2_1,
+			SCC_SRC_48_2_1);
+	define_test("BAP/USR/SCC/BV-097-C [USR SRC Config QoS, LC3 48_3_1]",
+			test_setup_server, test_server, &cfg_src_48_3_1,
+			SCC_SRC_48_3_1);
+	define_test("BAP/USR/SCC/BV-098-C [USR SRC Config QoS, LC3 48_4_1]",
+			test_setup_server, test_server, &cfg_src_48_4_1,
+			SCC_SRC_48_4_1);
+	define_test("BAP/USR/SCC/BV-099-C [USR SRC Config QoS, LC3 48_5_1]",
+			test_setup_server, test_server, &cfg_src_48_5_1,
+			SCC_SRC_48_5_1);
+	define_test("BAP/USR/SCC/BV-100-C [USR SRC Config QoS, LC3 48_6_1]",
+			test_setup_server, test_server, &cfg_src_48_6_1,
+			SCC_SRC_48_6_1);
+	define_test("BAP/USR/SCC/BV-101-C [USR SNK Config QoS, LC3 8_1_2]",
+			test_setup_server, test_server, &cfg_snk_8_1_2,
+			SCC_SNK_8_1_2);
+	define_test("BAP/USR/SCC/BV-102-C [USR SNK Config QoS, LC3 8_2_2]",
+			test_setup_server, test_server, &cfg_snk_8_2_2,
+			SCC_SNK_8_2_2);
+	define_test("BAP/USR/SCC/BV-103-C [USR SNK Config QoS, LC3 16_1_2]",
+			test_setup_server, test_server, &cfg_snk_16_1_2,
+			SCC_SNK_16_1_2);
+	define_test("BAP/USR/SCC/BV-104-C [USR SNK Config QoS, LC3 16_2_2]",
+			test_setup_server, test_server, &cfg_snk_16_2_2,
+			SCC_SNK_16_2_2);
+	define_test("BAP/USR/SCC/BV-105-C [USR SNK Config QoS, LC3 24_1_2]",
+			test_setup_server, test_server, &cfg_snk_24_1_2,
+			SCC_SNK_24_1_2);
+	define_test("BAP/USR/SCC/BV-106-C [USR SNK Config QoS, LC3 24_2_2]",
+			test_setup_server, test_server, &cfg_snk_24_2_2,
+			SCC_SNK_24_2_2);
+	define_test("BAP/USR/SCC/BV-107-C [USR SNK Config QoS, LC3 32_1_2]",
+			test_setup_server, test_server, &cfg_snk_32_1_2,
+			SCC_SNK_32_1_2);
+	define_test("BAP/USR/SCC/BV-108-C [USR SNK Config QoS, LC3 32_2_2]",
+			test_setup_server, test_server, &cfg_snk_32_2_2,
+			SCC_SNK_32_2_2);
+	define_test("BAP/USR/SCC/BV-109-C [USR SNK Config QoS, LC3 44.1_1_2]",
+			test_setup_server, test_server, &cfg_snk_44_1_2,
+			SCC_SNK_44_1_2);
+	define_test("BAP/USR/SCC/BV-110-C [USR SNK Config QoS, LC3 44.1_2_2]",
+			test_setup_server, test_server, &cfg_snk_44_2_2,
+			SCC_SNK_44_2_2);
+	define_test("BAP/USR/SCC/BV-111-C [USR SNK Config QoS, LC3 48_1_2]",
+			test_setup_server, test_server, &cfg_snk_48_1_2,
+			SCC_SNK_48_1_2);
+	define_test("BAP/USR/SCC/BV-112-C [USR SNK Config QoS, LC3 48_2_2]",
+			test_setup_server, test_server, &cfg_snk_48_2_2,
+			SCC_SNK_48_2_2);
+	define_test("BAP/USR/SCC/BV-113-C [USR SNK Config QoS, LC3 48_3_2]",
+			test_setup_server, test_server, &cfg_snk_48_3_2,
+			SCC_SNK_48_3_2);
+	define_test("BAP/USR/SCC/BV-114-C [USR SNK Config QoS, LC3 48_4_2]",
+			test_setup_server, test_server, &cfg_snk_48_4_2,
+			SCC_SNK_48_4_2);
+	define_test("BAP/USR/SCC/BV-115-C [USR SNK Config QoS, LC3 48_5_2]",
+			test_setup_server, test_server, &cfg_snk_48_5_2,
+			SCC_SNK_48_5_2);
+	define_test("BAP/USR/SCC/BV-116-C [USR SNK Config QoS, LC3 48_6_2]",
+			test_setup_server, test_server, &cfg_snk_48_6_2,
+			SCC_SNK_48_6_2);
+	define_test("BAP/USR/SCC/BV-117-C [USR SRC Config QoS, LC3 8_1_2]",
+			test_setup_server, test_server, &cfg_src_8_1_2,
+			SCC_SRC_8_1_2);
+	define_test("BAP/USR/SCC/BV-118-C [USR SRC Config QoS, LC3 8_2_2]",
+			test_setup_server, test_server, &cfg_src_8_2_2,
+			SCC_SRC_8_2_2);
+	define_test("BAP/USR/SCC/BV-119-C [USR SRC Config QoS, LC3 16_1_2]",
+			test_setup_server, test_server, &cfg_src_16_1_2,
+			SCC_SRC_16_1_2);
+	define_test("BAP/USR/SCC/BV-120-C [USR SRC Config QoS, LC3 16_2_2]",
+			test_setup_server, test_server, &cfg_src_16_2_2,
+			SCC_SRC_16_2_2);
+	define_test("BAP/USR/SCC/BV-121-C [USR SRC Config QoS, LC3 24_1_2]",
+			test_setup_server, test_server, &cfg_src_24_1_2,
+			SCC_SRC_24_1_2);
+	define_test("BAP/USR/SCC/BV-122-C [USR SRC Config QoS, LC3 24_2_2]",
+			test_setup_server, test_server, &cfg_src_24_2_2,
+			SCC_SRC_24_2_2);
+	define_test("BAP/USR/SCC/BV-123-C [USR SRC Config QoS, LC3 32_1_2]",
+			test_setup_server, test_server, &cfg_src_32_1_2,
+			SCC_SRC_32_1_2);
+	define_test("BAP/USR/SCC/BV-124-C [USR SRC Config QoS, LC3 32_2_2]",
+			test_setup_server, test_server, &cfg_src_32_2_2,
+			SCC_SRC_32_2_2);
+	define_test("BAP/USR/SCC/BV-125-C [USR SRC Config QoS, LC3 44.1_1_2]",
+			test_setup_server, test_server, &cfg_src_44_1_2,
+			SCC_SRC_44_1_2);
+	define_test("BAP/USR/SCC/BV-126-C [USR SRC Config QoS, LC3 44.1_2_2]",
+			test_setup_server, test_server, &cfg_src_44_2_2,
+			SCC_SRC_44_2_2);
+	define_test("BAP/USR/SCC/BV-127-C [USR SRC Config QoS, LC3 48_1_2]",
+			test_setup_server, test_server, &cfg_src_48_1_2,
+			SCC_SRC_48_1_2);
+	define_test("BAP/USR/SCC/BV-128-C [USR SRC Config QoS, LC3 48_2_2]",
+			test_setup_server, test_server, &cfg_src_48_2_2,
+			SCC_SRC_48_2_2);
+	define_test("BAP/USR/SCC/BV-129-C [USR SRC Config QoS, LC3 48_3_2]",
+			test_setup_server, test_server, &cfg_src_48_3_2,
+			SCC_SRC_48_3_2);
+	define_test("BAP/USR/SCC/BV-130-C [USR SRC Config QoS, LC3 48_4_2]",
+			test_setup_server, test_server, &cfg_src_48_4_2,
+			SCC_SRC_48_4_2);
+	define_test("BAP/USR/SCC/BV-131-C [USR SRC Config QoS, LC3 48_5_2]",
+			test_setup_server, test_server, &cfg_src_48_5_2,
+			SCC_SRC_48_5_2);
+	define_test("BAP/USR/SCC/BV-132-C [USR SRC Config QoS, LC3 48_6_2]",
+			test_setup_server, test_server, &cfg_src_48_6_2,
+			SCC_SRC_48_6_2);
+}
+
+static void test_scc_qos_lc3(void)
+{
+	test_ucl_scc_qos_lc3();
+	test_usr_scc_qos_lc3();
+}
+
 static struct test_config cfg_snk_qos_vs = {
 	.cc = IOV_NULL,
 	.qos = QOS_UCAST,
@@ -2500,14 +3187,40 @@ static struct test_config cfg_src_qos_vs = {
  * The IUT successfully writes to the ASE Control Point characteristic with the
  * opcode set to 0x02 (Config QoS) and the specified parameters.
  */
-static void test_scc_qos_vs(void)
+static void test_ucl_scc_qos_vs(void)
 {
 	define_test("BAP/UCL/SCC/BV-099-C [UCL SNK Config QoS, VS]",
 			test_setup, test_client, &cfg_src_qos_vs,
 			SCC_SRC_QOS_VS);
-	define_test("BAP/UCL/SCC/BV-100-C [UCL SRC QoS Codec, VS]",
+	define_test("BAP/UCL/SCC/BV-100-C [UCL SRC Config QoS, VS]",
 			test_setup, test_client, &cfg_snk_qos_vs,
 			SCC_SNK_QOS_VS);
+}
+
+/* Unicast Server Performs Config QoS – Vendor-Specific
+ *
+ * Test Purpose:
+ * Verify that a Unicast Server IUT can handle a Config QoS operation for a
+ * vendor-specific codec.
+ *
+ * Pass verdict:
+ * The IUT sends a notification of the ASE Control Point characteristic with
+ * Response_Code set to Success (0x00) for the requested ASE_ID and opcode.
+ */
+static void test_usr_scc_qos_vs(void)
+{
+	define_test("BAP/USR/SCC/BV-133-C [USR SNK Config QoS, VS]",
+			test_setup_server, test_server, &cfg_snk_qos_vs,
+			SCC_SNK_QOS_VS);
+	define_test("BAP/USR/SCC/BV-134-C [USR SRC Config QoS, VS]",
+			test_setup, test_client, &cfg_src_qos_vs,
+			SCC_SRC_QOS_VS);
+}
+
+static void test_scc_qos_vs(void)
+{
+	test_ucl_scc_qos_vs();
+	test_usr_scc_qos_vs();
 }
 
 static struct test_config cfg_snk_enable = {
@@ -2556,7 +3269,7 @@ static struct test_config cfg_src_enable = {
 #define SRC_ENABLE \
 	IOV_DATA(0x52, 0x22, 0x00, 0x03, 0x01, 0x03, 0x04, 0x03, 0x02, 0x01, \
 			00), \
-	IOV_DATA(0x1b, 0x22, 0x00, 0x03, 0x01, 0x01, 0x00, 0x00), \
+	IOV_DATA(0x1b, 0x22, 0x00, 0x03, 0x01, 0x03, 0x00, 0x00), \
 	IOV_NULL, \
 	IOV_DATA(0x1b, 0x1c, 0x00, 0x03, 0x03, 0x00, 0x00, 0x04, 0x03, 0x02, \
 			0x01, 0x00)
@@ -2574,7 +3287,7 @@ static struct test_config cfg_src_enable = {
  * The IUT successfully writes to the ASE Control Point characteristic with the
  * opcode set to 0x03 (Enable) and the specified parameters.
  */
-static void test_scc_enable(void)
+static void test_ucl_scc_enable(void)
 {
 	define_test("BAP/UCL/SCC/BV-101-C [UCL SRC Enable]",
 			test_setup, test_client, &cfg_snk_enable,
@@ -2582,6 +3295,33 @@ static void test_scc_enable(void)
 	define_test("BAP/UCL/SCC/BV-102-C [UCL SNK Enable]",
 			test_setup, test_client, &cfg_src_enable,
 			SCC_SRC_ENABLE);
+}
+
+/* Unicast Server Performs Client-Initiated Enable Operation
+ *
+ * Test Purpose:
+ * Verify that a Unicast Server IUT can handle a client-initiated Enable
+ * operation for an ASE with a Unicast Client that is either in the Audio Sink
+ * role or the Audio Source role.
+ *
+ * Pass verdict:
+ * The IUT sends a notification of the ASE Control Point characteristic with
+ * Response_Code set to 0x00 (Success) for the requested ASE_ID and opcode.
+ */
+static void test_usr_scc_enable(void)
+{
+	define_test("BAP/USR/SCC/BV-135-C [USR SNK Enable]",
+			test_setup_server, test_server, &cfg_snk_enable,
+			SCC_SNK_ENABLE);
+	define_test("BAP/USR/SCC/BV-136-C [UCL SRC Enable]",
+			test_setup_server, test_server, &cfg_src_enable,
+			SCC_SRC_ENABLE);
+}
+
+static void test_scc_enable(void)
+{
+	test_ucl_scc_enable();
+	test_usr_scc_enable();
 }
 
 static struct test_config cfg_snk_disable = {
@@ -2605,8 +3345,8 @@ static struct test_config cfg_snk_disable = {
 	IOV_DATA(0x52, 0x22, 0x00, 0x05, 0x01, 0x01), \
 	IOV_DATA(0x1b, 0x22, 0x00, 0x05, 0x01, 0x01, 0x00, 0x00), \
 	IOV_NULL, \
-	IOV_DATA(0x1b, 0x16, 0x00, 0x01, 0x02, 0x00, 0x00, 0x4c, 0x1d, 0x00, \
-			0x00, 0x02, 0x1a, 0x00, 0x02, 0x08, 0x00, 0x40, 0x9c, \
+	IOV_DATA(0x1b, 0x16, 0x00, 0x01, 0x02, 0x00, 0x00, 0x10, 0x27, 0x00, \
+			0x00, 0x02, 0x28, 0x00, 0x02, 0x0a, 0x00, 0x40, 0x9c, \
 			0x00)
 
 #define SCC_SNK_DISABLE \
@@ -2634,9 +3374,8 @@ static struct test_config cfg_src_disable = {
 	IOV_DATA(0x52, 0x22, 0x00, 0x05, 0x01, 0x03), \
 	IOV_DATA(0x1b, 0x22, 0x00, 0x05, 0x01, 0x03, 0x00, 0x00), \
 	IOV_NULL, \
-	IOV_DATA(0x1b, 0x1c, 0x00, 0x03, 0x05, 0x00, 0x00, 0x4c, 0x1d, 0x00, \
-			0x00, 0x02, 0x1a, 0x00, 0x04, 0x08, 0x00, 0x40, 0x9c, \
-			0x00)
+	IOV_DATA(0x1b, 0x1c, 0x00, 0x03, 0x05, 0x00, 0x00, 0x04, 0x03, 0x02, \
+		 0x01, 0x00)
 #define SCC_SRC_DISABLE \
 	SCC_SRC_ENABLE, \
 	ASE_SRC_DISABLE
@@ -2695,7 +3434,7 @@ static struct test_config cfg_src_disable_streaming = {
  * The IUT successfully writes to the ASE Control Point characteristic with the
  * opcode set to 0x05 (Disable) and the specified parameters.
  */
-static void test_scc_disable(void)
+static void test_ucl_scc_disable(void)
 {
 	define_test("BAP/UCL/SCC/BV-103-C [UCL SNK Disable in Enabling State]",
 			test_setup, test_client, &cfg_src_disable,
@@ -2707,6 +3446,35 @@ static void test_scc_disable(void)
 	define_test("BAP/UCL/SCC/BV-105-C [UCL SNK Disable in Streaming State]",
 			test_setup, test_client, &cfg_src_disable_streaming,
 			SCC_SRC_DISABLE_STREAMING);
+}
+
+/* Unicast Server Performs Client-Initiated Disable Operation
+ *
+ * Test Purpose:
+ * Verify that a Unicast Server IUT can perform a client-initiated Disable
+ * operation for an ASE in the Enabling or Streaming state.
+ *
+ * Pass verdict:
+ * The IUT sends a notification of the ASE Control Point characteristic.
+ */
+static void test_usr_scc_disable(void)
+{
+	define_test("BAP/USR/SCC/BV-137-C [USR SRC Disable in Enabling State]",
+			test_setup_server, test_server, &cfg_src_disable,
+			SCC_SRC_DISABLE);
+	define_test("BAP/USR/SCC/BV-138-C [USR SNK Disable in Enabling or "
+			"Streaming state]",
+			test_setup_server, test_server, &cfg_snk_disable,
+			SCC_SNK_DISABLE);
+	define_test("BAP/USR/SCC/BV-139-C [USR SRC Disable in Streaming State]",
+			test_setup, test_client, &cfg_src_disable_streaming,
+			SCC_SRC_DISABLE_STREAMING);
+}
+
+static void test_scc_disable(void)
+{
+	test_ucl_scc_disable();
+	test_usr_scc_disable();
 }
 
 static void bap_release(struct bt_bap_stream *stream,
@@ -2753,7 +3521,7 @@ static struct test_config cfg_src_cc_release = {
 	IOV_DATA(0x52, 0x22, 0x00, 0x08, 0x01, 0x03), \
 	IOV_DATA(0x1b, 0x22, 0x00, 0x08, 0x01, 0x03, 0x00, 0x00), \
 	IOV_NULL, \
-	IOV_DATA(0x1b, 0x1c, 0x00, 0x03, 0x00)
+	IOV_DATA(0x1b, 0x1c, 0x00, 0x03, 0x06)
 
 #define SCC_SRC_CC_RELEASE \
 	SCC_SRC_16_2, \
@@ -2780,7 +3548,7 @@ static struct test_config cfg_snk_cc_release = {
 	IOV_DATA(0x52, 0x22, 0x00, 0x08, 0x01, 0x01), \
 	IOV_DATA(0x1b, 0x22, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00), \
 	IOV_NULL, \
-	IOV_DATA(0x1b, 0x16, 0x00, 0x03, 0x00)
+	IOV_DATA(0x1b, 0x16, 0x00, 0x01, 0x06)
 
 #define SCC_SNK_CC_RELEASE \
 	SCC_SNK_16_2, \
@@ -2927,7 +3695,7 @@ static struct test_config cfg_src_disable_release = {
  * The IUT successfully writes to the ASE Control Point characteristic with the
  * opcode set to 0x08 (Release) and the specified parameters.
  */
-static void test_scc_release(void)
+static void test_ucl_scc_release(void)
 {
 	define_test("BAP/UCL/SCC/BV-106-C [UCL SNK Release in Codec Configured"
 			" state]",
@@ -2958,6 +3726,55 @@ static void test_scc_release(void)
 	define_test("BAP/UCL/SCC/BV-113-C [UCL SNK Release in Disabling state]",
 			test_setup, test_client, &cfg_src_disable_release,
 			SCC_SRC_DISABLE_RELEASE);
+}
+
+/* Unicast Server Performs Client-Initiated Release Operation
+ *
+ * Test Purpose:
+ * Verify the behavior of a Unicast Server IUT when a Unicast Client initiates
+ * a Release operation.
+ *
+ * Pass verdict:
+ * The IUT sends a notification of the ASE Control Point characteristic value.
+ *
+ */
+static void test_usr_scc_release(void)
+{
+	define_test("BAP/USR/SCC/BV-143-C [USR SRC Release in Codec Configured"
+			" state]",
+			test_setup_server, test_server, &cfg_src_cc_release,
+			SCC_SRC_CC_RELEASE);
+	define_test("BAP/USR/SCC/BV-144-C [USR SNK Release in Codec Configured"
+			" state]",
+			test_setup_server, test_server, &cfg_snk_cc_release,
+			SCC_SNK_CC_RELEASE);
+	define_test("BAP/USR/SCC/BV-145-C [USR SRC Release in QoS Configured"
+			" state]",
+			test_setup_server, test_server, &cfg_src_qos_release,
+			SCC_SRC_QOS_RELEASE);
+	define_test("BAP/USR/SCC/BV-146-C [USR SNK Release in QoS Configured"
+			" state]",
+			test_setup_server, test_server, &cfg_snk_qos_release,
+			SCC_SNK_QOS_RELEASE);
+	define_test("BAP/USR/SCC/BV-147-C [USR SRC Release in Enabling state]",
+			test_setup_server, test_server, &cfg_src_enable_release,
+			SCC_SRC_ENABLE_RELEASE);
+	define_test("BAP/USR/SCC/BV-148-C [USR SNK Release in Enabling or"
+			" Streaming state]",
+			test_setup_server, test_server, &cfg_snk_enable_release,
+			SCC_SNK_ENABLE_RELEASE);
+	define_test("BAP/USR/SCC/BV-149-C [USR SRC Release in Streaming state]",
+			test_setup_server, test_server, &cfg_src_start_release,
+			SCC_SRC_START_RELEASE);
+	define_test("BAP/USR/SCC/BV-150-C [USR SRC Release in Disabling state]",
+			test_setup_server, test_server,
+			&cfg_src_disable_release, SCC_SRC_DISABLE_RELEASE);
+}
+
+static void test_scc_release(void)
+{
+	test_ucl_scc_release();
+	test_usr_scc_release();
 }
 
 static void bap_metadata(struct bt_bap_stream *stream,
@@ -3001,15 +3818,13 @@ static struct test_config cfg_snk_metadata = {
  *    Data: 0701010000
  * ATT: Handle Value Notification (0x1b) len 37
  *   Handle: 0x0016
- *     Data: 01010102010a00204e00409c00204e00409c00_qos
+ *     Data: 0103000000
  */
 #define ASE_SNK_METADATA \
 	IOV_DATA(0x52, 0x22, 0x00, 0x07, 0x01, 0x01, 0x00), \
 	IOV_DATA(0x1b, 0x22, 0x00, 0x07, 0x01, 0x01, 0x00, 0x00), \
 	IOV_NULL, \
-	IOV_DATA(0x1b, 0x16, 0x00, 0x01, 0x05, 0x00, 0x00, 0x4c, 0x1d, 0x00, \
-			0x00, 0x02, 0x1a, 0x00, 0x02, 0x08, 0x00, 0x40, 0x9c, \
-			0x00)
+	IOV_DATA(0x1b, 0x16, 0x00, 0x01, 0x03, 0x00, 0x00, 0x00)
 
 #define SCC_SNK_METADATA \
 	SCC_SNK_ENABLE, \
@@ -3031,18 +3846,16 @@ static struct test_config cfg_src_metadata = {
  *    Data: 0701030000
  * ATT: Handle Value Notification (0x1b) len 37
  *   Handle: 0x001c
- *     Data: 030300000403020100
+ *     Data: 0303000000
  */
-#define ASE_SRC_METADATA \
+#define ASE_SRC_METADATA(_state) \
 	IOV_DATA(0x52, 0x22, 0x00, 0x07, 0x01, 0x03, 0x00), \
 	IOV_DATA(0x1b, 0x22, 0x00, 0x07, 0x01, 0x03, 0x00, 0x00), \
 	IOV_NULL, \
-	IOV_DATA(0x1b, 0x1c, 0x00, 0x03, 0x05, 0x00, 0x00, 0x4c, 0x1d, 0x00, \
-			0x00, 0x02, 0x1a, 0x00, 0x04, 0x08, 0x00, 0x40, 0x9c, \
-			0x00)
+	IOV_DATA(0x1b, 0x1c, 0x00, 0x03, _state, 0x00, 0x00, 0x00)
 #define SCC_SRC_METADATA \
 	SCC_SRC_ENABLE, \
-	ASE_SRC_METADATA
+	ASE_SRC_METADATA(0x03)
 
 static void state_start_metadata(struct bt_bap_stream *stream,
 					uint8_t old_state, uint8_t new_state,
@@ -3072,7 +3885,7 @@ static struct test_config cfg_src_metadata_streaming = {
 #define SCC_SRC_METADATA_STREAMING \
 	SCC_SRC_ENABLE, \
 	SRC_START, \
-	ASE_SRC_METADATA
+	ASE_SRC_METADATA(0x04)
 
 /* Unicast Client Initiates Update Metadata Operation
  *
@@ -3084,7 +3897,7 @@ static struct test_config cfg_src_metadata_streaming = {
  * The IUT successfully writes to the ASE Control Point characteristic with the
  * opcode set to 0x07 (Update Metadata) and the specified parameters.
  */
-static void test_scc_metadata(void)
+static void test_ucl_scc_metadata(void)
 {
 	define_test("BAP/UCL/SCC/BV-115-C [UCL SNK Update Metadata in Enabling "
 			"State]",
@@ -3098,6 +3911,39 @@ static void test_scc_metadata(void)
 			" State]",
 			test_setup, test_client, &cfg_src_metadata_streaming,
 			SCC_SRC_METADATA_STREAMING);
+}
+
+/* Unicast Server Performs Update Metadata Operation
+ *
+ * Test Purpose:
+ * Verify that a Unicast Server IUT can perform an Update Metadata operation
+ * initiated by a Unicast Client.
+ *
+ * Pass verdict:
+ * The IUT sends a notification of the ASE Control Point characteristic with
+ * Response_Code set to Success (0x00) for the requested ASE_ID and opcode.
+ */
+static void test_usr_scc_metadata(void)
+{
+	define_test("BAP/USR/SCC/BV-161-C [USR SRC Update Metadata in Enabling "
+			"State]",
+			test_setup_server, test_server, &cfg_src_metadata,
+			SCC_SRC_METADATA);
+	define_test("BAP/USR/SCC/BV-162-C [USR SNK Update Metadata in Enabling "
+			"or Streaming state]",
+			test_setup_server, test_server, &cfg_snk_metadata,
+			SCC_SNK_METADATA);
+	define_test("BAP/USR/SCC/BV-163-C [USR SRC Update Metadata in Streaming"
+			" State]",
+			test_setup_server, test_server,
+			&cfg_src_metadata_streaming,
+			SCC_SRC_METADATA_STREAMING);
+}
+
+static void test_scc_metadata(void)
+{
+	test_ucl_scc_metadata();
+	test_usr_scc_metadata();
 }
 
 #define SNK_ENABLE \
