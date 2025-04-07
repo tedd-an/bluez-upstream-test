@@ -1123,17 +1123,12 @@ static void stream_notify_metadata(struct bt_bap_stream *stream)
 	free(status);
 }
 
-static void stream_notify_release(struct bt_bap_stream *stream)
+static void stream_notify_ase_state(struct bt_bap_stream *stream)
 {
 	struct bt_bap_endpoint *ep = stream->ep;
 	struct bt_ascs_ase_status status;
 
-	DBG(stream->bap, "stream %p", stream);
-
-
-	memset(&status, 0, sizeof(status));
 	status.id = ep->id;
-	ep->state = BT_BAP_STREAM_STATE_RELEASING;
 	status.state = ep->state;
 
 	gatt_db_attribute_notify(ep->attr, (void *)&status, sizeof(status),
@@ -1713,6 +1708,7 @@ static void stream_notify(struct bt_bap_stream *stream, uint8_t state)
 
 	switch (state) {
 	case BT_ASCS_ASE_STATE_IDLE:
+		stream_notify_ase_state(stream);
 		break;
 	case BT_ASCS_ASE_STATE_CONFIG:
 		stream_notify_config(stream);
@@ -1726,7 +1722,7 @@ static void stream_notify(struct bt_bap_stream *stream, uint8_t state)
 		stream_notify_metadata(stream);
 		break;
 	case BT_ASCS_ASE_STATE_RELEASING:
-		stream_notify_release(stream);
+		stream_notify_ase_state(stream);
 		break;
 	}
 }
@@ -6397,9 +6393,8 @@ static bool stream_io_disconnected(struct io *io, void *user_data)
 	DBG(stream->bap, "stream %p io disconnected", stream);
 
 	if (stream->ep->state == BT_ASCS_ASE_STATE_RELEASING)
-		stream_set_state(stream, BT_BAP_STREAM_STATE_CONFIG);
+		stream_set_state(stream, BT_BAP_STREAM_STATE_IDLE);
 
-	bt_bap_stream_set_io(stream, -1);
 	return false;
 }
 
